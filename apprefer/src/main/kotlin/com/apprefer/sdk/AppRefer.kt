@@ -266,6 +266,10 @@ object AppRefer {
             put("ar_click_id", arClickId)
             put("referrer_click_ts", referrer?.referrerClickTimestampSeconds)
             put("referrer_install_ts", referrer?.installBeginTimestampSeconds)
+            // Flutter-parity fields (server currently drops them, but we ship what
+            // the production plugin ships — CEO directive: "reuse it all").
+            put("install_version", referrer?.installVersion)
+            put("google_play_instant_param", referrer?.googlePlayInstantParam)
             // customer_user_id only set if the host previously called setUserId / passed
             // userId to configure(). Null-safe — keep the key out entirely to keep the
             // payload tight (server treats missing and null identically).
