@@ -5,16 +5,36 @@ for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
 > **Status:** 0.4.1 — full attribution flow, event tracking, and Meta
-> Advanced Matching wired. Maven Central publish config ready; artifact
-> will be live as soon as the `com.apprefer` Sonatype namespace is claimed.
+> Advanced Matching wired. Distributed via JitPack today; Maven Central
+> publish config is ready and will activate once the `com.apprefer`
+> Sonatype namespace is claimed.
 
 ## Install
 
+Add the JitPack repository (once per project):
+
 ```kotlin
-dependencies {
-    implementation("com.apprefer:apprefer-android-sdk:0.4.1")
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://jitpack.io")
+    }
 }
 ```
+
+Then add the dependency:
+
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.4.1")
+}
+```
+
+Every tag on this repo is published automatically by JitPack — no accounts
+or tokens required.
 
 ## Usage
 

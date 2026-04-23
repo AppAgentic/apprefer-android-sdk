@@ -1,0 +1,11 @@
+jdk:
+  - openjdk17
+
+# Produce the library AAR + sources + javadoc jars via the Vanniktech Maven
+# Publish plugin. JitPack then serves the resulting artifacts from our local
+# Maven cache under com.github.AppAgentic:apprefer-android-sdk:<tag>.
+#
+# We skip the :sample module (JitPack doesn't need an app build) and skip tests
+# (Android instrumentation tests require a connected device).
+install:
+  - ./gradlew :apprefer:publishToMavenLocal -x test --no-daemon
