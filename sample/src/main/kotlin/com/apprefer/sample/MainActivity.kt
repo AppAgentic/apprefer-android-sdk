@@ -17,6 +17,9 @@ class MainActivity : AppCompatActivity() {
         val deviceIdView = findViewById<TextView>(R.id.device_id)
         val statusView = findViewById<TextView>(R.id.status)
         val trackButton = findViewById<Button>(R.id.btn_track_event)
+        val advancedMatchingButton = findViewById<Button>(R.id.btn_set_advanced_matching)
+        val setUserIdButton = findViewById<Button>(R.id.btn_set_user_id)
+        val fuzzButton = findViewById<Button>(R.id.btn_fuzz)
 
         statusView.text = "Configuring AppRefer…"
 
@@ -48,7 +51,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         trackButton.setOnClickListener {
-            // Phase 4 will wire this up — for now it logs and shows a toast.
             lifecycleScope.launch {
                 AppRefer.trackEvent(
                     eventName = "test_event",
@@ -56,7 +58,60 @@ class MainActivity : AppCompatActivity() {
                 )
                 Toast.makeText(
                     this@MainActivity,
-                    "trackEvent fired (stub — phase 4 wiring pending)",
+                    "trackEvent sent: test_event",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+
+        advancedMatchingButton.setOnClickListener {
+            lifecycleScope.launch {
+                AppRefer.setAdvancedMatching(
+                    email = "joe@example.com",
+                    phone = "+1 (555) 123-4567",
+                    firstName = "Joe",
+                    lastName = "Doe",
+                    dateOfBirth = "19900115",
+                )
+                Toast.makeText(
+                    this@MainActivity,
+                    "setAdvancedMatching sent (hashed)",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+
+        setUserIdButton.setOnClickListener {
+            lifecycleScope.launch {
+                AppRefer.setUserId("sample_user_${System.currentTimeMillis()}")
+                Toast.makeText(
+                    this@MainActivity,
+                    "setUserId sent",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+
+        // Fuzz test: extreme inputs should NEVER crash the host app. Demonstrates
+        // `SafeRunner.safely` guarantees — a 100 KB event name and a 1 MB byte
+        // array inside properties would corrupt JSON serialization without the
+        // crash guard, but the SDK should swallow the error and keep running.
+        fuzzButton.setOnClickListener {
+            lifecycleScope.launch {
+                AppRefer.trackEvent(
+                    eventName = "x".repeat(100_000),
+                    properties = mapOf(
+                        "big_bytes" to ByteArray(1_000_000),
+                        "null_value" to null,
+                        "nested" to mapOf("a" to mapOf("b" to mapOf("c" to "d"))),
+                        "unicode" to "🚀💻🔥",
+                    ),
+                    revenue = Double.MAX_VALUE,
+                    currency = "",
+                )
+                Toast.makeText(
+                    this@MainActivity,
+                    "Fuzz test completed — no crash",
                     Toast.LENGTH_SHORT,
                 ).show()
             }

@@ -37,4 +37,25 @@
         android:layout_marginTop="24dp"
         android:text="Track Test Event" />
 
+    <Button
+        android:id="@+id/btn_set_advanced_matching"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Set Advanced Matching (hashed)" />
+
+    <Button
+        android:id="@+id/btn_set_user_id"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Set User ID" />
+
+    <Button
+        android:id="@+id/btn_fuzz"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Fuzz Test (should not crash)" />
+
 </LinearLayout>
