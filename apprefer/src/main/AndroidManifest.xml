@@ -1,3 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- GAID collection (optional). Declared because we ship play-services-ads-identifier
+         to match the Flutter plugin. Host app can remove this via tools:node="remove"
+         if they declare a Play Data Safety non-personalized-ads posture. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 </manifest>

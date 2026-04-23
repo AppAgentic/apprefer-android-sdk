@@ -28,4 +28,13 @@ android {
 
 dependencies {
     api("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Install Referrer — THE Android deterministic attribution signal.
+    // Ported from Flutter plugin (AppReferPlugin.kt). `api` so consumers don't need to
+    // manually add it to pick up classes they'd hit via consumer-rules.pro -dontwarn.
+    api("com.android.installreferrer:installreferrer:2.2")
+
+    // Google Advertising ID. Ported from Flutter plugin lines 52–69.
+    // Optional signal — we catch all errors if it's missing on the host device.
+    api("com.google.android.gms:play-services-ads-identifier:18.1.0")
 }
