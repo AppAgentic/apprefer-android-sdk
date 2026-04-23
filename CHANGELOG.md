@@ -7,16 +7,32 @@ and stays version-locked with the iOS, Flutter, and React Native SDKs.
 ## [0.4.1] - 2026-04-23
 
 ### Added
-- Initial Phase 1 skeleton.
-- Kotlin public API surface: `AppRefer.configure`, `trackEvent`,
-  `setAdvancedMatching`, `setUserId`, `getAttribution`, `getDeviceId`.
-- `Attribution` data class.
-- `AppReferCallback<T>` Java-friendly interface.
-- Sample app module that calls `configure()` and renders the result.
-- CI workflow (assemble + lint).
+- Full `configure()` attribution flow: Install Referrer, GAID, device
+  signals — POSTed to `/api/track/configure`, cached locally, kill-switch
+  respected.
+- `trackEvent(eventName, properties?, revenue?, currency?)` — POSTs to
+  `/api/track/event`. Java callback variant via `AppReferCallback`.
+- `setAdvancedMatching(email?, phone?, firstName?, lastName?, dateOfBirth?)`
+  — SHA256-hashes all PII on-device (byte-for-byte parity with the iOS
+  `AppReferHashing` and Flutter `AppReferHashing` implementations) and
+  sends as a `_advanced_matching` event. Java callback variant.
+- `setUserId(userId)` — persists locally and syncs to the server via
+  `_set_user_id` so webhook userId fallback lookups succeed. Java callback
+  variant.
+- R8 minification enabled on the sample `:release` build to exercise our
+  `consumer-rules.pro` on every CI run.
+- Fuzz test button in the sample — passes 100 KB event names + 1 MB byte
+  payloads + nested maps to prove crash-free behavior.
+- Vanniktech Maven publish plugin wired for Sonatype Central (signing is
+  gated on `signingInMemoryKey` so `publishToMavenLocal` works without
+  credentials). Publish workflow staged at `PUBLISH_WORKFLOW.yml.pending`.
+
+### Changed
+- `consumer-rules.pro` gains `-dontwarn com.google.android.gms.ads.identifier.**`
+  for apps that strip Play Services ads-identifier.
 
 ### Notes
-- All public methods are no-ops in this release. `configure()` returns an
-  organic `Attribution` so host apps can integrate and compile end-to-end.
-  Phase 2 (device ID, HTTP calls, install referrer, real attribution flow)
-  lands in a follow-up release.
+- Maven Central artifact will resolve once the `com.apprefer` Sonatype
+  namespace is claimed. Config is ready; build from source until then.
+- All public API entry points wrap `SafeRunner.safely { }` — the SDK
+  MUST NEVER crash the host app.

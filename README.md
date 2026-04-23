@@ -4,15 +4,15 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.4.1 — Phase 1 skeleton. Public API is stable; the attribution
-> flow ships in 0.4.2.
+> **Status:** 0.4.1 — full attribution flow, event tracking, and Meta
+> Advanced Matching wired. Maven Central publish config ready; artifact
+> will be live as soon as the `com.apprefer` Sonatype namespace is claimed.
 
 ## Install
 
 ```kotlin
 dependencies {
     implementation("com.apprefer:apprefer-android-sdk:0.4.1")
-    // pending Maven Central publish — for now, build from source
 }
 ```
 
@@ -33,6 +33,18 @@ class MainActivity : AppCompatActivity() {
                 apiKey = "pk_live_...",
             )
             // attribution.network, attribution.campaign, attribution.matchType
+
+            // Track custom events (non-purchase):
+            AppRefer.trackEvent("tutorial_complete", properties = mapOf("step" to 3))
+
+            // Meta Advanced Matching — hashed on-device before sending.
+            AppRefer.setAdvancedMatching(
+                email = "user@example.com",
+                phone = "+15551234567",
+            )
+
+            // Link this device to your user / RevenueCat ID.
+            AppRefer.setUserId("rc_abc123")
         }
     }
 }
@@ -41,7 +53,7 @@ class MainActivity : AppCompatActivity() {
 Java-friendly callback variant:
 
 ```java
-AppRefer.INSTANCE.configure(
+AppRefer.configure(
     this, "pk_live_...", /* userId */ null, /* debug */ false, /* logLevel */ 1,
     new AppReferCallback<Attribution>() {
         @Override public void onResult(Attribution result) { /* ... */ }

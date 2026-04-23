@@ -5,6 +5,7 @@ import com.apprefer.sdk.internal.AppReferStorage
 import com.apprefer.sdk.internal.DeviceIdManager
 import com.apprefer.sdk.internal.DeviceInfo
 import com.apprefer.sdk.internal.GaidCollector
+import com.apprefer.sdk.internal.Hashing
 import com.apprefer.sdk.internal.HttpClient
 import com.apprefer.sdk.internal.InstallReferrerCollector
 import com.apprefer.sdk.internal.JsonCodec
@@ -116,10 +117,12 @@ object AppRefer {
     }
 
     /**
-     * Track a non-purchase event. Purchases go through RevenueCat webhooks.
+     * Track a non-purchase event (signup, tutorial_complete, etc.).
+     * Purchases go through RevenueCat webhooks — NOT this method.
      *
-     * PHASE 4 STUB — wiring exists, body is a no-op until event endpoint is wired.
-     * Safe to call pre-configure (logs + returns).
+     * Respects the kill switch (`sdk_enabled=false` → no-op).
+     * Safe to call pre-`configure()` (logs + returns).
+     * Never throws — the SDK MUST NEVER crash the host app.
      */
     suspend fun trackEvent(
         eventName: String,
@@ -134,9 +137,24 @@ object AppRefer {
                 return@safelyRun
             }
             if (!s.storage.isSdkEnabled()) return@safelyRun
-            s.logger.info("trackEvent($eventName) [phase-4 stub — not yet wired]")
-            // Phase 4 will POST to /api/track/event. Keeping the method on the public
-            // surface in 0.4.x so sample apps don't need to change.
+
+            val deviceId = safely<String?>(null) { s.storage.getDeviceId() } ?: run {
+                s.logger.error("trackEvent($eventName): no device_id — did configure() run?")
+                return@safelyRun
+            }
+
+            val body = LinkedHashMap<String, Any?>().apply {
+                put("device_id", deviceId)
+                put("event_name", eventName)
+                if (properties != null) put("properties", properties)
+                if (revenue != null) put("revenue", revenue)
+                if (currency != null) put("currency", currency)
+            }
+
+            s.logger.info("Tracking event: $eventName")
+            safelyRun {
+                withContext(Dispatchers.IO) { s.http.post("/api/track/event", body) }
+            }
         }
     }
 
@@ -159,7 +177,13 @@ object AppRefer {
         }
     }
 
-    /** PHASE 4 stub — see trackEvent. */
+    /**
+     * Meta Advanced Matching: send SHA256-hashed user PII to improve CAPI match rates.
+     * Call once after signup / login. All values are hashed ON-DEVICE before leaving
+     * the phone — see `internal/Hashing.kt`.
+     *
+     * Respects the kill switch. Safe to call pre-`configure()`.
+     */
     suspend fun setAdvancedMatching(
         email: String? = null,
         phone: String? = null,
@@ -168,17 +192,115 @@ object AppRefer {
         dateOfBirth: String? = null,
     ) {
         safelyRun {
-            val s = state ?: return@safelyRun
-            s.logger.info("setAdvancedMatching [phase-4 stub]")
+            val s = state
+            if (s == null) {
+                android.util.Log.i("AppRefer", "setAdvancedMatching called before configure() — ignoring")
+                return@safelyRun
+            }
+            if (!s.storage.isSdkEnabled()) return@safelyRun
+
+            val hashed = LinkedHashMap<String, String>()
+            if (email != null) safelyRun { hashed["em"] = Hashing.hashEmail(email) }
+            if (phone != null) safelyRun { hashed["ph"] = Hashing.hashPhone(phone) }
+            if (firstName != null) safelyRun { hashed["fn"] = Hashing.hashName(firstName) }
+            if (lastName != null) safelyRun { hashed["ln"] = Hashing.hashName(lastName) }
+            if (dateOfBirth != null) safelyRun { hashed["db"] = Hashing.hashDateOfBirth(dateOfBirth) }
+
+            if (hashed.isEmpty()) return@safelyRun
+
+            val deviceId = safely<String?>(null) { s.storage.getDeviceId() } ?: run {
+                s.logger.error("setAdvancedMatching: no device_id — did configure() run?")
+                return@safelyRun
+            }
+
+            val body = LinkedHashMap<String, Any?>().apply {
+                put("device_id", deviceId)
+                put("event_name", "_advanced_matching")
+                put("advanced_matching", hashed)
+            }
+
+            s.logger.info("Sending advanced matching data")
+            safelyRun {
+                withContext(Dispatchers.IO) { s.http.post("/api/track/event", body) }
+            }
         }
     }
 
-    /** PHASE 4 stub — see trackEvent. */
+    /** Java-friendly callback overload for setAdvancedMatching. */
+    @JvmStatic
+    @JvmOverloads
+    fun setAdvancedMatching(
+        email: String? = null,
+        phone: String? = null,
+        firstName: String? = null,
+        lastName: String? = null,
+        dateOfBirth: String? = null,
+        callback: AppReferCallback<Unit>? = null,
+    ) {
+        scope.launch {
+            try {
+                setAdvancedMatching(email, phone, firstName, lastName, dateOfBirth)
+                safelyRun { callback?.onResult(Unit) }
+            } catch (t: Throwable) {
+                safelyRun { callback?.onError(t) }
+            }
+        }
+    }
+
+    /**
+     * Set the customer user ID (e.g. RevenueCat `app_user_id`) so webhook events can
+     * be linked back to this device's attribution.
+     *
+     * Persists locally AND syncs to server via `_set_user_id` event so the server-side
+     * userId fallback lookup can find this attribution by user ID on webhook delivery.
+     *
+     * Respects the kill switch for the server sync, but ALWAYS writes to local storage
+     * (so the next configure() call picks up the userId even if offline).
+     */
     suspend fun setUserId(userId: String) {
         safelyRun {
-            val s = state ?: return@safelyRun
-            s.storage.setUserId(userId)
+            val s = state
+            if (s == null) {
+                android.util.Log.i("AppRefer", "setUserId called before configure() — ignoring")
+                return@safelyRun
+            }
+
+            safelyRun { s.storage.setUserId(userId) }
             s.logger.info("User ID set")
+
+            if (!s.storage.isSdkEnabled()) return@safelyRun
+
+            val deviceId = safely<String?>(null) { s.storage.getDeviceId() } ?: run {
+                s.logger.error("setUserId: no device_id — did configure() run?")
+                return@safelyRun
+            }
+
+            val body = LinkedHashMap<String, Any?>().apply {
+                put("device_id", deviceId)
+                put("event_name", "_set_user_id")
+                put("properties", mapOf("user_id" to userId))
+            }
+
+            safelyRun {
+                withContext(Dispatchers.IO) { s.http.post("/api/track/event", body) }
+            }
+        }
+    }
+
+    /** Java-friendly callback overload for setUserId. */
+    @JvmStatic
+    @JvmOverloads
+    fun setUserId(
+        userId: String,
+        callback: AppReferCallback<Unit>? = null,
+    ) {
+        scope.launch {
+            try {
+                setUserId(userId)
+                safelyRun { callback?.onResult(Unit) }
+            } catch (t: Throwable) {
+                safelyRun { callback?.onError(t) }
+            }
         }
     }
 
