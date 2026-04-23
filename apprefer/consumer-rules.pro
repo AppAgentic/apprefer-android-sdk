@@ -1,0 +1,5 @@
+-keep class com.apprefer.sdk.AppRefer { *; }
+-keep class com.apprefer.sdk.AppReferCallback { *; }
+-keep class com.apprefer.sdk.models.Attribution { *; }
+-keep class com.apprefer.sdk.APPREFER_SDK_VERSIONKt { *; }
+-dontwarn com.android.installreferrer.**
