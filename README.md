@@ -33,6 +33,20 @@ dependencies {
 }
 ```
 
+From the first release that includes AppRefer Billing, the repo publishes two
+modules, and the `com.github.AppAgentic:apprefer-android-sdk:<tag>` coordinate
+above brings in **both** (Play Billing, the `BILLING` permission and `minSdk` 23).
+Pick the module you need instead:
+
+```kotlin
+dependencies {
+    // Attribution only (minSdk 21, no Play Billing)
+    implementation("com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:<tag>")
+    // Attribution + subscriptions (AppRefer Billing, minSdk 23)
+    implementation("com.github.AppAgentic.apprefer-android-sdk:apprefer-billing:<tag>")
+}
+```
+
 Every tag on this repo is published automatically by JitPack — no accounts
 or tokens required.
 
@@ -82,6 +96,118 @@ AppRefer.configure(
 );
 ```
 
+## Subscriptions (AppRefer Billing)
+
+AppRefer Billing replaces RevenueCat for Google Play subscriptions and one-time products. Play Billing Library 8 handles the purchase, AppRefer verifies it with Google, acknowledges it, keeps the entitlements and sends the conversion to your ad networks from the same attribution data. It lives in the separate `apprefer-billing` module (`minSdk` 23, Kotlin 2.1+ because Play Billing 8.3 ships Kotlin 2.2 metadata); the attribution module does not depend on it.
+
+Billing must be enabled for the app in AppRefer (`billing.mode` `shadow` or `primary`, with the package name, a Play service account and products configured).
+
+### Set up
+
+```kotlin
+class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        CoroutineScope(Dispatchers.IO).launch { AppRefer.configure(this@App, apiKey = "pk_live_...") }
+        // Uses the same SDK key. Connects to Google Play and sends any unfinished purchases right away.
+        AppReferBilling.configure(
+            context = this,
+            appUserId = null,  // null = anonymous "$ARAnon:<UUID>", kept on device
+            entitlementsByProduct = mapOf(
+                "pro_monthly" to listOf("premium"),
+                "pro_yearly" to listOf("premium"),
+            ),
+            consumableProductIds = setOf("coins_100"),  // one-time products that can be bought again
+        )
+    }
+}
+```
+
+`entitlementsByProduct` is only used when AppRefer can't be reached (see Outage safety). Unlisted products fall back to the mapping the server last returned, then `defaultEntitlement` (default `premium`, the same as the server). One-time products not in `consumableProductIds` are treated as non-consumable (lifetime).
+
+### Products, purchase, restore
+
+```kotlin
+val products = AppReferBilling.products(listOf("pro_monthly", "pro_yearly"))  // Play ProductDetails, in this order
+
+val result = AppReferBilling.purchase(activity, products[1])
+when (result.outcome) {
+    AppReferBilling.PurchaseResult.Outcome.PURCHASED -> unlock(result.customerInfo)
+    AppReferBilling.PurchaseResult.Outcome.USER_CANCELLED -> Unit
+    AppReferBilling.PurchaseResult.Outcome.PENDING -> showPendingNote()  // arrives later via customerInfoStream
+}
+
+val info = AppReferBilling.restorePurchases()  // queryPurchasesAsync + sends every active purchase
+```
+
+`purchase` sets `BillingFlowParams.setObfuscatedAccountId` to the customer's AppRefer account token and sends the purchase to AppRefer, which verifies and **acknowledges** it. Consumables are consumed by the SDK only after AppRefer has accepted them.
+
+- Subscription offers: pass `offerToken` (from `product.subscriptionOfferDetails`). Without one the SDK picks a free-trial offer the user is eligible for, else the base plan (`AppReferBilling.defaultOfferToken(product)`). Products with several base plans should pass the token they display.
+- Upgrades/downgrades: `purchase(activity, newProduct, oldProductId = "pro_monthly", replacementMode = SubscriptionProductReplacementParams.ReplacementMode.WITH_TIME_PRORATION)`.
+- Pending purchases (cash, bank transfer) are enabled. They return `PENDING`, grant nothing, and are sent to AppRefer once Google Play reports them paid (via `onPurchasesUpdated`, or the next launch/foreground).
+- Errors from Google Play throw `AppReferBillingException.Store(responseCode, debugMessage)` (e.g. `ITEM_ALREADY_OWNED`: the owned purchase is sent to AppRefer first, so a `restorePurchases()` or `customerInfo()` call afterwards shows it).
+
+### Entitlements
+
+```kotlin
+val info = AppReferBilling.customerInfo()                                   // cached for 5 minutes, then fetched
+val fresh = AppReferBilling.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+if (info.entitlements["premium"]?.isActive == true) { /* unlocked */ }
+
+AppReferBilling.customerInfoStream.collect { update(it) }                   // Flow, latest value first
+AppReferBilling.listener = AppReferBillingListener { update(it) }           // or a listener, on the main thread
+```
+
+`customerInfo` never throws. `info.source` tells you where the answer came from: `SERVER`, `CACHE` or `LOCAL_FALLBACK`.
+
+### Users
+
+```kotlin
+AppReferBilling.logIn("user_123")    // moves purchases made while anonymous to this user
+AppReferBilling.logOut()             // new anonymous id
+AppReferBilling.setAttributes(mapOf("\$email" to "a@b.com", "\$displayName" to "Alex"))  // sent with the next call
+AppReferBilling.setEmail("a@b.com")  // also setDisplayName / setPhoneNumber
+```
+
+The AppRefer attribution device id is sent automatically as `appreferId`, so purchases are matched to the ad click without `setUserId`.
+
+Java: every suspend call has a callback overload taking `AppReferCallback<T>` (results on the main thread), e.g. `AppReferBilling.customerInfo(callback)`, `purchase(activity, product, null, callback)`, `restorePurchases(callback)`, `logIn(id, callback)`.
+
+### Outage safety
+
+A paying user is never locked out because AppRefer is down:
+
+- If AppRefer can't be reached or returns an error, entitlements come from Google Play's own active purchases (`queryPurchasesAsync`: purchased, not pending, not consumable), mapped through `entitlementsByProduct`, merged with the last server answer for the same user.
+- A purchase AppRefer can't accept right now is saved to a retry queue on disk (max 50 attempts / 90 days). It is resent on the next launch, on foreground and after the next successful call. Google's real-time developer notifications also reach AppRefer on their own.
+- Google refunds purchases that aren't acknowledged within 3 days. If AppRefer still hasn't accepted a purchase 48 hours after it was made, the SDK acknowledges (or consumes) it itself; it stays queued for AppRefer.
+- The Play connection uses `enableAutoServiceReconnection()` plus a retried first connection.
+
+### Migrating from RevenueCat
+
+| RevenueCat | AppRefer Billing |
+|---|---|
+| `Purchases.configure(PurchasesConfiguration.Builder(ctx, key).appUserID(id).build())` | `AppReferBilling.configure(ctx, appUserId = id, entitlementsByProduct = ...)` (after `AppRefer.configure(ctx, apiKey)`) |
+| `Purchases.sharedInstance.awaitOfferings()` / `StoreProduct` | `AppReferBilling.products(listOf("id", ...))` → Play `ProductDetails` |
+| `awaitPurchase(PurchaseParams.Builder(activity, product).build())` → `PurchaseResult(storeTransaction, customerInfo)` | `AppReferBilling.purchase(activity, product)` → `PurchaseResult` (`.purchase`, `.customerInfo`, `.userCancelled`, `.outcome`) |
+| `PurchaseParams.Builder(...).oldProductId(...).googleReplacementMode(...)` | `purchase(activity, product, oldProductId = ..., replacementMode = ...)` |
+| `PurchasesTransactionException` with `userCancelled` | `outcome == USER_CANCELLED` (not an exception) |
+| `Purchases.sharedInstance.awaitRestore()` | `AppReferBilling.restorePurchases()` |
+| `awaitCustomerInfo(CacheFetchPolicy.CACHED_OR_FETCHED / FETCH_CURRENT)` | `AppReferBilling.customerInfo(FetchPolicy.CACHED_OR_FETCHED / FETCH_CURRENT)` |
+| `customerInfo.entitlements["premium"]?.isActive` | same |
+| `customerInfo.entitlements.active` / `.activeSubscriptions` | same |
+| `EntitlementInfo.expirationDate / willRenew / periodType / productIdentifier / store` | same names |
+| `updatedCustomerInfoListener` | `AppReferBilling.listener` / `customerInfoStream` |
+| `awaitLogIn(id)` / `awaitLogOut()` | `AppReferBilling.logIn(id)` / `logOut()` |
+| `Purchases.sharedInstance.appUserID` / `isAnonymous` | `AppReferBilling.appUserId` / `isAnonymous` |
+| `$RCAnonymousID:<hex>` | `$ARAnon:<UUID>` |
+| `setEmail` / `setDisplayName` / `setPhoneNumber` / `setAttributes` | same names on `AppReferBilling` |
+| RevenueCat consumes all one-time purchases by default | list consumables in `consumableProductIds`; others are lifetime |
+| `AppRefer.setUserId(rcUserId)` | not needed: the device id is linked automatically |
+
+If a file imports both SDKs during the switch, use `AppReferCustomerInfo` / `AppReferEntitlementInfo` (the `CustomerInfo` / `EntitlementInfo` typealiases clash with RevenueCat's names).
+
+Testing: use a license tester account on an internal testing track. The AppRefer app must use a test SDK key for test purchases, and Play Billing needs a device or emulator image with the Play Store.
+
 ## Permissions
 
 The SDK declares only `android.permission.INTERNET`. It does **not** request
@@ -90,10 +216,10 @@ Data Safety form accordingly.
 
 ## Requirements
 
-- `minSdk` 21 (Android 5.0)
+- `minSdk` 21 (Android 5.0); 23 with `apprefer-billing`
 - `compileSdk` 35
 - JDK 17
-- Kotlin 2.x
+- Kotlin 2.x (2.1+ with `apprefer-billing`)
 
 ## Docs
 

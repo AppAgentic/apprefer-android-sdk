@@ -4,6 +4,37 @@ All notable changes to the AppRefer Android SDK will be documented in this
 file. This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and stays version-locked with the iOS, Flutter, and React Native SDKs.
 
+## [Unreleased]
+
+### Added
+- AppRefer Billing (`apprefer-billing` module, `com.apprefer.sdk.billing.AppReferBilling`):
+  Google Play purchases and entitlements verified by AppRefer, replacing RevenueCat.
+  Mirrors the iOS `AppReferBilling` API.
+  - `configure(context, apiKey?, appUserId?, entitlementsByProduct, defaultEntitlement?, consumableProductIds)`
+    with an anonymous `$ARAnon:<UUID>` id kept on device
+  - `products(ids)`, `purchase(activity, product, offerToken?, oldProductId?, replacementMode)`
+    (sets `obfuscatedAccountId` to the AppRefer account token), `restorePurchases()`
+  - `customerInfo(fetchPolicy)`, `customerInfoStream` (Flow), `listener`;
+    `entitlements["premium"]?.isActive`, `source` (`SERVER` / `CACHE` / `LOCAL_FALLBACK`)
+  - `logIn` (merges anonymous purchases via `/identify`), `logOut`, `setAttributes`,
+    `setEmail` / `setDisplayName` / `setPhoneNumber`; Java callback overloads
+  - Play Billing Library 8.3: pending purchases, automatic service reconnection,
+    `queryPurchasesAsync` for restore, sync and outage fallback; consumables consumed
+    after AppRefer accepts them; purchases AppRefer hasn't accepted after 48 h are
+    acknowledged on device so Google doesn't refund them
+  - Outage safety: Google Play's active purchases merged with the cached server answer;
+    disk retry queue (50 attempts / 90 days)
+  - Sends the AppRefer attribution device id as `appreferId` automatically
+- `InternalAppReferApi` / `AppReferInternal` (opt-in, for AppRefer modules only).
+
+### Changed
+- Built with Kotlin 2.2.20. The attribution module still targets Kotlin language/API 2.0
+  and stdlib 2.0.21, so attribution-only apps on Kotlin 2.0 are unaffected.
+- JitPack now publishes two modules. `com.github.AppAgentic:apprefer-android-sdk:<tag>`
+  brings in both; attribution-only apps should use
+  `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:<tag>`.
+- Sample app: `minSdk` 23 and a billing entitlement check.
+
 ## [0.4.1] - 2026-04-23
 
 ### Added
