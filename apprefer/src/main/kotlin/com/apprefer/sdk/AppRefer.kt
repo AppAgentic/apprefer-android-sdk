@@ -321,6 +321,9 @@ object AppRefer {
 
     // region internals
 
+    /** SDK key passed to `configure` in this process (read by AppRefer Billing). */
+    internal fun currentApiKey(): String? = state?.apiKey
+
     private suspend fun ensureState(
         context: Context,
         apiKey: String,

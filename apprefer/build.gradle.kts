@@ -1,4 +1,6 @@
 import com.vanniktech.maven.publish.SonatypeHost
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
     id("com.android.library")
@@ -24,12 +26,20 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     buildFeatures {
         buildConfig = false
+    }
+}
+
+kotlin {
+    // Built with Kotlin 2.2 (for :apprefer-billing) but kept consumable by Kotlin 2.0
+    // apps: emit 2.0 metadata and depend on the 2.0 stdlib.
+    coreLibrariesVersion = "2.0.21"
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        languageVersion.set(KotlinVersion.KOTLIN_2_0)
+        apiVersion.set(KotlinVersion.KOTLIN_2_0)
     }
 }
 
