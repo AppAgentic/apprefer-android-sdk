@@ -206,7 +206,7 @@ A paying user is never locked out because AppRefer is down:
 
 If a file imports both SDKs during the switch, use `AppReferCustomerInfo` / `AppReferEntitlementInfo` (the `CustomerInfo` / `EntitlementInfo` typealiases clash with RevenueCat's names).
 
-Testing: use a license tester account on an internal testing track. The AppRefer app must use a test SDK key for test purchases, and Play Billing needs a device or emulator image with the Play Store.
+Testing: use a license tester account on an internal testing track; AppRefer records those purchases as sandbox. AppRefer rejects real (production) purchases sent with a test SDK key. Play Billing needs a device or emulator image with the Play Store.
 
 ## Permissions
 
