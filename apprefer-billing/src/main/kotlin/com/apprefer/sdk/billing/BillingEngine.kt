@@ -342,15 +342,24 @@ internal class BillingEngine(
         }
     }
 
+    /** Who a delivered purchase is recorded for, and the saved intent it resolves. */
+    private data class Owner(val appUserId: String, val intent: PurchaseIntent?, val supportNote: String? = null)
+
+    /** Untagged purchases left open this sync because intents were lost. */
+    private var deferredForLostIntents = 0
+
     /**
      * The app user a purchase delivered outside its `purchase()` call belongs to (pending
      * payment completed, app restarted, user switched): whoever its `obfuscatedAccountId`
      * was issued to, else whoever the saved intent says started it (an untagged purchase
-     * matches the oldest untagged intent for its product), else the current user. Never a
-     * restore, so it can't move another user's purchase. Null (left open and sent later)
-     * while the account tokens, or the intents an untagged purchase needs, can't be read.
+     * matches the oldest intent for its product, tagged or not), else the current user.
+     * Renewals never match or use up an intent. Never a restore, so it can't move another
+     * user's purchase. Null (left open and sent later) while the account tokens, or the
+     * intents an untagged purchase needs, can't be read, and while intents were lost
+     * ([BillingStorage.intentsLostAtMillis]): an untagged purchase with no intent then
+     * waits [LOST_INTENT_WAIT_MS], then goes to the current user with a support note.
      */
-    private fun ownerOf(purchase: StorePurchase): Pair<String, PurchaseIntent?>? {
+    private fun ownerOf(purchase: StorePurchase): Owner? {
         val tag = purchase.obfuscatedAccountId
         val tagged = tag?.let {
             try {
@@ -359,21 +368,41 @@ internal class BillingEngine(
                 return null
             }
         }
+        if (purchase.isRenewal) return (tagged ?: activeUser())?.let { Owner(it, null) }
+        val name = purchase.orderId ?: purchase.productId
         val intents = try {
             storage.purchaseIntents
         } catch (_: BillingStorageException) {
             if (tagged == null) {
-                logger.warn("Billing: purchase intents unreadable; ${purchase.orderId ?: purchase.productId} will be sent on the next sync")
+                logger.warn("Billing: purchase intents unreadable; $name will be sent on the next sync")
                 return null
             }
             emptyList()
         }
         val intent = intents.firstOrNull {
-            it.productId in purchase.productIds &&
-                if (tag == null) it.accountToken == null else it.accountToken.equals(tag, ignoreCase = true)
+            it.productId in purchase.productIds && (tag == null || it.accountToken.equals(tag, ignoreCase = true))
         }
-        val owner = tagged ?: intent?.appUserId ?: activeUser() ?: return null
-        return owner to intent
+        if (tagged != null || intent != null) return Owner(tagged ?: intent!!.appUserId, intent)
+        if (tag == null) {
+            val lostAt = try {
+                storage.intentsLostAtMillis
+            } catch (_: BillingStorageException) {
+                logger.warn("Billing: purchase intents unreadable; $name will be sent on the next sync")
+                return null
+            }
+            if (lostAt != null) {
+                val user = activeUser() ?: return null
+                if (now() < maxOf(lostAt, purchase.purchaseTimeMillis) + LOST_INTENT_WAIT_MS) {
+                    deferredForLostIntents++
+                    logger.warn("Billing: who started $name may have been lost; left open and retried later")
+                    return null
+                }
+                val note = "who started this purchase was lost (malformed intent storage); recorded for the current user $user"
+                logger.error("Billing: $name: $note. Support: check the purchase_intents.*.corrupt file")
+                return Owner(user, null, note)
+            }
+        }
+        return activeUser()?.let { Owner(it, null) }
     }
 
     private fun dropIntent(intent: PurchaseIntent?) {
@@ -383,20 +412,18 @@ internal class BillingEngine(
     }
 
     /**
-     * Drops intents older than [INTENT_MAX_AGE_MS] whose product has no purchase still
-     * open in Play (pending payment, or purchased and not yet acknowledged): an unresolved
-     * intent is never expired while its purchase may still arrive.
+     * Clears the intents-lost marker once no purchase is waiting on it: nothing was left
+     * open for it this sync and no untagged purchase is still pending payment.
      */
-    private fun expireIntents(purchases: List<StorePurchase>) {
-        val intents = try {
-            storage.purchaseIntents
+    private fun clearLostIntentsIfResolved(purchases: List<StorePurchase>) {
+        if (deferredForLostIntents > 0) return
+        if (purchases.any { it.state == StorePurchase.State.PENDING && it.obfuscatedAccountId == null }) return
+        try {
+            if (storage.intentsLostAtMillis == null) return
         } catch (_: BillingStorageException) {
             return
         }
-        val open = purchases.filter { it.state == StorePurchase.State.PENDING || !it.isAcknowledged }
-            .flatMapTo(HashSet()) { it.productIds }
-        val stale = intents.filter { now() - it.startedAtMillis > INTENT_MAX_AGE_MS && it.productId !in open }
-        storage.removePurchaseIntents(stale)
+        if (!storage.clearIntentsLost()) logger.warn("Billing: could not clear the intents-lost marker; cleared later")
     }
 
     /**
@@ -412,11 +439,12 @@ internal class BillingEngine(
         owner: String?,
         restore: Boolean = false,
         intent: PurchaseIntent? = null,
+        supportNote: String? = null,
     ): AppReferCustomerInfo {
         if (purchase.state != StorePurchase.State.PURCHASED) return localFallback()
         if (purchase.purchaseToken.isEmpty() || purchase.productId.isEmpty()) {
             logger.error("Billing: purchase ${purchase.orderId ?: purchase.productId} has no usable store data; not sent")
-            if (secureRejected(purchase, productType, owner, null, "no usable store data")) dropIntent(intent)
+            if (secureRejected(purchase, productType, owner, null, "no usable store data", supportNote)) dropIntent(intent)
             return localFallback()
         }
         if (owner == null) {
@@ -441,7 +469,7 @@ internal class BillingEngine(
             return info
         } catch (e: AppReferBillingException) {
             // Until a copy is on disk Play keeps the purchase open, and the intent is still needed.
-            if (uploadFailed(purchase, productType, owner, deviceId, restore, e)) dropIntent(intent)
+            if (uploadFailed(purchase, productType, owner, deviceId, restore, e, supportNote)) dropIntent(intent)
             return afterUploadFailure(e)
         }
     }
@@ -479,13 +507,14 @@ internal class BillingEngine(
         deviceId: String?,
         restore: Boolean,
         e: AppReferBillingException,
+        supportNote: String? = null,
     ): Boolean {
         val name = purchase.orderId ?: purchase.productId
         if (!e.isRetryable) {
             // Rejected as malformed: retrying won't help. Kept for support and Restore
             // Purchases; the purchase still unlocks on device.
             logger.error("Billing: AppRefer rejected purchase $name: ${e.message}")
-            val secured = secureRejected(purchase, productType, owner, deviceId, e.message ?: "rejected")
+            val secured = secureRejected(purchase, productType, owner, deviceId, e.message ?: "rejected", supportNote)
             if (secured && queue.containsToken(purchase.purchaseToken)) queue.remove(purchase.purchaseToken)
             return secured
         }
@@ -505,6 +534,7 @@ internal class BillingEngine(
         owner: String?,
         deviceId: String?,
         reason: String,
+        supportNote: String? = null,
     ): Boolean {
         val entry = RejectedPurchase(
             purchaseToken = purchase.purchaseToken,
@@ -517,6 +547,7 @@ internal class BillingEngine(
             reason = reason,
             rejectedAtMillis = now(),
             originalJson = purchase.raw?.originalJson,
+            supportNote = supportNote,
         )
         if (!rejected.add(entry)) {
             logger.error("Billing: could not save rejected purchase ${purchase.orderId ?: purchase.productId}; left unacknowledged")
@@ -608,6 +639,12 @@ internal class BillingEngine(
         rejected.reloadIfNeeded()
         val result = play.queryPurchases()
         if (!result.isOk) return@withContext
+        deferredForLostIntents = 0
+        // Reading the intents quarantines malformed storage and saves the intents-lost marker.
+        try {
+            storage.purchaseIntents
+        } catch (_: BillingStorageException) {
+        }
         for (purchase in result.purchases) {
             if (purchase.state != StorePurchase.State.PURCHASED) continue
             val type = LocalEntitlements.productType(purchase, options.consumableProductIds)
@@ -640,12 +677,15 @@ internal class BillingEngine(
                     }
                 }
                 else -> {
+                    val deferredBefore = deferredForLostIntents
                     val owner = ownerOf(purchase)
-                    process(purchase, type, owner?.first, intent = owner?.second)
+                    if (deferredForLostIntents > deferredBefore) continue
+                    process(purchase, type, owner?.appUserId, intent = owner?.intent, supportNote = owner?.supportNote)
                 }
             }
         }
-        expireIntents(result.purchases)
+        // Intents leave only on a definitive outcome, never by age or by Play not listing them.
+        clearLostIntentsIfResolved(result.purchases)
     }
 
     /**
@@ -893,8 +933,11 @@ internal class BillingEngine(
         const val MIN_BACKOFF_MS = 30_000L
         const val MAX_BACKOFF_MS = 3600_000L
 
-        /** Unresolved intents older than this are dropped once Play has nothing open for their product. */
-        const val INTENT_MAX_AGE_MS = 30L * 24 * 3600 * 1000
+        /**
+         * How long an untagged purchase waits for its lost intent before it goes to the
+         * current user: inside Google's 3-day acknowledgement window.
+         */
+        const val LOST_INTENT_WAIT_MS = 48L * 3600 * 1000
 
         fun isValid(appUserId: String): Boolean =
             appUserId.isNotEmpty() && appUserId.length <= 256 && appUserId.none { it.isWhitespace() }

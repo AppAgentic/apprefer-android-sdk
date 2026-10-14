@@ -72,7 +72,11 @@ internal class InMemoryKeyValueStore : BillingKeyValueStore {
  * Persistent billing state. Methods are synchronized: attribute setters are called from
  * any thread, everything else from the engine.
  */
-internal class BillingStorage(private val store: BillingKeyValueStore, val directory: File) {
+internal class BillingStorage(
+    private val store: BillingKeyValueStore,
+    val directory: File,
+    private val now: () -> Long = System::currentTimeMillis,
+) {
 
     init {
         directory.mkdirs()
@@ -251,13 +255,49 @@ internal class BillingStorage(private val store: BillingKeyValueStore, val direc
     // region Purchase intents: who opened a purchase sheet, for purchases delivered after a
     // restart, logOut or user switch (pending payment methods can take days)
 
-    /** The saved intents, oldest first. Throws [BillingStorageException] when they can't be read. */
+    /**
+     * The saved intents, oldest first. Throws [BillingStorageException] when they can't be
+     * read. Malformed storage is quarantined (its raw text copied aside for support), the
+     * entries that still decode are kept, and the intents-lost marker is saved
+     * ([intentsLostAtMillis]); it throws if any of that can't be saved, so nothing is lost.
+     */
     @get:Synchronized
     val purchaseIntents: List<PurchaseIntent>
         get() {
-            val arr = parseArray(store.getString(KEY_PURCHASE_INTENTS)) ?: return emptyList()
-            return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let(::decodeIntent) }
+            val raw = store.getString(KEY_PURCHASE_INTENTS) ?: return emptyList()
+            val arr = parseArray(raw)
+            val decoded = arr?.let { a -> (0 until a.length()).map { i -> a.optJSONObject(i)?.let(::decodeIntent) } }
+            val kept = decoded.orEmpty().filterNotNull()
+            if (decoded != null && kept.size == decoded.size) return kept
+            quarantineIntents(raw, kept)
+            return kept
         }
+
+    private fun quarantineIntents(raw: String, kept: List<PurchaseIntent>) {
+        val copy = File(directory, "purchase_intents.${now()}.corrupt")
+        if (!writeAtomically(copy, raw)) throw BillingStorageException("Could not quarantine malformed purchase intents")
+        if (intentsLostAtMillis == null && !store.putString(KEY_INTENTS_LOST_AT, now().toString())) {
+            throw BillingStorageException("Could not save the intents-lost marker")
+        }
+        if (!writeIntents(kept)) throw BillingStorageException("Could not rewrite the purchase intents")
+    }
+
+    /**
+     * When intent storage was found malformed, while that may still hide who started an
+     * open purchase; null when no intents were lost. Throws [BillingStorageException] when
+     * it can't be read.
+     */
+    @get:Synchronized
+    val intentsLostAtMillis: Long?
+        get() {
+            val raw = store.getString(KEY_INTENTS_LOST_AT) ?: return null
+            // A damaged marker still means intents were lost; its 48-hour wait is over.
+            return raw.toLongOrNull() ?: 0L
+        }
+
+    /** Clears the intents-lost marker. Returns whether it is gone from disk. */
+    @Synchronized
+    fun clearIntentsLost(): Boolean = store.putString(KEY_INTENTS_LOST_AT, null)
 
     /** Adds [intent]. Returns whether it is on disk (false also when the list can't be read). */
     @Synchronized
@@ -348,6 +388,7 @@ internal class BillingStorage(private val store: BillingKeyValueStore, val direc
         private const val KEY_PENDING_IDENTIFY = "apprefer_billing_pending_identify"
         private const val KEY_PENDING_IDENTIFIES = "apprefer_billing_pending_identifies"
         const val KEY_PURCHASE_INTENTS = "apprefer_billing_purchase_intents"
+        const val KEY_INTENTS_LOST_AT = "apprefer_billing_intents_lost_at"
 
         fun isAnonymous(appUserId: String) = appUserId.startsWith(ANONYMOUS_PREFIX)
 

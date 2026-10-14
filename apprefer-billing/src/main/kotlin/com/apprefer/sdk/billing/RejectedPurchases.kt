@@ -27,6 +27,8 @@ data class RejectedPurchase(
     val rejectedAtMillis: Long,
     /** Play's purchase JSON, kept when the purchase had no usable store data. */
     val originalJson: String? = null,
+    /** Set when the owner was a fallback (who started it was lost), for support to check. */
+    val supportNote: String? = null,
 ) {
     internal val key: String get() = purchaseToken.ifEmpty { "$productId@$orderId" }
 
@@ -66,8 +68,8 @@ internal class RejectedPurchaseLog(private val file: File) {
     /** Adds (or replaces) the entry. True only once the list holding it is on disk. */
     fun add(entry: RejectedPurchase): Boolean {
         mutate {
+            // No cap: an entry leaves only once AppRefer records its purchase.
             entries = entries.filterNot { it.key == entry.key } + entry
-            if (entries.size > MAX_ENTRIES) entries = entries.takeLast(MAX_ENTRIES)
         }
         return onDisk[entry.key] == entry
     }
@@ -145,7 +147,8 @@ internal class RejectedPurchaseLog(private val file: File) {
                     .put("accountToken", e.accountToken ?: JSONObject.NULL)
                     .put("reason", e.reason)
                     .put("rejectedAtMs", e.rejectedAtMillis)
-                    .put("originalJson", e.originalJson ?: JSONObject.NULL),
+                    .put("originalJson", e.originalJson ?: JSONObject.NULL)
+                    .put("supportNote", e.supportNote ?: JSONObject.NULL),
             )
         }
         if (!BillingStorage.writeAtomically(file, arr.toString())) return false
@@ -166,11 +169,7 @@ internal class RejectedPurchaseLog(private val file: File) {
             reason = str("reason") ?: "",
             rejectedAtMillis = (o.opt("rejectedAtMs") as? Number)?.toLong() ?: 0L,
             originalJson = str("originalJson"),
+            supportNote = str("supportNote"),
         )
-    }
-
-    companion object {
-        /** Oldest entries beyond this are dropped. */
-        const val MAX_ENTRIES = 200
     }
 }

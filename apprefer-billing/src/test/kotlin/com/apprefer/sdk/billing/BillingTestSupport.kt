@@ -13,8 +13,11 @@ internal const val DAY = 24 * 3600 * 1000L
 
 internal fun tempDir(): File = Files.createTempDirectory("apprefer-billing-test").toFile().apply { deleteOnExit() }
 
-internal fun newStorage(store: BillingKeyValueStore = InMemoryKeyValueStore(), dir: File = tempDir()) =
-    BillingStorage(store, dir)
+internal fun newStorage(
+    store: BillingKeyValueStore = InMemoryKeyValueStore(),
+    dir: File = tempDir(),
+    now: () -> Long = { NOW },
+) = BillingStorage(store, dir, now)
 
 internal fun storePurchase(
     token: String,

@@ -301,21 +301,145 @@ class BillingRecoveryTest {
     }
 
     @Test
-    fun unresolvedIntentIsKeptWhileItsPurchaseIsPending() = runTest {
+    fun intentsAreNeverDroppedByAgeOrAbsenceFromPlay() = runTest {
         val h = Harness(this, "user_1")
         val old = PurchaseIntent("pro_monthly", "user_1", null, NOW)
         val fresh = PurchaseIntent("coins_100", "user_1", null, NOW + 59 * DAY)
         assertTrue(h.storage.addPurchaseIntent(old))
         assertTrue(h.storage.addPurchaseIntent(fresh))
-        h.now = NOW + 60 * DAY
+        h.now = NOW + 400 * DAY
         h.play.purchases += storePurchase("p1", "pro_monthly", state = StorePurchase.State.PENDING)
         h.engine.syncPurchases()
         assertEquals(listOf(old, fresh), h.storage.purchaseIntents)
 
-        // Nothing open for it any more: the old intent goes, the recent one stays.
+        // Play lists nothing for either product: still kept.
         h.play.purchases.clear()
         h.engine.syncPurchases()
-        assertEquals(listOf(fresh), h.storage.purchaseIntents)
+        assertEquals(listOf(old, fresh), h.storage.purchaseIntents)
+    }
+
+    @Test
+    fun storeErrorThatMayStillCompleteKeepsTheIntent() = runTest {
+        val h = Harness(this, "user_1")
+        runPurchase(h, "pro_monthly", ProductTypes.SUBSCRIPTION, StorePurchasesUpdate(BillingResponseCode.ERROR, "flaky", emptyList()))
+            .await()
+        assertEquals(listOf("user_1"), h.storage.purchaseIntents.map { it.appUserId })
+    }
+
+    @Test
+    fun renewalNeverMatchesOrConsumesAnIntent() = runTest {
+        val h = Harness(this, "user_2")
+        val intent = PurchaseIntent("pro_monthly", "user_1", null, NOW)
+        assertTrue(h.storage.addPurchaseIntent(intent))
+        // Renewal order ids carry a `..N` suffix.
+        h.play.purchases += storePurchase("r1..3", "pro_monthly")
+        h.engine.syncPurchases()
+        assertEquals("user_2", h.purchaseBodies().single().getString("appUserId"))
+        assertEquals(listOf(intent), h.storage.purchaseIntents)
+        assertFalse(storePurchase("r1", "pro_monthly").isRenewal)
+        assertTrue(storePurchase("r1..0", "pro_monthly").isRenewal)
+    }
+
+    @Test
+    fun untaggedPurchaseMatchesTheOldestIntentEvenIfThatIntentWasTagged() = runTest {
+        val h = Harness(this, "user_3")
+        val tagged = PurchaseIntent("pro_monthly", "user_1", "0f8fad5b-d9cb-469f-a165-70867728950e", NOW)
+        val untagged = PurchaseIntent("pro_monthly", "user_2", null, NOW + 1)
+        assertTrue(h.storage.addPurchaseIntent(tagged))
+        assertTrue(h.storage.addPurchaseIntent(untagged))
+        // Delivered without its tag.
+        h.play.purchases += storePurchase("p1", "pro_monthly")
+        h.engine.syncPurchases()
+        assertEquals("user_1", h.purchaseBodies().single().getString("appUserId"))
+        assertEquals(listOf(untagged), h.storage.purchaseIntents)
+    }
+
+    @Test
+    fun malformedIntentsAreQuarantinedAndUntaggedPurchasesWaitThenGoToTheCurrentUser() = runTest {
+        var clock = NOW
+        val store = InMemoryKeyValueStore()
+        val storage = newStorage(store, now = { clock })
+        store.putString(BillingStorage.KEY_PURCHASE_INTENTS, "{not json")
+        val h = Harness(this, "user_2", storage = storage)
+        h.play.purchases += storePurchase("p1", "pro_monthly")
+        h.engine.syncPurchases()
+
+        // Quarantined, marker saved, purchase left open.
+        assertTrue(h.purchaseBodies().isEmpty())
+        assertTrue(h.play.acknowledged.isEmpty())
+        assertEquals(NOW, h.storage.intentsLostAtMillis)
+        assertEquals("{not json", h.storage.directory.listFiles()!!.single { it.name.endsWith(".corrupt") }.readText())
+        assertEquals(null, store.getString(BillingStorage.KEY_PURCHASE_INTENTS))
+
+        // Foreground a day later: still waiting.
+        h.now = NOW + DAY
+        clock = h.now
+        h.engine.onForeground()
+        assertTrue(h.purchaseBodies().isEmpty())
+
+        // After 48 hours: sent for the current user, and the marker clears.
+        h.now = NOW + 49 * 3600 * 1000L
+        clock = h.now
+        h.engine.syncPurchases()
+        assertEquals("user_2", h.purchaseBodies().single().getString("appUserId"))
+        assertEquals(null, h.storage.intentsLostAtMillis)
+    }
+
+    @Test
+    fun lostIntentMarkerStaysWhileAnUntaggedPurchaseIsPending() = runTest {
+        val store = InMemoryKeyValueStore()
+        store.putString(BillingStorage.KEY_PURCHASE_INTENTS, "[{\"productId\":1}]")
+        val h = Harness(this, "user_2", storage = newStorage(store))
+        h.play.purchases += storePurchase("p1", "pro_monthly", state = StorePurchase.State.PENDING)
+        h.engine.syncPurchases()
+        assertEquals(NOW, h.storage.intentsLostAtMillis)
+
+        h.play.purchases.clear()
+        h.engine.syncPurchases()
+        assertEquals(null, h.storage.intentsLostAtMillis)
+    }
+
+    @Test
+    fun purchaseAssignedAfterLostIntentsCarriesASupportNoteWhenArchived() = runTest {
+        val store = InMemoryKeyValueStore()
+        store.putString(BillingStorage.KEY_PURCHASE_INTENTS, "garbage")
+        val h = Harness(this, "user_2", storage = newStorage(store))
+        h.play.purchases += storePurchase("p1", "pro_monthly")
+        h.engine.syncPurchases()
+        assertTrue(h.purchaseBodies().isEmpty())
+
+        h.now = NOW + 3 * DAY
+        h.server.purchasesStatus = 400
+        h.engine.syncPurchases()
+        val entry = h.engine.rejectedPurchases().single()
+        assertEquals("user_2", entry.appUserId)
+        assertTrue(entry.supportNote!!.contains("lost"))
+        // Saved with the note.
+        assertEquals(entry.supportNote, RejectedPurchaseLog(rejectedFile(h)).entries.single().supportNote)
+    }
+
+    @Test
+    fun taggedPurchaseIsNotHeldByTheLostIntentMarker() = runTest {
+        val store = InMemoryKeyValueStore()
+        store.putString(BillingStorage.KEY_PURCHASE_INTENTS, "garbage")
+        val h = Harness(this, "user_1", storage = newStorage(store))
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        h.play.purchases += storePurchase("p1", "pro_monthly", accountId = h.server.tokenFor("user_1"))
+        h.engine.syncPurchases()
+        assertEquals("user_1", h.purchaseBodies().single().getString("appUserId"))
+    }
+
+    @Test
+    fun rejectedArchiveHasNoCapAndNeverEvicts() = runTest {
+        val h = Harness(this, "user_1")
+        repeat(500) { i ->
+            assertTrue(h.rejected.add(RejectedPurchase("t$i", "pro_monthly", ProductTypes.SUBSCRIPTION, null, "user_1", null, null, "400", NOW)))
+        }
+        assertEquals(500, h.engine.rejectedPurchases().size)
+        assertEquals(500, RejectedPurchaseLog(rejectedFile(h)).entries.size)
+        // Only a recorded purchase leaves.
+        assertTrue(h.rejected.remove("t0"))
+        assertEquals(499, RejectedPurchaseLog(rejectedFile(h)).entries.size)
     }
 
     // endregion

@@ -54,10 +54,18 @@ internal data class StorePurchase(
 
     val productId: String get() = productIds.firstOrNull() ?: ""
 
+    /**
+     * A subscription renewal: Google gives renewal orders a `..N` suffix
+     * (`GPA.1234-5678-9012-34567..0`). Renewals never match a saved purchase intent.
+     */
+    val isRenewal: Boolean get() = orderId?.let(RENEWAL_ORDER_ID::containsMatchIn) == true
+
     override fun toString() =
         "StorePurchase(orderId=$orderId, products=$productIds, state=$state, acknowledged=$isAcknowledged)"
 
     companion object {
+        private val RENEWAL_ORDER_ID = Regex("""\.\.\d+$""")
+
         fun from(p: Purchase, isSubscription: Boolean?) = StorePurchase(
             purchaseToken = p.purchaseToken,
             productIds = p.products,
