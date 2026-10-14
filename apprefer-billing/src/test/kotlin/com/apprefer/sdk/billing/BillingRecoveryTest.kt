@@ -394,9 +394,34 @@ class BillingRecoveryTest {
         h.engine.syncPurchases()
         assertEquals(NOW, h.storage.intentsLostAtMillis)
 
+        // Nothing is deferred any more, but the marker is under 48 hours old: a slow pending
+        // purchase arriving later must still be held.
         h.play.purchases.clear()
         h.engine.syncPurchases()
+        assertEquals(NOW, h.storage.intentsLostAtMillis)
+
+        h.now = NOW + 48 * 3600 * 1000L
+        h.engine.syncPurchases()
         assertEquals(null, h.storage.intentsLostAtMillis)
+    }
+
+    @Test
+    fun lostIntentWaitStartsAtTheEarlierOfPurchaseTimeAndLoss() = runTest {
+        var clock = NOW
+        val store = InMemoryKeyValueStore()
+        store.putString(BillingStorage.KEY_PURCHASE_INTENTS, "garbage")
+        val h = Harness(this, "user_2", storage = newStorage(store, now = { clock }))
+        // Bought 47 hours before the intents were found lost.
+        h.play.purchases += storePurchase("p1", "pro_monthly", purchaseTime = NOW - 47 * 3600 * 1000L)
+        h.engine.syncPurchases()
+        assertTrue(h.purchaseBodies().isEmpty())
+        assertEquals(NOW, h.storage.intentsLostAtMillis)
+
+        // 48 hours after the purchase (one after the loss): sent, inside Play's 3-day window.
+        h.now = NOW + 3600 * 1000L
+        clock = h.now
+        h.engine.syncPurchases()
+        assertEquals("user_2", h.purchaseBodies().single().getString("appUserId"))
     }
 
     @Test

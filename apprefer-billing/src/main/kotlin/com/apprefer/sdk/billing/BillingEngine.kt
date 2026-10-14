@@ -357,7 +357,8 @@ internal class BillingEngine(
      * user's purchase. Null (left open and sent later) while the account tokens, or the
      * intents an untagged purchase needs, can't be read, and while intents were lost
      * ([BillingStorage.intentsLostAtMillis]): an untagged purchase with no intent then
-     * waits [LOST_INTENT_WAIT_MS], then goes to the current user with a support note.
+     * waits [LOST_INTENT_WAIT_MS] from the earlier of its purchase time and the loss, then
+     * goes to the current user with a support note.
      */
     private fun ownerOf(purchase: StorePurchase): Owner? {
         val tag = purchase.obfuscatedAccountId
@@ -392,7 +393,10 @@ internal class BillingEngine(
             }
             if (lostAt != null) {
                 val user = activeUser() ?: return null
-                if (now() < maxOf(lostAt, purchase.purchaseTimeMillis) + LOST_INTENT_WAIT_MS) {
+                // From the earlier of the purchase and the loss, so it stays inside Play's
+                // 3-day acknowledgement window.
+                val from = if (purchase.purchaseTimeMillis > 0) minOf(lostAt, purchase.purchaseTimeMillis) else lostAt
+                if (now() < from + LOST_INTENT_WAIT_MS) {
                     deferredForLostIntents++
                     logger.warn("Billing: who started $name may have been lost; left open and retried later")
                     return null
@@ -412,14 +416,17 @@ internal class BillingEngine(
     }
 
     /**
-     * Clears the intents-lost marker once no purchase is waiting on it: nothing was left
-     * open for it this sync and no untagged purchase is still pending payment.
+     * Clears the intents-lost marker once no purchase is waiting on it (nothing was left
+     * open for it this sync and no untagged purchase is still pending payment) and it is at
+     * least [LOST_INTENT_WAIT_MS] old, so a slow pending purchase that arrives later is
+     * still held. Called only after a successful store query.
      */
     private fun clearLostIntentsIfResolved(purchases: List<StorePurchase>) {
         if (deferredForLostIntents > 0) return
         if (purchases.any { it.state == StorePurchase.State.PENDING && it.obfuscatedAccountId == null }) return
         try {
-            if (storage.intentsLostAtMillis == null) return
+            val lostAt = storage.intentsLostAtMillis ?: return
+            if (now() < lostAt + LOST_INTENT_WAIT_MS) return
         } catch (_: BillingStorageException) {
             return
         }
