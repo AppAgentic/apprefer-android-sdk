@@ -125,19 +125,19 @@ class BillingReviewRound2Test {
 
         h.engine.logIn("user_2")
         h.engine.restore()
-        val entry = h.queue.entries.single()
+        val entry = h.queue.entries.single { !it.migrationOnly }
         assertEquals("user_2", entry.appUserId)
         assertTrue(entry.restore)
 
         // An ordinary redelivery for user_1 never moves it back.
         h.queue.enqueue(PendingPurchase("t1", "pro_monthly", ProductTypes.SUBSCRIPTION, "user_1", null, NOW, 0), countAttempt = true)
         h.queue.add(PendingPurchase("t1", "pro_monthly", ProductTypes.SUBSCRIPTION, "user_1", null, NOW, 0))
-        assertEquals("user_2", h.queue.entries.single().appUserId)
-        assertTrue(h.queue.entries.single().restore)
+        assertEquals("user_2", h.queue.entries.single { !it.migrationOnly }.appUserId)
+        assertTrue(h.queue.entries.single { !it.migrationOnly }.restore)
 
         h.server.reachable = true
         h.engine.drainQueue()
-        val sent = h.purchaseBodies().last()
+        val sent = h.purchaseBodies().last { it.optBoolean("restore", false) }
         assertEquals("user_2", sent.getString("appUserId"))
         assertEquals(true, sent.get("restore"))
         assertTrue(h.server.owned["user_2"]!!.contains("pro_monthly"))

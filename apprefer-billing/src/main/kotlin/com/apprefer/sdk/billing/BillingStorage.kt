@@ -82,6 +82,31 @@ internal class BillingStorage(
         directory.mkdirs()
     }
 
+    private val importedTokens = HashSet<String>()
+    fun isMigrationPurchase(token: String): Boolean =
+        token in importedTokens || importFile(token).exists()
+    fun markMigrationPurchase(token: String): Boolean {
+        importedTokens.add(token)
+        return writeAtomically(importFile(token), "readonly")
+    }
+    private fun importFile(token: String): File {
+        val hash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(token.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        return File(directory, "migration-purchase-$hash.flag")
+    }
+
+    fun migrationSynced(user: String): Boolean = migrationFile(user).let {
+        it.exists() && it.readText() == "done"
+    }
+
+    fun markMigrationSynced(user: String): Boolean = writeAtomically(migrationFile(user), "done")
+
+    private fun migrationFile(user: String): File {
+        val hash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(user.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        return File(directory, "migration-$hash.flag")
+    }
+
     // region Identity
 
     @get:Synchronized

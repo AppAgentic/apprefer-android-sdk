@@ -29,8 +29,9 @@ data class RejectedPurchase(
     val originalJson: String? = null,
     /** Set when the owner was a fallback (who started it was lost), for support to check. */
     val supportNote: String? = null,
+    val migrationOnly: Boolean = false,
 ) {
-    internal val key: String get() = purchaseToken.ifEmpty { "$productId@$orderId" }
+    internal val key: String get() = if (migrationOnly) "migration:${appUserId?.length}:$appUserId:$purchaseToken" else purchaseToken.ifEmpty { "$productId@$orderId" }
 
     override fun toString() =
         "RejectedPurchase(orderId=$orderId, productId=$productId, appUserId=$appUserId, reason=$reason)"
@@ -57,7 +58,7 @@ internal class RejectedPurchaseLog(private val file: File) {
         private set
 
     fun containsToken(purchaseToken: String): Boolean =
-        purchaseToken.isNotEmpty() && entries.any { it.purchaseToken == purchaseToken }
+        purchaseToken.isNotEmpty() && entries.any { !it.migrationOnly && it.purchaseToken == purchaseToken }
 
     /** Whether [purchaseToken]'s entry, as held in memory, is on disk. */
     fun isDurable(purchaseToken: String): Boolean {
@@ -148,7 +149,8 @@ internal class RejectedPurchaseLog(private val file: File) {
                     .put("reason", e.reason)
                     .put("rejectedAtMs", e.rejectedAtMillis)
                     .put("originalJson", e.originalJson ?: JSONObject.NULL)
-                    .put("supportNote", e.supportNote ?: JSONObject.NULL),
+                    .put("supportNote", e.supportNote ?: JSONObject.NULL)
+                    .put("migrationOnly", e.migrationOnly),
             )
         }
         if (!BillingStorage.writeAtomically(file, arr.toString())) return false
@@ -170,6 +172,7 @@ internal class RejectedPurchaseLog(private val file: File) {
             rejectedAtMillis = (o.opt("rejectedAtMs") as? Number)?.toLong() ?: 0L,
             originalJson = str("originalJson"),
             supportNote = str("supportNote"),
+            migrationOnly = o.optBoolean("migrationOnly", false),
         )
     }
 }

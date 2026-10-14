@@ -154,7 +154,9 @@ object AppReferBilling {
             gateway = play
             engine = created
         }
-        scope.launch { safely(logger) { created.start() } }
+        Handler(Looper.getMainLooper()).post {
+            scope.launch { safely(logger) { created.start() } }
+        }
         observeForeground(appContext, created, logger)
     }
 

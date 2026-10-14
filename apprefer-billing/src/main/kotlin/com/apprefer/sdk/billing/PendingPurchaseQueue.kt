@@ -17,7 +17,9 @@ internal data class PendingPurchase(
     val attempts: Int,
     /** Queued by Restore Purchases, so the retry is still sent as a restore. */
     val restore: Boolean = false,
+    val migrationOnly: Boolean = false,
 ) {
+    val queueKey: String get() = if (migrationOnly) "migration:${appUserId.length}:$appUserId:$purchaseToken" else purchaseToken
     override fun toString() =
         "PendingPurchase(productId=$productId, appUserId=$appUserId, attempts=$attempts, restore=$restore)"
 }
@@ -41,18 +43,18 @@ internal class PendingPurchaseQueue(private val file: File) {
     /** The entries as last read from or written to disk, by purchase token. */
     private var onDisk: Map<String, PendingPurchase> = emptyMap()
 
-    var entries: List<PendingPurchase> = load().also { onDisk = it.associateBy(PendingPurchase::purchaseToken) }
+    var entries: List<PendingPurchase> = load().also { onDisk = it.associateBy(PendingPurchase::queueKey) }
         private set
 
     val isEmpty: Boolean get() = entries.isEmpty()
 
     fun contains(appUserId: String): Boolean = entries.any { it.appUserId == appUserId }
 
-    fun containsToken(purchaseToken: String): Boolean = entries.any { it.purchaseToken == purchaseToken }
+    fun containsToken(purchaseToken: String): Boolean = entries.any { it.queueKey == purchaseToken }
 
     /** Whether [purchaseToken]'s retry copy, as held in memory, is on disk. */
     fun isDurable(purchaseToken: String): Boolean {
-        val entry = entries.firstOrNull { it.purchaseToken == purchaseToken } ?: return false
+        val entry = entries.firstOrNull { it.queueKey == purchaseToken } ?: return false
         return onDisk[purchaseToken] == entry
     }
 
@@ -65,7 +67,7 @@ internal class PendingPurchaseQueue(private val file: File) {
      * and an ordinary entry never takes over a restore's owner.
      */
     fun add(entry: PendingPurchase): Boolean = mutate {
-        val index = entries.indexOfFirst { it.purchaseToken == entry.purchaseToken }
+        val index = entries.indexOfFirst { it.queueKey == entry.queueKey }
         entries = if (index >= 0) {
             val old = entries[index]
             val merged = if (old.restore && !entry.restore) {
@@ -88,7 +90,7 @@ internal class PendingPurchaseQueue(private val file: File) {
      */
     fun enqueue(entry: PendingPurchase, countAttempt: Boolean): Boolean = mutate {
         val step = if (countAttempt) 1 else 0
-        val index = entries.indexOfFirst { it.purchaseToken == entry.purchaseToken }
+        val index = entries.indexOfFirst { it.queueKey == entry.queueKey }
         entries = if (index >= 0) {
             val old = entries[index]
             val updated = if (entry.restore) {
@@ -103,16 +105,16 @@ internal class PendingPurchaseQueue(private val file: File) {
     }
 
     fun remove(purchaseToken: String): Boolean = mutate {
-        entries = entries.filterNot { it.purchaseToken == purchaseToken }
+        entries = entries.filterNot { it.queueKey == purchaseToken }
     }
 
     fun recordAttempt(purchaseToken: String): Boolean = mutate {
-        entries = entries.map { if (it.purchaseToken == purchaseToken) it.copy(attempts = it.attempts + 1) else it }
+        entries = entries.map { if (it.queueKey == purchaseToken) it.copy(attempts = it.attempts + 1) else it }
     }
 
     /** Saves provisional entries. True when everything in memory is on disk. */
     fun persist(): Boolean {
-        if (!unreadable && entries.associateBy(PendingPurchase::purchaseToken) == onDisk) return true
+        if (!unreadable && entries.associateBy(PendingPurchase::queueKey) == onDisk) return true
         return mutate {}
     }
 
@@ -133,11 +135,11 @@ internal class PendingPurchaseQueue(private val file: File) {
                 change()
                 return false
             }
-            onDisk = reloaded.associateBy(PendingPurchase::purchaseToken)
+            onDisk = reloaded.associateBy(PendingPurchase::queueKey)
             // What changed in memory while the file was unreadable is newer than the file.
-            val inMemory = pending.associateBy(PendingPurchase::purchaseToken)
-            entries = reloaded.map { inMemory[it.purchaseToken] ?: it } +
-                pending.filter { p -> reloaded.none { it.purchaseToken == p.purchaseToken } }
+            val inMemory = pending.associateBy(PendingPurchase::queueKey)
+            entries = reloaded.map { inMemory[it.queueKey] ?: it } +
+                pending.filter { p -> reloaded.none { it.queueKey == p.queueKey } }
         }
         change()
         return save()
@@ -187,11 +189,14 @@ internal class PendingPurchaseQueue(private val file: File) {
                     .put("appreferId", e.appreferId ?: JSONObject.NULL)
                     .put("enqueuedAtMs", e.enqueuedAtMillis)
                     .put("attempts", e.attempts)
-                    .apply { if (e.restore) put("restore", true) },
+                    .apply {
+                        if (e.restore) put("restore", true)
+                        if (e.migrationOnly) put("migrationOnly", true)
+                    },
             )
         }
         if (!BillingStorage.writeAtomically(file, arr.toString())) return false
-        onDisk = entries.associateBy(PendingPurchase::purchaseToken)
+        onDisk = entries.associateBy(PendingPurchase::queueKey)
         return true
     }
 
@@ -209,6 +214,7 @@ internal class PendingPurchaseQueue(private val file: File) {
             enqueuedAtMillis = (o.opt("enqueuedAtMs") as? Number)?.toLong() ?: 0L,
             attempts = (o.opt("attempts") as? Number)?.toInt() ?: 0,
             restore = o.optBoolean("restore", false),
+            migrationOnly = o.optBoolean("migrationOnly", false),
         )
     }
 

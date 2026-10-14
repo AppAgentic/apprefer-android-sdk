@@ -63,6 +63,8 @@ internal class BillingEngine(
     /** Purchase tokens acknowledged on device this launch (same cache lag). */
     private val acknowledgedTokens = HashSet<String>()
     private var isDraining = false
+    private val migratingUsers = HashSet<String>()
+    private var migrationStarted = false
     private var purchaseWaiter: Pair<String, CompletableDeferred<StorePurchasesUpdate>>? = null
 
     /** Retry queue back-off after 401/403/404/409/429, or a `Retry-After`. */
@@ -115,12 +117,52 @@ internal class BillingEngine(
      * retry queue and refreshes entitlements.
      */
     suspend fun start() = withContext(dispatcher) {
+        migrationSync()
         syncPurchases()
         customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
     }
 
+    /** Read-only import, including already-acknowledged purchases of both Play types. */
+    suspend fun migrationSync(forUser: String? = null): Unit = withContext(dispatcher) {
+        migrationStarted = true
+        val user = forUser ?: activeUser() ?: return@withContext
+        if (!migratingUsers.add(user)) return@withContext
+        try {
+            if (storage.migrationSynced(user)) return@withContext
+            if (storage.intentsLostAtMillis != null) return@withContext
+            val result = play.queryPurchases()
+            if (!result.isOk) return@withContext
+            val deviceId = appreferId()
+            var durable = true
+            var imported = false
+            for (purchase in result.purchases) {
+                if (purchase.state != StorePurchase.State.PURCHASED) continue
+                if (queue.entries.any { it.queueKey == purchase.purchaseToken && it.appUserId == user } &&
+                    queue.isDurable(purchase.purchaseToken)) continue
+                if (purchase.purchaseToken.isEmpty()) { durable = false; continue }
+                if (storage.purchaseIntents.any { it.productId == purchase.productId }) { durable = false; continue }
+                if (!storage.markMigrationPurchase(purchase.purchaseToken)) durable = false
+                val entry = PendingPurchase(
+                    purchase.purchaseToken, purchase.productId,
+                    LocalEntitlements.productType(purchase, options.consumableProductIds),
+                    user, deviceId, now(), 0, migrationOnly = true,
+                )
+                if (queue.isDurable(entry.queueKey)) continue
+                imported = true
+                if (!queue.add(entry)) durable = false
+            }
+            if (durable) storage.markMigrationSynced(user)
+            if (imported) drainQueue()
+        } catch (e: Exception) {
+            logger.warn("Billing: migration sync will retry (${e.message})")
+        } finally {
+            migratingUsers.remove(user)
+        }
+    }
+
     /** App came to the foreground. */
     suspend fun onForeground() = withContext(dispatcher) {
+        if (migrationStarted) migrationSync()
         customerInfo(AppReferBilling.FetchPolicy.CACHED_OR_FETCHED)
         syncPurchases()
         drainQueue()
@@ -582,6 +624,7 @@ internal class BillingEngine(
         val saved = rejected.add(
             RejectedPurchase(
                 purchaseToken = entry.purchaseToken,
+                migrationOnly = entry.migrationOnly,
                 productId = entry.productId,
                 productType = entry.productType,
                 orderId = null,
@@ -592,7 +635,7 @@ internal class BillingEngine(
                 rejectedAtMillis = now(),
             ),
         )
-        if (saved) queue.remove(entry.purchaseToken)
+        if (saved) queue.remove(entry.queueKey)
         else logger.error("Billing: could not save rejected purchase ${entry.productId}; kept in the retry queue")
     }
 
@@ -668,6 +711,8 @@ internal class BillingEngine(
         for (purchase in result.purchases) {
             if (purchase.state != StorePurchase.State.PURCHASED) continue
             val type = LocalEntitlements.productType(purchase, options.consumableProductIds)
+            if (storage.isMigrationPurchase(purchase.purchaseToken) && !queue.containsToken(purchase.purchaseToken) &&
+                purchase.purchaseToken !in acceptedTokens) continue
             val unfinished = !purchase.isAcknowledged || type == ProductTypes.CONSUMABLE
             when {
                 !unfinished -> continue
@@ -798,7 +843,8 @@ internal class BillingEngine(
                         ),
                     )
                     resetBackoff()
-                    onAccepted(entry.purchaseToken, entry.productType)
+                    if (entry.migrationOnly) queue.remove(entry.queueKey)
+                    else onAccepted(entry.purchaseToken, entry.productType)
                     if (entry.appUserId == activeUser()) accept(response, entry.appUserId)
                 } catch (e: AppReferBillingException) {
                     when {
@@ -808,7 +854,7 @@ internal class BillingEngine(
                             return@withContext
                         }
                         e.isRetryable -> {
-                            if (countsAttempt(e)) queue.recordAttempt(entry.purchaseToken)
+                            if (countsAttempt(e)) queue.recordAttempt(entry.queueKey)
                             pauseIfAsked(e)
                             if (e.isConnectivity || e.retryDelayMillis != null) return@withContext
                         }
@@ -881,7 +927,9 @@ internal class BillingEngine(
             }
             lastServerFetch = null
         }
-        customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        val info = customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        scope.launch(dispatcher) { migrationSync(appUserId) }
+        info
     }
 
     /** Signs out and starts a fresh anonymous id. Pending identifies stay: they still have to reach the server. */
