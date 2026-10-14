@@ -56,6 +56,22 @@ class DeviceIdManagerTest {
     }
 
     @Test
+    fun unsavedRandomIdIsNotUsed() {
+        val store = FakeStore().apply { writeWorks = false }
+        assertNull(DeviceIdManager(store, { null }, logger).getOrCreate())
+        // Saved on a later launch, then used.
+        store.writeWorks = true
+        val id = DeviceIdManager(store, { null }, logger).getOrCreate()
+        assertEquals(store.value, id)
+    }
+
+    @Test
+    fun unsavedAndroidIdIsStillUsedBecauseItIsStable() {
+        val store = FakeStore().apply { writeWorks = false }
+        assertEquals("abcdef0123456789", DeviceIdManager(store, { "abcdef0123456789" }, logger).getOrCreate())
+    }
+
+    @Test
     fun transientReadFailureIsRetriedOnce() {
         val store = FakeStore("saved").apply { readFailures = 1 }
         assertEquals("saved", DeviceIdManager(store, { null }, logger).getOrCreate())

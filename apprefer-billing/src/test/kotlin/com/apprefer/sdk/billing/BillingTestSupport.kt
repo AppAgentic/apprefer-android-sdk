@@ -85,6 +85,8 @@ internal class FakeServer(private val play: FakePlay? = null) {
     var purchasesStatus: Int? = null
     /** `Retry-After` sent with error statuses. */
     var retryAfter: String? = null
+    /** Answer purchases like older servers did when the ledger write failed (200, conversion "failed"). */
+    var legacyFailedConversion = false
     val owned = mutableMapOf<String, MutableSet<String>>()
     val requests = mutableListOf<BillingRequest>()
 
@@ -102,7 +104,12 @@ internal class FakeServer(private val play: FakePlay? = null) {
                 play?.purchases?.replaceAll {
                     if (it.purchaseToken == body.getString("purchaseToken")) it.copy(isAcknowledged = true) else it
                 }
-                respond(user, withToken = true)
+                val answer = respond(user, withToken = true)
+                if (legacyFailedConversion) {
+                    BillingHttpResponse(200, JSONObject(answer.body).put("purchase", JSONObject().put("conversion", "failed")).toString())
+                } else {
+                    answer
+                }
             }
             request.url.contains("/identify") -> {
                 val user = body.getString("appUserId")
@@ -153,6 +160,8 @@ internal class Harness(
     ),
     val play: FakePlay = FakePlay(),
     val server: FakeServer = FakeServer(play),
+    /** Virtual delay before each server answer, so concurrent calls can interleave. */
+    transportDelayMs: Long = 0,
 ) {
     var now = NOW
     val published = mutableListOf<AppReferCustomerInfo>()
@@ -161,7 +170,10 @@ internal class Harness(
         api = BillingApiClient(
             baseUrls = listOf("https://trk.test", "https://main.test"),
             apiKey = { "pk_test" },
-            transport = { server.handle(it) },
+            transport = {
+                if (transportDelayMs > 0) kotlinx.coroutines.delay(transportDelayMs)
+                server.handle(it)
+            },
             keyWaitAttempts = 0,
         ),
         storage = storage,

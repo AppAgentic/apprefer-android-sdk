@@ -9,7 +9,7 @@ import java.util.UUID
 /**
  * Resolves (and persists) the AppRefer device ID.
  *
- * Order of preference:
+ * Order of preference (a new random id is only used once it is saved):
  *   1. Cached device_id in SharedPreferences (stable across app launches)
  *   2. `Settings.Secure.ANDROID_ID` — unless blacklisted or looks like an emulator
  *   3. `UUID.randomUUID()` fallback
@@ -52,8 +52,17 @@ internal class DeviceIdManager(
             logger.debug("Device ID from cache: $it")
             return it
         }
-        val fresh = resolveFresh()
-        if (!storage.writeDeviceId(fresh)) logger.error("Device ID could not be saved; it will be saved on the next launch")
+        val (fresh, stable) = resolveFresh()
+        if (!storage.writeDeviceId(fresh)) {
+            if (!stable) {
+                // A random id that isn't saved would be replaced by another one next launch,
+                // splitting this device's attribution: skip until one can be saved.
+                logger.error("Device ID could not be saved; not using an unsaved random id")
+                return null
+            }
+            // ANDROID_ID is the same next launch, so it is safe to use unsaved.
+            logger.error("Device ID could not be saved; it will be saved on the next launch")
+        }
         logger.info("Device ID created: $fresh")
         fresh
     }
@@ -65,13 +74,14 @@ internal class DeviceIdManager(
         storage.readDeviceId()
     }?.takeIf { it.isNotBlank() }
 
-    private fun resolveFresh(): String {
+    /** A new id, and whether it is stable (ANDROID_ID) rather than random. */
+    private fun resolveFresh(): Pair<String, Boolean> {
         val androidId = safely<String?>(null) { androidId() }
         return if (androidId != null && isAcceptable(androidId)) {
-            androidId
+            androidId to true
         } else {
             logger.debug("ANDROID_ID unusable, generating UUID fallback")
-            fallbackUuid()
+            fallbackUuid() to false
         }
     }
 

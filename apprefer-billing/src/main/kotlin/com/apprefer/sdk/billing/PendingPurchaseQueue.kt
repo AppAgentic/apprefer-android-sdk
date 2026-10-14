@@ -28,15 +28,20 @@ internal data class PendingPurchase(
  * `BillingEngine`.
  *
  * Mutations return whether the queue is on disk: callers only acknowledge a purchase on
- * device once its retry copy is durable. A file that exists but can't be read is never
- * overwritten (that would lose its entries); it is re-read on the next change.
+ * device once its retry copy is durable. Entries changed in memory but not saved yet are
+ * provisional ([isDurable] is false) until a later save succeeds. A file that exists but
+ * can't be read is never overwritten (that would lose its entries); it is re-read on the
+ * next change or [reloadIfNeeded].
  */
 internal class PendingPurchaseQueue(private val file: File) {
 
     /** True while the queue file exists but could not be read. */
     private var unreadable = false
 
-    var entries: List<PendingPurchase> = load()
+    /** The entries as last read from or written to disk, by purchase token. */
+    private var onDisk: Map<String, PendingPurchase> = emptyMap()
+
+    var entries: List<PendingPurchase> = load().also { onDisk = it.associateBy(PendingPurchase::purchaseToken) }
         private set
 
     val isEmpty: Boolean get() = entries.isEmpty()
@@ -45,15 +50,29 @@ internal class PendingPurchaseQueue(private val file: File) {
 
     fun containsToken(purchaseToken: String): Boolean = entries.any { it.purchaseToken == purchaseToken }
 
-    /** Purchase tokens queued for [appUserId]. */
-    fun tokens(appUserId: String): Set<String> =
-        entries.filter { it.appUserId == appUserId }.mapTo(HashSet()) { it.purchaseToken }
+    /** Whether [purchaseToken]'s retry copy, as held in memory, is on disk. */
+    fun isDurable(purchaseToken: String): Boolean {
+        val entry = entries.firstOrNull { it.purchaseToken == purchaseToken } ?: return false
+        return onDisk[purchaseToken] == entry
+    }
 
-    /** Adds or refreshes an entry; one entry per purchase token. A restore stays a restore. */
+    /** Purchase tokens durably queued for [appUserId]. */
+    fun tokens(appUserId: String): Set<String> =
+        onDisk.values.filter { it.appUserId == appUserId }.mapTo(HashSet()) { it.purchaseToken }
+
+    /**
+     * Adds or refreshes an entry; one entry per purchase token. A restore stays a restore,
+     * and an ordinary entry never takes over a restore's owner.
+     */
     fun add(entry: PendingPurchase): Boolean = mutate {
         val index = entries.indexOfFirst { it.purchaseToken == entry.purchaseToken }
         entries = if (index >= 0) {
-            val merged = entry.copy(restore = entry.restore || entries[index].restore)
+            val old = entries[index]
+            val merged = if (old.restore && !entry.restore) {
+                entry.copy(appUserId = old.appUserId, appreferId = old.appreferId, restore = true)
+            } else {
+                entry
+            }
             entries.toMutableList().also { it[index] = merged }
         } else {
             entries + entry
@@ -62,14 +81,22 @@ internal class PendingPurchaseQueue(private val file: File) {
 
     /**
      * Queues a failed upload, or counts another attempt for one already queued (keeping its
-     * original enqueue time and owner). [countAttempt] is false for back-off answers.
+     * original enqueue time). An explicit restore takes the entry over for the restoring
+     * customer, owner and restore intent together; an ordinary redelivery keeps the queued
+     * owner, so it can never move a restore back. [countAttempt] is false for back-off
+     * answers and `Retry-After`.
      */
     fun enqueue(entry: PendingPurchase, countAttempt: Boolean): Boolean = mutate {
         val step = if (countAttempt) 1 else 0
         val index = entries.indexOfFirst { it.purchaseToken == entry.purchaseToken }
         entries = if (index >= 0) {
             val old = entries[index]
-            entries.toMutableList().also { it[index] = old.copy(attempts = old.attempts + step, restore = old.restore || entry.restore) }
+            val updated = if (entry.restore) {
+                old.copy(appUserId = entry.appUserId, appreferId = entry.appreferId, restore = true, attempts = old.attempts + step)
+            } else {
+                old.copy(attempts = old.attempts + step)
+            }
+            entries.toMutableList().also { it[index] = updated }
         } else {
             entries + entry.copy(attempts = step)
         }
@@ -83,6 +110,20 @@ internal class PendingPurchaseQueue(private val file: File) {
         entries = entries.map { if (it.purchaseToken == purchaseToken) it.copy(attempts = it.attempts + 1) else it }
     }
 
+    /** Saves provisional entries. True when everything in memory is on disk. */
+    fun persist(): Boolean {
+        if (!unreadable && entries.associateBy(PendingPurchase::purchaseToken) == onDisk) return true
+        return mutate {}
+    }
+
+    /**
+     * Re-reads a file that couldn't be read earlier (entries queued meanwhile are kept and
+     * saved with it), so a transient read failure never hides the queue for the session.
+     */
+    fun reloadIfNeeded() {
+        if (unreadable) persist()
+    }
+
     /** Applies [change] on top of the file's entries and saves. False if not on disk. */
     private inline fun mutate(change: () -> Unit): Boolean {
         if (unreadable) {
@@ -92,8 +133,11 @@ internal class PendingPurchaseQueue(private val file: File) {
                 change()
                 return false
             }
-            // Keep what was queued in memory while the file was unreadable.
-            entries = reloaded + pending.filter { p -> reloaded.none { it.purchaseToken == p.purchaseToken } }
+            onDisk = reloaded.associateBy(PendingPurchase::purchaseToken)
+            // What changed in memory while the file was unreadable is newer than the file.
+            val inMemory = pending.associateBy(PendingPurchase::purchaseToken)
+            entries = reloaded.map { inMemory[it.purchaseToken] ?: it } +
+                pending.filter { p -> reloaded.none { it.purchaseToken == p.purchaseToken } }
         }
         change()
         return save()
@@ -150,7 +194,9 @@ internal class PendingPurchaseQueue(private val file: File) {
                     .apply { if (e.restore) put("restore", true) },
             )
         }
-        return BillingStorage.writeAtomically(file, arr.toString())
+        if (!BillingStorage.writeAtomically(file, arr.toString())) return false
+        onDisk = entries.associateBy(PendingPurchase::purchaseToken)
+        return true
     }
 
     private fun decode(o: JSONObject): PendingPurchase? {

@@ -4,6 +4,8 @@ import com.android.billingclient.api.BillingClient.BillingResponseCode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -65,6 +67,9 @@ internal class BillingEngine(
     /** Retry queue back-off after 401/403/404/409/429, or a `Retry-After`. */
     private var drainPausedUntil = 0L
     private var backoffDelay = 0L
+
+    /** The identify flush in flight; every caller waits on this one. */
+    private var identifyFlush: Deferred<Unit>? = null
 
     /** configure(appUserId) that couldn't be applied because storage was unreadable. */
     @Volatile private var pendingConfigure: String? = appUserId?.takeIf { it.isNotEmpty() }
@@ -148,7 +153,7 @@ internal class BillingEngine(
         }
     }
 
-    private suspend fun fetchFromServer(user: String): AppReferCustomerInfo {
+    private suspend fun fetchFromServer(user: String, drain: Boolean = true): AppReferCustomerInfo {
         flushPendingIdentifies()
         val attributes = storage.pendingAttributes
         val deviceId = appreferId()
@@ -164,7 +169,7 @@ internal class BillingEngine(
             storage.clearSentAttributes(attributes)
         }
         val info = accept(response, user)
-        drainQueue()
+        if (drain) drainQueue()
         return info
     }
 
@@ -204,7 +209,8 @@ internal class BillingEngine(
     /**
      * Outage path: Google Play's active purchases merged with the cached server answer for
      * the same user. Every purchase on the device counts, whoever's token it carries: a
-     * paying user is never locked out because AppRefer is down.
+     * paying user is never locked out because AppRefer is down. Only for a total outage
+     * (no customer answer); see [afterUploadFailure].
      */
     suspend fun localFallback(): AppReferCustomerInfo = withContext(dispatcher) {
         val user = activeUser() ?: return@withContext lockedFallback()
@@ -323,13 +329,14 @@ internal class BillingEngine(
     /**
      * The app user a purchase belongs to: whoever its `obfuscatedAccountId` was issued to,
      * otherwise the current user. Never a restore, so it can't move another user's purchase.
+     * Null (sent later) while the account tokens can't be read.
      */
     private fun ownerOf(purchase: StorePurchase): String? {
         val tagged = purchase.obfuscatedAccountId?.let {
             try {
                 storage.appUserIdForAccountToken(it)
             } catch (_: BillingStorageException) {
-                null
+                return null
             }
         }
         return tagged ?: activeUser()
@@ -370,6 +377,27 @@ internal class BillingEngine(
             return info
         } catch (e: AppReferBillingException) {
             uploadFailed(purchase, productType, owner, deviceId, restore, e)
+            return afterUploadFailure(e)
+        }
+    }
+
+    /**
+     * What callers see after a purchase upload failed. If AppRefer still answers for the
+     * customer, its answer is merged with only this customer's Play purchases (untagged,
+     * their token, or durably queued for them), so a rejected upload never unlocks another
+     * user's purchase. Only a total outage falls back to every purchase on the device.
+     */
+    private suspend fun afterUploadFailure(e: AppReferBillingException): AppReferCustomerInfo {
+        val user = activeUser() ?: return lockedFallback()
+        // Nothing answered at all: asking again would only wait for the same timeouts.
+        val unreachable = e is AppReferBillingException.Network ||
+            e is AppReferBillingException.MissingApiKey || e is AppReferBillingException.NotConfigured
+        if (!unreachable) {
+            try {
+                // No drain: the purchase that just failed would be resent straight away.
+                return fetchFromServer(user, drain = false)
+            } catch (_: AppReferBillingException) {
+            }
         }
         return localFallback()
     }
@@ -391,19 +419,38 @@ internal class BillingEngine(
             ensureAcknowledged(purchase)
             return
         }
-        val durable = queue.enqueue(
-            PendingPurchase(purchase.purchaseToken, purchase.productId, productType, owner, deviceId, now(), 0, restore),
-            countAttempt = !e.isBackoff,
-        )
         pauseIfAsked(e)
-        if (durable) {
-            logger.warn("Billing: queued purchase $name for retry (${e.message})")
+        queueForRetry(purchase, productType, owner, deviceId, restore, countAttempt = countsAttempt(e), reason = e.message)
+    }
+
+    /**
+     * Saves the retry copy, then acknowledges on device. Without a durable copy the purchase
+     * stays unacknowledged, so the next sync saves (or sends) it again.
+     */
+    private suspend fun queueForRetry(
+        purchase: StorePurchase,
+        productType: String,
+        owner: String,
+        deviceId: String?,
+        restore: Boolean,
+        countAttempt: Boolean,
+        reason: String?,
+    ) {
+        val name = purchase.orderId ?: purchase.productId
+        queue.enqueue(
+            PendingPurchase(purchase.purchaseToken, purchase.productId, productType, owner, deviceId, now(), 0, restore),
+            countAttempt = countAttempt,
+        )
+        if (queue.isDurable(purchase.purchaseToken)) {
+            logger.warn("Billing: queued purchase $name for retry (${reason ?: "paused"})")
             ensureAcknowledged(purchase)
         } else {
-            // No retry copy on disk: leave it unacknowledged, so the next sync sends it again.
             logger.error("Billing: could not save purchase $name for retry; it will be sent on the next sync")
         }
     }
+
+    /** Back-off statuses and `Retry-After` answers ("come back later") don't use up a purchase's retries. */
+    private fun countsAttempt(e: AppReferBillingException) = !e.isBackoff && e.retryDelayMillis == null
 
     private suspend fun onAccepted(purchaseToken: String, productType: String) {
         acceptedTokens.add(purchaseToken)
@@ -433,6 +480,7 @@ internal class BillingEngine(
      * and retries acknowledge/consume that failed earlier (runs at start and on foreground).
      */
     suspend fun syncPurchases() = withContext(dispatcher) {
+        queue.reloadIfNeeded()
         val result = play.queryPurchases()
         if (!result.isOk) return@withContext
         for (purchase in result.purchases) {
@@ -448,8 +496,15 @@ internal class BillingEngine(
                         ensureAcknowledged(purchase)
                     }
                 }
-                // The queue resends it; just make sure Play doesn't refund it meanwhile.
-                queue.containsToken(purchase.purchaseToken) -> ensureAcknowledged(purchase)
+                // The queue resends it; just make sure Play doesn't refund it meanwhile, once
+                // its retry copy is on disk (a provisional copy is saved first).
+                queue.containsToken(purchase.purchaseToken) -> {
+                    if (queue.isDurable(purchase.purchaseToken) || (queue.persist() && queue.isDurable(purchase.purchaseToken))) {
+                        ensureAcknowledged(purchase)
+                    } else {
+                        logger.warn("Billing: retry copy for ${purchase.orderId ?: purchase.productId} still not saved; not acknowledging yet")
+                    }
+                }
                 else -> process(purchase, type, ownerOf(purchase))
             }
         }
@@ -469,9 +524,16 @@ internal class BillingEngine(
         flushPendingIdentifies()
         val deviceId = appreferId()
         var last: BillingCustomerResponse? = null
-        var failed = false
+        var error: AppReferBillingException? = null
+        var paused = false
         for (purchase in purchases) {
             val type = LocalEntitlements.productType(purchase, options.consumableProductIds)
+            if (paused) {
+                // AppRefer asked us to wait (or is down): queue the rest of the restore for
+                // this customer without sending it or using up an attempt.
+                queueForRetry(purchase, type, user, deviceId, restore = true, countAttempt = false, reason = error?.message)
+                continue
+            }
             try {
                 last = api.send(
                     BillingEndpoint.Purchase(user, deviceId, purchase.purchaseToken, purchase.productId, type, emptyMap(), restore = true),
@@ -479,15 +541,20 @@ internal class BillingEngine(
                 resetBackoff()
                 onAccepted(purchase.purchaseToken, type)
             } catch (e: AppReferBillingException) {
-                failed = true
+                error = e
                 uploadFailed(purchase, type, user, deviceId, restore = true, e)
-                if (e.isRetryable && (e.isConnectivity || e.isBackoff)) break
+                if (e.isRetryable && (e.isConnectivity || e.isBackoff || e.retryDelayMillis != null)) paused = true
             }
         }
         val lastResponse = last
-        if (lastResponse != null && !failed) return@withContext accept(lastResponse, user)
-        if (lastResponse != null) accept(lastResponse, user)
-        localFallback()
+        val failure = error
+        when {
+            // The customer endpoint answered: merge only this customer's purchases (queued
+            // restores count as theirs).
+            lastResponse != null -> accept(lastResponse, user)
+            failure != null -> afterUploadFailure(failure)
+            else -> customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        }
     }
 
     /**
@@ -496,6 +563,7 @@ internal class BillingEngine(
      * (30 s doubling to 1 h, or the server's `Retry-After`) without counting an attempt.
      */
     suspend fun drainQueue(): Unit = withContext(dispatcher) {
+        queue.reloadIfNeeded()
         if (isDraining || queue.isEmpty || now() < drainPausedUntil) return@withContext
         isDraining = true
         try {
@@ -521,7 +589,7 @@ internal class BillingEngine(
                             return@withContext
                         }
                         e.isRetryable -> {
-                            queue.recordAttempt(entry.purchaseToken)
+                            if (countsAttempt(e)) queue.recordAttempt(entry.purchaseToken)
                             pauseIfAsked(e)
                             if (e.isConnectivity || e.retryDelayMillis != null) return@withContext
                         }
@@ -616,15 +684,31 @@ internal class BillingEngine(
 
     /**
      * Sends waiting identifies in order; stops at the first one that should be retried. An
-     * entry is removed only if it is still in the list once its request completes.
+     * entry is removed only if it is still in the list once its request completes. One
+     * flush runs at a time: concurrent callers wait for the same one, and it picks up
+     * entries added while it runs before it completes.
      */
     private suspend fun flushPendingIdentifies() {
-        val pending = try {
-            storage.pendingIdentifies
-        } catch (_: BillingStorageException) {
-            return
+        identifyFlush?.takeIf { it.isActive }?.let { return it.await() }
+        val flush = scope.async(dispatcher) { sendPendingIdentifies() }
+        identifyFlush = flush
+        try {
+            flush.await()
+        } finally {
+            if (identifyFlush === flush && !flush.isActive) identifyFlush = null
         }
-        for (entry in pending) {
+    }
+
+    private suspend fun sendPendingIdentifies() {
+        val attempted = HashSet<Pair<String, String>>()
+        while (true) {
+            val pending = try {
+                storage.pendingIdentifies
+            } catch (_: BillingStorageException) {
+                return
+            }
+            val entry = pending.firstOrNull { it !in attempted } ?: return
+            attempted.add(entry)
             try {
                 api.send(BillingEndpoint.Identify(entry.first, entry.second))
                 storage.removePendingIdentify(entry)

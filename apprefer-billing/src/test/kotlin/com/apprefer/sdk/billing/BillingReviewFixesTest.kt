@@ -173,7 +173,8 @@ class BillingReviewFixesTest {
         assertEquals(AppReferBilling.PurchaseResult.Outcome.PURCHASED, result.outcome)
         assertTrue(h.play.consumed.isEmpty())
         assertEquals(listOf("c1"), h.play.acknowledged)
-        assertEquals(1, h.queue.entries.single().attempts)
+        // Retry-After means "later": no attempt is used up.
+        assertEquals(0, h.queue.entries.single().attempts)
 
         // Paused for Retry-After, then recorded and consumed.
         h.server.purchasesStatus = null
