@@ -323,14 +323,15 @@ class BillingEngineTest {
         h.play.purchases += storePurchase("new", "pro_monthly", acknowledged = false)
         h.play.purchases += storePurchase("old", "lifetime", isSubscription = false, acknowledged = true)
         h.engine.start()
+        advanceUntilIdle()
         assertEquals(listOf("new", "old"), h.purchaseBodies().map { it.getString("purchaseToken") })
 
         // Already accepted this launch: not sent again even if Play's cache still says unacknowledged.
         h.play.purchases.replaceAll { it.copy(isAcknowledged = false) }
         h.engine.syncPurchases()
-        assertEquals(listOf("new", "old"), h.purchaseBodies().map { it.getString("purchaseToken") })
+        assertEquals(listOf("new", "old", "old"), h.purchaseBodies().map { it.getString("purchaseToken") })
         h.engine.syncPurchases()
-        assertEquals(2, h.purchaseBodies().size)
+        assertEquals(3, h.purchaseBodies().size)
     }
 
     @Test

@@ -45,6 +45,7 @@ internal class FakePlay : PlayBillingGateway {
     val purchases = mutableListOf<StorePurchase>()
     var queryCode = BillingResponseCode.OK
     var queryCount = 0
+    var onQuery: (() -> Unit)? = null
     val acknowledged = mutableListOf<String>()
     val consumed = mutableListOf<String>()
     var acknowledgeWorks = true
@@ -57,6 +58,7 @@ internal class FakePlay : PlayBillingGateway {
 
     override suspend fun queryPurchases(): StorePurchasesResult {
         queryCount++
+        onQuery?.invoke()
         return if (queryCode == BillingResponseCode.OK) StorePurchasesResult(queryCode, null, purchases.toList())
         else StorePurchasesResult(queryCode, "unavailable", emptyList())
     }

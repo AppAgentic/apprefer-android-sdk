@@ -62,7 +62,7 @@ internal class RejectedPurchaseLog(private val file: File) {
 
     /** Whether [purchaseToken]'s entry, as held in memory, is on disk. */
     fun isDurable(purchaseToken: String): Boolean {
-        val entry = entries.firstOrNull { it.purchaseToken == purchaseToken } ?: return false
+        val entry = entries.firstOrNull { !it.migrationOnly && it.purchaseToken == purchaseToken } ?: return false
         return onDisk[entry.key] == entry
     }
 

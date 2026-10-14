@@ -86,8 +86,9 @@ internal class BillingStorage(
     fun isMigrationPurchase(token: String): Boolean =
         token in importedTokens || importFile(token).exists()
     fun markMigrationPurchase(token: String): Boolean {
-        importedTokens.add(token)
-        return writeAtomically(importFile(token), "readonly")
+        val saved = writeAtomically(importFile(token), "readonly")
+        if (saved) importedTokens.add(token)
+        return saved
     }
     private fun importFile(token: String): File {
         val hash = java.security.MessageDigest.getInstance("SHA-256")

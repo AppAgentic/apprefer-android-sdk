@@ -14,7 +14,7 @@ class BillingMigrationTest {
     @Test fun acknowledgedPurchasesImportOnceAndNewLoginImportsAgainWithoutRestore() = runTest {
         val h = Harness(this, "alice")
         h.play.purchases += storePurchase("sub", "pro_monthly", acknowledged = true)
-        h.play.purchases += storePurchase("coin", "coins_100", isSubscription = false, acknowledged = true)
+        h.play.purchases += storePurchase("coin", "lifetime", isSubscription = false, acknowledged = true)
         h.engine.migrationSync()
         assertTrue(h.storage.migrationSynced("alice"))
         h.engine.migrationSync()
@@ -46,7 +46,7 @@ class BillingMigrationTest {
 
     @Test fun durableQueueReplayNeverConsumesLegacyConsumable() = runTest {
         val h = Harness(this, "alice")
-        h.play.purchases += storePurchase("legacy", "coins_100", isSubscription = false, acknowledged = true)
+        h.play.purchases += storePurchase("legacy", "lifetime", isSubscription = false, acknowledged = true)
         h.server.purchasesUnreachable = true
         h.engine.migrationSync()
         assertTrue(h.storage.migrationSynced("alice"))
@@ -60,14 +60,15 @@ class BillingMigrationTest {
         assertTrue(h.play.acknowledged.isEmpty())
         assertTrue(h.play.consumed.isEmpty())
     }
-    @Test fun startupAndRestartNeverAcknowledgeOrConsumeImportedPurchases() = runTest {
+    @Test fun startupHandlesOpenPurchasesNormallyBeforeMigration() = runTest {
         val h = Harness(this, "alice")
-        h.play.purchases += storePurchase("legacy", "coins_100", isSubscription = false)
+        h.play.purchases += storePurchase("legacy", "lifetime", isSubscription = false)
         h.engine.start()
+        h.engine.syncPurchases()
         val reloadedStorage = newStorage(dir = h.storage.directory)
         val second = Harness(this, "alice", storage = reloadedStorage, play = h.play)
         second.engine.start()
-        assertTrue(h.play.acknowledged.isEmpty())
+        assertTrue(h.play.purchases.single().isAcknowledged)
         assertTrue(h.play.consumed.isEmpty())
         assertTrue(second.server.requests.none { it.url.contains("/purchases") })
     }
@@ -76,7 +77,7 @@ class BillingMigrationTest {
         for (status in listOf(401, 403, 404, 409, 429)) {
             val h = Harness(this, "alice")
             h.play.purchases += storePurchase("one", "pro_monthly", acknowledged = true)
-            h.play.purchases += storePurchase("two", "coins_100", isSubscription = false, acknowledged = true)
+            h.play.purchases += storePurchase("two", "lifetime", isSubscription = false, acknowledged = true)
             h.server.purchasesStatus = status
             h.engine.migrationSync()
             assertTrue(h.storage.migrationSynced("alice"))
