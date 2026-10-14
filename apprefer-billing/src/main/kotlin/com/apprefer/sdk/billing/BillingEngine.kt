@@ -384,15 +384,16 @@ internal class BillingEngine(
     /**
      * What callers see after a purchase upload failed. If AppRefer still answers for the
      * customer, its answer is merged with only this customer's Play purchases (untagged,
-     * their token, or durably queued for them), so a rejected upload never unlocks another
-     * user's purchase. Only a total outage falls back to every purchase on the device.
+     * their token, or durably queued for them), so a rejected or cut-off upload never unlocks
+     * another user's purchase. Only a total outage (the customer fetch fails too) falls back
+     * to every purchase on the device.
      */
     private suspend fun afterUploadFailure(e: AppReferBillingException): AppReferCustomerInfo {
         val user = activeUser() ?: return lockedFallback()
-        // Nothing answered at all: asking again would only wait for the same timeouts.
-        val unreachable = e is AppReferBillingException.Network ||
-            e is AppReferBillingException.MissingApiKey || e is AppReferBillingException.NotConfigured
-        if (!unreachable) {
+        // Not set up: a customer fetch would fail the same way. A network error gets one
+        // customer fetch, since only the upload may have been cut off.
+        val notSetUp = e is AppReferBillingException.MissingApiKey || e is AppReferBillingException.NotConfigured
+        if (!notSetUp) {
             try {
                 // No drain: the purchase that just failed would be resent straight away.
                 return fetchFromServer(user, drain = false)

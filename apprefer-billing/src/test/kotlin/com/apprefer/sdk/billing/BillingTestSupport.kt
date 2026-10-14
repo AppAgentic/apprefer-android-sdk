@@ -83,6 +83,8 @@ internal class FakeServer(private val play: FakePlay? = null) {
     var status: Int? = null
     /** When set, only the purchases endpoint answers with this status. */
     var purchasesStatus: Int? = null
+    /** When true, only the purchases endpoint is unreachable (network error). */
+    var purchasesUnreachable = false
     /** `Retry-After` sent with error statuses. */
     var retryAfter: String? = null
     /** Answer purchases like older servers did when the ledger write failed (200, conversion "failed"). */
@@ -94,6 +96,7 @@ internal class FakeServer(private val play: FakePlay? = null) {
         requests += request
         if (!reachable) throw AppReferBillingException.Network("offline")
         status?.let { return BillingHttpResponse(it, """{"error":"nope"}""", retryAfter) }
+        if (purchasesUnreachable && request.url.contains("/purchases")) throw AppReferBillingException.Network("purchases down")
         val body = request.body?.let(::JSONObject) ?: JSONObject()
         return when {
             request.url.contains("/purchases") && purchasesStatus != null ->

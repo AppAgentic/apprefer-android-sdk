@@ -188,6 +188,19 @@ class BillingReviewRound2Test {
     }
 
     @Test
+    fun uploadNetworkFailureUsesFilteredCustomerAnswerWhenCustomerEndpointAnswers() = runTest {
+        val h = Harness(this, "user_2")
+        h.play.purchases += storePurchase("a1", "pro_monthly", acknowledged = true, accountId = h.server.tokenFor("user_1"))
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        h.server.purchasesUnreachable = true
+        val result = runPurchase(h, "coins_100", ProductTypes.CONSUMABLE, ok(storePurchase("c1", "coins_100", isSubscription = null)))
+            .await().getOrThrow()
+        assertEquals(AppReferCustomerInfo.Source.SERVER, result.customerInfo.source)
+        assertNull(result.customerInfo.entitlements[premium])
+        assertTrue(h.queue.isDurable("c1"))
+    }
+
+    @Test
     fun totalOutageStillUnlocksEveryDevicePurchase() = runTest {
         val h = Harness(this, "user_2")
         h.play.purchases += storePurchase("a1", "pro_monthly", acknowledged = true, accountId = h.server.tokenFor("user_1"))
