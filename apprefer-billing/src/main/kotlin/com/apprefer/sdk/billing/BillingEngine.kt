@@ -21,6 +21,7 @@ internal class BillingEngine(
     private val api: BillingApiClient,
     private val storage: BillingStorage,
     private val queue: PendingPurchaseQueue,
+    private val rejected: RejectedPurchaseLog,
     private val play: PlayBillingGateway,
     private val options: Options,
     appUserId: String?,
@@ -256,7 +257,9 @@ internal class BillingEngine(
      * Runs one purchase: [launch] starts the Play purchase flow with the customer's account
      * token (null if AppRefer is unreachable: the purchase still goes ahead). The result
      * arrives through `onPurchasesUpdated` and is recorded for the user who started it,
-     * even if logIn/logOut runs meanwhile.
+     * even if logIn/logOut runs meanwhile. Who started it is saved before the purchase flow
+     * opens, so a purchase that completes after a restart, logOut or user switch (pending
+     * payment methods) is still theirs; if that can't be saved, the flow is not opened.
      */
     suspend fun purchase(
         productId: String,
@@ -267,10 +270,17 @@ internal class BillingEngine(
         val waiter = CompletableDeferred<StorePurchasesUpdate>()
         purchaseWaiter = productId to waiter
         try {
-            val user = activeUser()
-            val token = user?.let { accountTokenFor(it) }
+            val user = activeUser() ?: throw AppReferBillingException.Storage("identity unreadable; purchase not started")
+            val token = accountTokenFor(user)
+            val intent = PurchaseIntent(productId, user, token, now())
+            if (!storage.addPurchaseIntent(intent)) {
+                throw AppReferBillingException.Storage("could not save who started the purchase; purchase not started")
+            }
             val (code, message) = launch(token)
-            if (code != BillingResponseCode.OK) return@withContext launchFailed(code, message)
+            if (code != BillingResponseCode.OK) {
+                dropIntent(intent)
+                return@withContext launchFailed(code, message)
+            }
             val update = waiter.await()
             when (update.responseCode) {
                 BillingResponseCode.OK -> {
@@ -278,10 +288,11 @@ internal class BillingEngine(
                     when (purchase?.state) {
                         StorePurchase.State.PURCHASED -> {
                             val typed = purchase.copy(isSubscription = productType == ProductTypes.SUBSCRIPTION)
-                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user))
+                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user, intent = intent))
                         }
                         // Pending (slow payment method): it arrives later through
-                        // onPurchasesUpdated or the next foreground sync.
+                        // onPurchasesUpdated or the next foreground sync, and the saved
+                        // intent says who started it.
                         else -> PurchaseOutcome(
                             AppReferBilling.PurchaseResult.Outcome.PENDING,
                             purchase,
@@ -289,7 +300,12 @@ internal class BillingEngine(
                         )
                     }
                 }
-                else -> launchFailed(update.responseCode, update.debugMessage)
+                else -> {
+                    // Other errors keep the intent: Play sometimes reports one for a purchase
+                    // that still goes through.
+                    if (update.responseCode == BillingResponseCode.USER_CANCELED) dropIntent(intent)
+                    launchFailed(update.responseCode, update.debugMessage)
+                }
             }
         } finally {
             if (purchaseWaiter?.second === waiter) purchaseWaiter = null
@@ -327,19 +343,60 @@ internal class BillingEngine(
     }
 
     /**
-     * The app user a purchase belongs to: whoever its `obfuscatedAccountId` was issued to,
-     * otherwise the current user. Never a restore, so it can't move another user's purchase.
-     * Null (sent later) while the account tokens can't be read.
+     * The app user a purchase delivered outside its `purchase()` call belongs to (pending
+     * payment completed, app restarted, user switched): whoever its `obfuscatedAccountId`
+     * was issued to, else whoever the saved intent says started it (an untagged purchase
+     * matches the oldest untagged intent for its product), else the current user. Never a
+     * restore, so it can't move another user's purchase. Null (left open and sent later)
+     * while the account tokens, or the intents an untagged purchase needs, can't be read.
      */
-    private fun ownerOf(purchase: StorePurchase): String? {
-        val tagged = purchase.obfuscatedAccountId?.let {
+    private fun ownerOf(purchase: StorePurchase): Pair<String, PurchaseIntent?>? {
+        val tag = purchase.obfuscatedAccountId
+        val tagged = tag?.let {
             try {
                 storage.appUserIdForAccountToken(it)
             } catch (_: BillingStorageException) {
                 return null
             }
         }
-        return tagged ?: activeUser()
+        val intents = try {
+            storage.purchaseIntents
+        } catch (_: BillingStorageException) {
+            if (tagged == null) {
+                logger.warn("Billing: purchase intents unreadable; ${purchase.orderId ?: purchase.productId} will be sent on the next sync")
+                return null
+            }
+            emptyList()
+        }
+        val intent = intents.firstOrNull {
+            it.productId in purchase.productIds &&
+                if (tag == null) it.accountToken == null else it.accountToken.equals(tag, ignoreCase = true)
+        }
+        val owner = tagged ?: intent?.appUserId ?: activeUser() ?: return null
+        return owner to intent
+    }
+
+    private fun dropIntent(intent: PurchaseIntent?) {
+        if (intent != null && !storage.removePurchaseIntents(listOf(intent))) {
+            logger.warn("Billing: could not drop a purchase intent; dropped later")
+        }
+    }
+
+    /**
+     * Drops intents older than [INTENT_MAX_AGE_MS] whose product has no purchase still
+     * open in Play (pending payment, or purchased and not yet acknowledged): an unresolved
+     * intent is never expired while its purchase may still arrive.
+     */
+    private fun expireIntents(purchases: List<StorePurchase>) {
+        val intents = try {
+            storage.purchaseIntents
+        } catch (_: BillingStorageException) {
+            return
+        }
+        val open = purchases.filter { it.state == StorePurchase.State.PENDING || !it.isAcknowledged }
+            .flatMapTo(HashSet()) { it.productIds }
+        val stale = intents.filter { now() - it.startedAtMillis > INTENT_MAX_AGE_MS && it.productId !in open }
+        storage.removePurchaseIntents(stale)
     }
 
     /**
@@ -354,8 +411,14 @@ internal class BillingEngine(
         productType: String,
         owner: String?,
         restore: Boolean = false,
+        intent: PurchaseIntent? = null,
     ): AppReferCustomerInfo {
         if (purchase.state != StorePurchase.State.PURCHASED) return localFallback()
+        if (purchase.purchaseToken.isEmpty() || purchase.productId.isEmpty()) {
+            logger.error("Billing: purchase ${purchase.orderId ?: purchase.productId} has no usable store data; not sent")
+            if (secureRejected(purchase, productType, owner, null, "no usable store data")) dropIntent(intent)
+            return localFallback()
+        }
         if (owner == null) {
             // Whose purchase this is can't be read. Left unacknowledged, so the next sync
             // sends it once storage is readable.
@@ -372,11 +435,13 @@ internal class BillingEngine(
             if (attributes.isNotEmpty()) storage.clearSentAttributes(attributes)
             resetBackoff()
             onAccepted(purchase.purchaseToken, productType)
+            dropIntent(intent)
             val info = accept(response, owner)
             drainQueue()
             return info
         } catch (e: AppReferBillingException) {
-            uploadFailed(purchase, productType, owner, deviceId, restore, e)
+            // Until a copy is on disk Play keeps the purchase open, and the intent is still needed.
+            if (uploadFailed(purchase, productType, owner, deviceId, restore, e)) dropIntent(intent)
             return afterUploadFailure(e)
         }
     }
@@ -403,7 +468,10 @@ internal class BillingEngine(
         return localFallback()
     }
 
-    /** Queues a failed upload (or drops a rejected one) and makes sure Play won't refund it. */
+    /**
+     * Queues a failed upload (or archives a rejected one) and makes sure Play won't refund
+     * it. Returns whether its copy is on disk.
+     */
     private suspend fun uploadFailed(
         purchase: StorePurchase,
         productType: String,
@@ -411,17 +479,70 @@ internal class BillingEngine(
         deviceId: String?,
         restore: Boolean,
         e: AppReferBillingException,
-    ) {
+    ): Boolean {
         val name = purchase.orderId ?: purchase.productId
         if (!e.isRetryable) {
-            // Rejected as malformed: retrying won't help. Google Play's real-time
-            // notifications still reach the server, and the purchase still unlocks on device.
+            // Rejected as malformed: retrying won't help. Kept for support and Restore
+            // Purchases; the purchase still unlocks on device.
             logger.error("Billing: AppRefer rejected purchase $name: ${e.message}")
-            ensureAcknowledged(purchase)
-            return
+            val secured = secureRejected(purchase, productType, owner, deviceId, e.message ?: "rejected")
+            if (secured && queue.containsToken(purchase.purchaseToken)) queue.remove(purchase.purchaseToken)
+            return secured
         }
         pauseIfAsked(e)
-        queueForRetry(purchase, productType, owner, deviceId, restore, countAttempt = countsAttempt(e), reason = e.message)
+        return queueForRetry(purchase, productType, owner, deviceId, restore, countAttempt = countsAttempt(e), reason = e.message)
+    }
+
+    /**
+     * A purchase AppRefer won't take (final 400/413/422, or no usable store data): its data
+     * is saved to the rejected list first, and only then is it acknowledged. It is never
+     * consumed, so a consumable stays owned until AppRefer records it. Until the copy is on
+     * disk it stays unacknowledged, so the next sync tries again. Returns whether it is on disk.
+     */
+    private suspend fun secureRejected(
+        purchase: StorePurchase,
+        productType: String?,
+        owner: String?,
+        deviceId: String?,
+        reason: String,
+    ): Boolean {
+        val entry = RejectedPurchase(
+            purchaseToken = purchase.purchaseToken,
+            productId = purchase.productId,
+            productType = productType,
+            orderId = purchase.orderId,
+            appUserId = owner,
+            appreferId = deviceId,
+            accountToken = purchase.obfuscatedAccountId,
+            reason = reason,
+            rejectedAtMillis = now(),
+            originalJson = purchase.raw?.originalJson,
+        )
+        if (!rejected.add(entry)) {
+            logger.error("Billing: could not save rejected purchase ${purchase.orderId ?: purchase.productId}; left unacknowledged")
+            return false
+        }
+        if (purchase.purchaseToken.isNotEmpty()) ensureAcknowledged(purchase)
+        return true
+    }
+
+    /** Moves a queued purchase to the rejected list; it leaves the queue only once that copy is on disk. */
+    private fun moveToRejected(entry: PendingPurchase, reason: String) {
+        val saved = rejected.add(
+            RejectedPurchase(
+                purchaseToken = entry.purchaseToken,
+                productId = entry.productId,
+                productType = entry.productType,
+                orderId = null,
+                appUserId = entry.appUserId,
+                appreferId = entry.appreferId,
+                accountToken = null,
+                reason = reason,
+                rejectedAtMillis = now(),
+            ),
+        )
+        if (saved) queue.remove(entry.purchaseToken)
+        else logger.error("Billing: could not save rejected purchase ${entry.productId}; kept in the retry queue")
     }
 
     /**
@@ -436,7 +557,7 @@ internal class BillingEngine(
         restore: Boolean,
         countAttempt: Boolean,
         reason: String?,
-    ) {
+    ): Boolean {
         val name = purchase.orderId ?: purchase.productId
         queue.enqueue(
             PendingPurchase(purchase.purchaseToken, purchase.productId, productType, owner, deviceId, now(), 0, restore),
@@ -445,9 +566,10 @@ internal class BillingEngine(
         if (queue.isDurable(purchase.purchaseToken)) {
             logger.warn("Billing: queued purchase $name for retry (${reason ?: "paused"})")
             ensureAcknowledged(purchase)
-        } else {
-            logger.error("Billing: could not save purchase $name for retry; it will be sent on the next sync")
+            return true
         }
+        logger.error("Billing: could not save purchase $name for retry; it will be sent on the next sync")
+        return false
     }
 
     /** Back-off statuses and `Retry-After` answers ("come back later") don't use up a purchase's retries. */
@@ -456,6 +578,7 @@ internal class BillingEngine(
     private suspend fun onAccepted(purchaseToken: String, productType: String) {
         acceptedTokens.add(purchaseToken)
         queue.remove(purchaseToken)
+        rejected.remove(purchaseToken)
         if (productType == ProductTypes.CONSUMABLE && !play.consume(purchaseToken)) {
             logger.warn("Billing: consume failed; will retry on the next sync")
         }
@@ -482,6 +605,7 @@ internal class BillingEngine(
      */
     suspend fun syncPurchases() = withContext(dispatcher) {
         queue.reloadIfNeeded()
+        rejected.reloadIfNeeded()
         val result = play.queryPurchases()
         if (!result.isOk) return@withContext
         for (purchase in result.purchases) {
@@ -506,20 +630,38 @@ internal class BillingEngine(
                         logger.warn("Billing: retry copy for ${purchase.orderId ?: purchase.productId} still not saved; not acknowledging yet")
                     }
                 }
-                else -> process(purchase, type, ownerOf(purchase))
+                // Refused for good: kept for Restore Purchases. Acknowledged once its copy is
+                // on disk, never consumed and never resent from here.
+                rejected.containsToken(purchase.purchaseToken) -> {
+                    if (rejected.isDurable(purchase.purchaseToken) || (rejected.persist() && rejected.isDurable(purchase.purchaseToken))) {
+                        ensureAcknowledged(purchase)
+                    } else {
+                        logger.warn("Billing: rejected copy for ${purchase.orderId ?: purchase.productId} still not saved; not acknowledging yet")
+                    }
+                }
+                else -> {
+                    val owner = ownerOf(purchase)
+                    process(purchase, type, owner?.first, intent = owner?.second)
+                }
             }
         }
+        expireIntents(result.purchases)
     }
 
     /**
      * `queryPurchasesAsync`, then sends every purchased Play purchase to AppRefer as a
-     * restore, which may move a purchase owned by another app user to this one.
+     * restore, which may move a purchase owned by another app user to this one. Rejected
+     * purchases Play no longer lists are sent again too, and leave the rejected list once
+     * AppRefer records them.
      */
     suspend fun restore(): AppReferCustomerInfo = withContext(dispatcher) {
         val result = play.queryPurchases()
         if (!result.isOk) throw AppReferBillingException.Store(result.responseCode, result.debugMessage)
-        val purchases = result.purchases.filter { it.state == StorePurchase.State.PURCHASED }
-        if (purchases.isEmpty()) return@withContext customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        val purchases = result.purchases.filter { it.state == StorePurchase.State.PURCHASED && it.purchaseToken.isNotEmpty() }
+        rejected.reloadIfNeeded()
+        val listed = purchases.mapTo(HashSet()) { it.purchaseToken }
+        val archived = rejected.entries.filter { it.purchaseToken.isNotEmpty() && it.purchaseToken !in listed && it.productType != null }
+        if (purchases.isEmpty() && archived.isEmpty()) return@withContext customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
 
         val user = activeUser() ?: return@withContext lockedFallback()
         flushPendingIdentifies()
@@ -547,6 +689,21 @@ internal class BillingEngine(
                 if (e.isRetryable && (e.isConnectivity || e.isBackoff || e.retryDelayMillis != null)) paused = true
             }
         }
+        for (entry in archived) {
+            if (paused) break
+            try {
+                last = api.send(
+                    BillingEndpoint.Purchase(user, deviceId, entry.purchaseToken, entry.productId, entry.productType!!, emptyMap(), restore = true),
+                )
+                resetBackoff()
+                rejected.remove(entry.purchaseToken)
+            } catch (e: AppReferBillingException) {
+                // Stays in the rejected list.
+                error = e
+                pauseIfAsked(e)
+                if (e.isRetryable && (e.isConnectivity || e.isBackoff || e.retryDelayMillis != null)) paused = true
+            }
+        }
         val lastResponse = last
         val failure = error
         when {
@@ -568,8 +725,9 @@ internal class BillingEngine(
         if (isDraining || queue.isEmpty || now() < drainPausedUntil) return@withContext
         isDraining = true
         try {
-            for (dropped in queue.prune(now())) {
-                logger.error("Billing: gave up resending purchase ${dropped.productId} after ${dropped.attempts} attempts")
+            for (expired in queue.expired(now())) {
+                logger.error("Billing: gave up resending purchase ${expired.productId} after ${expired.attempts} attempts")
+                moveToRejected(expired, "not recorded after ${expired.attempts} attempts")
             }
             for (entry in queue.entries) {
                 try {
@@ -595,9 +753,9 @@ internal class BillingEngine(
                             if (e.isConnectivity || e.retryDelayMillis != null) return@withContext
                         }
                         else -> {
-                            // Rejected as malformed. Still unlocks from Google Play.
+                            // Rejected as malformed. Kept for Restore Purchases; still unlocks from Google Play.
                             logger.error("Billing: AppRefer rejected queued purchase ${entry.productId}: ${e.message}")
-                            queue.remove(entry.purchaseToken)
+                            moveToRejected(entry, e.message ?: "rejected")
                         }
                     }
                 }
@@ -622,6 +780,12 @@ internal class BillingEngine(
     private fun resetBackoff() {
         backoffDelay = 0
         drainPausedUntil = 0
+    }
+
+    /** See `AppReferBilling.rejectedPurchases`. */
+    suspend fun rejectedPurchases(): List<RejectedPurchase> = withContext(dispatcher) {
+        rejected.reloadIfNeeded()
+        rejected.entries
     }
 
     /**
@@ -728,6 +892,9 @@ internal class BillingEngine(
     companion object {
         const val MIN_BACKOFF_MS = 30_000L
         const val MAX_BACKOFF_MS = 3600_000L
+
+        /** Unresolved intents older than this are dropped once Play has nothing open for their product. */
+        const val INTENT_MAX_AGE_MS = 30L * 24 * 3600 * 1000
 
         fun isValid(appUserId: String): Boolean =
             appUserId.isNotEmpty() && appUserId.length <= 256 && appUserId.none { it.isWhitespace() }

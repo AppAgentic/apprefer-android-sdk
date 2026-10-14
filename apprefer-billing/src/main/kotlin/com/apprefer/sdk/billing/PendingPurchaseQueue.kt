@@ -144,16 +144,12 @@ internal class PendingPurchaseQueue(private val file: File) {
     }
 
     /**
-     * Drops entries that have failed too often or are too old. The server still gets those
-     * purchases from Google's real-time developer notifications.
+     * Entries that have failed too often or are too old. The engine moves each to the
+     * rejected list and removes it from the queue only once that copy is on disk.
      */
-    fun prune(nowMillis: Long): List<PendingPurchase> {
-        val dropped = entries.filter { it.attempts >= MAX_ATTEMPTS || nowMillis - it.enqueuedAtMillis > MAX_AGE_MS }
-        if (dropped.isEmpty() || unreadable) return emptyList()
-        entries = entries - dropped.toSet()
-        save()
-        return dropped
-    }
+    fun expired(nowMillis: Long): List<PendingPurchase> =
+        if (unreadable) emptyList()
+        else entries.filter { it.attempts >= MAX_ATTEMPTS || nowMillis - it.enqueuedAtMillis > MAX_AGE_MS }
 
     private fun load(): List<PendingPurchase> {
         if (!file.exists()) {

@@ -137,6 +137,7 @@ object AppReferBilling {
                 api = BillingApiClient.live { apiKey ?: AppReferInternal.apiKey() },
                 storage = storage,
                 queue = PendingPurchaseQueue(java.io.File(storage.directory, "pending_purchases.json")),
+                rejected = RejectedPurchaseLog(java.io.File(storage.directory, "rejected_purchases.json")),
                 play = play,
                 options = BillingEngine.Options(
                     productEntitlements = entitlementsByProduct,
@@ -269,7 +270,10 @@ object AppReferBilling {
     /**
      * Buys a product. Tags the purchase with the customer's AppRefer account token
      * (`setObfuscatedAccountId`), sends it to AppRefer (which verifies and acknowledges
-     * it), and consumes consumables once AppRefer has accepted them.
+     * it), and consumes consumables once AppRefer has accepted them. Who started it is saved
+     * first, so a purchase that completes later (pending payment, restart, user switch) is
+     * recorded for them; if that can't be saved (or the identity can't be read), throws
+     * [AppReferBillingException.Storage] without opening Google Play.
      *
      * @param offerToken Subscription offer to buy. Null picks a free-trial offer when the
      *   user is eligible for one, otherwise the base plan (see [defaultOfferToken]).
@@ -328,11 +332,19 @@ object AppReferBilling {
     }
 
     /**
-     * `queryPurchasesAsync`, then sends every active Play purchase to AppRefer.
-     * Throws if Google Play can't be reached.
+     * `queryPurchasesAsync`, then sends every active Play purchase to AppRefer, plus the
+     * [rejectedPurchases] Play no longer lists. Throws if Google Play can't be reached.
      */
     @Throws(AppReferBillingException::class)
     suspend fun restorePurchases(): AppReferCustomerInfo = requireEngine().restore()
+
+    /**
+     * Purchases AppRefer refused for good (400/413/422), that had no usable store data, or
+     * that could not be delivered within 50 attempts / 90 days. Each was saved here before
+     * it was acknowledged (consumables are never consumed), for support, and
+     * [restorePurchases] sends them again. Empty before [configure].
+     */
+    suspend fun rejectedPurchases(): List<RejectedPurchase> = engine?.rejectedPurchases() ?: emptyList()
 
     /**
      * The offer [purchase] buys when no `offerToken` is given: an offer with a free-trial
@@ -378,6 +390,11 @@ object AppReferBilling {
     @JvmStatic
     fun restorePurchases(callback: AppReferCallback<AppReferCustomerInfo>) {
         deliver(callback) { restorePurchases() }
+    }
+
+    @JvmStatic
+    fun rejectedPurchases(callback: AppReferCallback<List<RejectedPurchase>>) {
+        deliver(callback) { rejectedPurchases() }
     }
 
     @JvmStatic

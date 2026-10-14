@@ -169,6 +169,7 @@ internal class Harness(
     var now = NOW
     val published = mutableListOf<AppReferCustomerInfo>()
     val queue = PendingPurchaseQueue(File(storage.directory, "pending_purchases.json"))
+    val rejected = RejectedPurchaseLog(File(storage.directory, "rejected_purchases.json"))
     val engine = BillingEngine(
         api = BillingApiClient(
             baseUrls = listOf("https://trk.test", "https://main.test"),
@@ -181,6 +182,7 @@ internal class Harness(
         ),
         storage = storage,
         queue = queue,
+        rejected = rejected,
         play = play,
         options = options,
         appUserId = appUserId,

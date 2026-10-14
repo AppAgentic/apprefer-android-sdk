@@ -117,14 +117,14 @@ class BillingStorageTest {
     }
 
     @Test
-    fun queuePrunesTooManyAttemptsAndTooOld() {
+    fun queueListsTooManyAttemptsAndTooOldWithoutRemovingThem() {
         val queue = PendingPurchaseQueue(File(tempDir(), "q.json"))
         queue.add(entry("tooMany", attempts = PendingPurchaseQueue.MAX_ATTEMPTS))
         queue.add(entry("tooOld", at = NOW - 91 * DAY))
         queue.add(entry("fine"))
-        val dropped = queue.prune(NOW)
-        assertEquals(setOf("tooMany", "tooOld"), dropped.map { it.purchaseToken }.toSet())
-        assertEquals(listOf("fine"), queue.entries.map { it.purchaseToken })
+        val expired = queue.expired(NOW)
+        assertEquals(setOf("tooMany", "tooOld"), expired.map { it.purchaseToken }.toSet())
+        assertEquals(3, queue.entries.size)
     }
 
     @Test

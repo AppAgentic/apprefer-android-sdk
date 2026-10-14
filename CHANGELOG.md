@@ -27,6 +27,12 @@ and stays version-locked with the iOS, Flutter, and React Native SDKs.
     (50 attempts / 90 days) with back-off on 401/403/404/409/429 and `Retry-After`
   - `restorePurchases()` sends `"restore": true` (the only call that may move another
     user's purchase); pending identifies survive `logOut`
+  - Rejected-purchase archive: a final 400/413/422, missing store data or a queue give-up
+    is saved to disk before the purchase is acknowledged (never consumed);
+    `rejectedPurchases()` lists them and `restorePurchases()` resends them
+  - Purchase intents: who started a purchase is saved before Google Play opens (or the
+    purchase is not started), so pending purchases completing after a restart, `logOut`
+    or user switch are recorded for them
 - Attribution: an unreadable stored device id is no longer replaced with a new one
   (the configure request is skipped and retried next launch).
   - Sends the AppRefer attribution device id as `appreferId` automatically

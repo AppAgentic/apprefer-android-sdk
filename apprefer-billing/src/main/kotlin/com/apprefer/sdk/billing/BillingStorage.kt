@@ -10,6 +10,17 @@ import java.util.UUID
 /** Storage could not be read or written; billing must not mint a new identity over it. */
 internal class BillingStorageException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/**
+ * Saved before the purchase sheet opens: who started a purchase of [productId], with the
+ * account token it was tagged with (null when untagged).
+ */
+internal data class PurchaseIntent(
+    val productId: String,
+    val appUserId: String,
+    val accountToken: String?,
+    val startedAtMillis: Long,
+)
+
 /** Small key-value store, so storage logic is testable without SharedPreferences. */
 internal interface BillingKeyValueStore {
     /** Null when the key is missing; throws [BillingStorageException] when it can't be read. */
@@ -237,6 +248,64 @@ internal class BillingStorage(private val store: BillingKeyValueStore, val direc
 
     // endregion
 
+    // region Purchase intents: who opened a purchase sheet, for purchases delivered after a
+    // restart, logOut or user switch (pending payment methods can take days)
+
+    /** The saved intents, oldest first. Throws [BillingStorageException] when they can't be read. */
+    @get:Synchronized
+    val purchaseIntents: List<PurchaseIntent>
+        get() {
+            val arr = parseArray(store.getString(KEY_PURCHASE_INTENTS)) ?: return emptyList()
+            return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let(::decodeIntent) }
+        }
+
+    /** Adds [intent]. Returns whether it is on disk (false also when the list can't be read). */
+    @Synchronized
+    fun addPurchaseIntent(intent: PurchaseIntent): Boolean {
+        val list = try {
+            purchaseIntents
+        } catch (_: BillingStorageException) {
+            return false
+        }
+        return writeIntents(list.filterNot { it == intent } + intent)
+    }
+
+    /** Removes [remove] from the saved intents. Returns whether the list on disk no longer holds them. */
+    @Synchronized
+    fun removePurchaseIntents(remove: Collection<PurchaseIntent>): Boolean {
+        if (remove.isEmpty()) return true
+        val list = try {
+            purchaseIntents
+        } catch (_: BillingStorageException) {
+            return false
+        }
+        val next = list.filterNot { it in remove }
+        return next.size == list.size || writeIntents(next)
+    }
+
+    private fun writeIntents(list: List<PurchaseIntent>): Boolean {
+        val arr = JSONArray()
+        for (i in list) {
+            arr.put(
+                JSONObject()
+                    .put("productId", i.productId)
+                    .put("appUserId", i.appUserId)
+                    .put("accountToken", i.accountToken ?: JSONObject.NULL)
+                    .put("startedAtMs", i.startedAtMillis),
+            )
+        }
+        return store.putString(KEY_PURCHASE_INTENTS, if (list.isEmpty()) null else arr.toString())
+    }
+
+    private fun decodeIntent(o: JSONObject): PurchaseIntent? {
+        val productId = o.opt("productId") as? String ?: return null
+        val appUserId = o.opt("appUserId") as? String ?: return null
+        val startedAt = (o.opt("startedAtMs") as? Number)?.toLong() ?: return null
+        return PurchaseIntent(productId, appUserId, o.opt("accountToken") as? String, startedAt)
+    }
+
+    // endregion
+
     // region Cached CustomerInfo (last server answer)
 
     private val customerInfoFile get() = File(directory, "customer_info.json")
@@ -278,6 +347,7 @@ internal class BillingStorage(private val store: BillingKeyValueStore, val direc
         /** Legacy single pending identify (read and migrated into the list). */
         private const val KEY_PENDING_IDENTIFY = "apprefer_billing_pending_identify"
         private const val KEY_PENDING_IDENTIFIES = "apprefer_billing_pending_identifies"
+        const val KEY_PURCHASE_INTENTS = "apprefer_billing_purchase_intents"
 
         fun isAnonymous(appUserId: String) = appUserId.startsWith(ANONYMOUS_PREFIX)
 
