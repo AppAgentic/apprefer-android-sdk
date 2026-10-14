@@ -42,6 +42,11 @@ internal data class StorePurchase(
     val isAutoRenewing: Boolean,
     val purchaseTimeMillis: Long,
     val orderId: String?,
+    /**
+     * `obfuscatedAccountId` set at purchase time: the AppRefer account token of the app
+     * user who bought it, or null (bought outside the SDK or while AppRefer was down).
+     */
+    val obfuscatedAccountId: String? = null,
     /** The Play object, when there is one; returned to the app in `PurchaseResult`. */
     val raw: Purchase? = null,
 ) {
@@ -66,6 +71,7 @@ internal data class StorePurchase(
             isAutoRenewing = p.isAutoRenewing,
             purchaseTimeMillis = p.purchaseTime,
             orderId = p.orderId,
+            obfuscatedAccountId = p.accountIdentifiers?.obfuscatedAccountId,
             raw = p,
         )
     }

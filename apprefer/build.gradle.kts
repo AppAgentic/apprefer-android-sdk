@@ -30,6 +30,11 @@ android {
     buildFeatures {
         buildConfig = false
     }
+
+    testOptions {
+        // android.util.Log etc. return defaults in JVM unit tests.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
@@ -54,6 +59,8 @@ dependencies {
     // Google Advertising ID. Ported from Flutter plugin lines 52–69.
     // Optional signal — we catch all errors if it's missing on the host device.
     api("com.google.android.gms:play-services-ads-identifier:18.1.0")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 mavenPublishing {

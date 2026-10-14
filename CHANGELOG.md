@@ -20,10 +20,15 @@ and stays version-locked with the iOS, Flutter, and React Native SDKs.
     `setEmail` / `setDisplayName` / `setPhoneNumber`; Java callback overloads
   - Play Billing Library 8.3: pending purchases, automatic service reconnection,
     `queryPurchasesAsync` for restore, sync and outage fallback; consumables consumed
-    after AppRefer accepts them; purchases AppRefer hasn't accepted after 48 h are
-    acknowledged on device so Google doesn't refund them
+    after AppRefer records them; purchases AppRefer couldn't take are acknowledged on
+    device as soon as they are queued, and failed acknowledge/consume is retried on foreground
   - Outage safety: Google Play's active purchases merged with the cached server answer;
-    disk retry queue (50 attempts / 90 days)
+    the user's own Play purchases are also merged into server answers; disk retry queue
+    (50 attempts / 90 days) with back-off on 401/403/404/409/429 and `Retry-After`
+  - `restorePurchases()` sends `"restore": true` (the only call that may move another
+    user's purchase); pending identifies survive `logOut`
+- Attribution: an unreadable stored device id is no longer replaced with a new one
+  (the configure request is skipped and retried next launch).
   - Sends the AppRefer attribution device id as `appreferId` automatically
 - `InternalAppReferApi` / `AppReferInternal` (opt-in, for AppRefer modules only).
 

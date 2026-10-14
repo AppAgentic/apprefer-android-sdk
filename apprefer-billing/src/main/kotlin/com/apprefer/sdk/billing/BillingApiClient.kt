@@ -35,9 +35,16 @@ internal sealed class BillingEndpoint {
         /** [ProductTypes] value. */
         val productType: String,
         val attributes: Map<String, String>,
+        /**
+         * True only for Restore Purchases: lets the server move a purchase that already
+         * belongs to another app user to this one. Purchase flows and Play's purchase
+         * listener never set it.
+         */
+        val restore: Boolean = false,
     ) : BillingEndpoint() {
         // The purchase token is a secret: keep it out of logs.
-        override fun toString() = "Purchase(appUserId=$appUserId, productId=$productId, productType=$productType)"
+        override fun toString() =
+            "Purchase(appUserId=$appUserId, productId=$productId, productType=$productType, restore=$restore)"
     }
 
     data class Identify(val anonymousId: String, val appUserId: String) : BillingEndpoint()
@@ -52,7 +59,12 @@ internal data class BillingRequest(
     override fun toString() = "$method $url"
 }
 
-internal data class BillingHttpResponse(val status: Int, val body: String)
+internal data class BillingHttpResponse(
+    val status: Int,
+    val body: String,
+    /** The raw `Retry-After` header, if any. */
+    val retryAfter: String? = null,
+)
 
 /** Sends one HTTP request. Abstracted so request building and failover are testable. */
 internal fun interface BillingTransport {
@@ -80,7 +92,7 @@ internal class HttpUrlConnectionTransport(private val timeoutMs: Int = 15_000) :
             val status = conn.responseCode
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.use { it.readBytes().toString(StandardCharsets.UTF_8) } ?: ""
-            BillingHttpResponse(status, text)
+            BillingHttpResponse(status, text, conn.getHeaderField("Retry-After"))
         } catch (e: IOException) {
             throw AppReferBillingException.Network(e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""))
         } finally {
@@ -103,6 +115,7 @@ internal class BillingApiClient(
     /** 100 ms polls while waiting for the SDK key. */
     private val keyWaitAttempts: Int = 30,
     private val keyWaitDelayMs: Long = 100,
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     val baseUrls: List<String> = baseUrls.distinct()
 
@@ -135,13 +148,20 @@ internal class BillingApiClient(
                 continue
             }
 
-            if (response.status in 200..299) return CustomerInfoJson.parseResponse(response.body)
+            if (response.status in 200..299) {
+                if (endpoint is BillingEndpoint.Purchase && !isRecorded(response.body)) {
+                    // Older servers answered 200 when the purchase was verified but not
+                    // recorded; treat it like today's 503 so the retry copy is kept.
+                    throw AppReferBillingException.Server(503, "Purchase verified but not recorded yet", DEFAULT_RETRY_AFTER_MS)
+                }
+                return CustomerInfoJson.parseResponse(response.body)
+            }
             val message = try {
                 JSONObject(response.body).opt("error") as? String
             } catch (_: Exception) {
                 null
             }
-            val error = AppReferBillingException.Server(response.status, message)
+            val error = AppReferBillingException.Server(response.status, message, parseRetryAfter(response.retryAfter, now()))
             if (response.status >= 500) {
                 lastError = error
                 continue
@@ -152,6 +172,29 @@ internal class BillingApiClient(
     }
 
     companion object {
+        private const val DEFAULT_RETRY_AFTER_MS = 30_000L
+
+        /** False only when a 2xx purchase answer says the ledger write failed. */
+        private fun isRecorded(body: String): Boolean = try {
+            JSONObject(body).optJSONObject("purchase")?.opt("conversion") != "failed"
+        } catch (_: Exception) {
+            true
+        }
+
+        /** `Retry-After` as delay-seconds or an HTTP date; null when absent or unreadable. */
+        internal fun parseRetryAfter(raw: String?, nowMillis: Long): Long? {
+            val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            value.toLongOrNull()?.let { return if (it >= 0) it * 1000 else null }
+            return try {
+                val format = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", java.util.Locale.US)
+                format.timeZone = java.util.TimeZone.getTimeZone("GMT")
+                val at = format.parse(value)?.time ?: return null
+                maxOf(0L, at - nowMillis)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
         fun live(apiKey: () -> String?) = BillingApiClient(
             baseUrls = listOf(AppReferInternal.TRACKING_URL, AppReferInternal.FALLBACK_URL),
             apiKey = apiKey,
@@ -187,6 +230,7 @@ internal class BillingApiClient(
                         .put("productType", endpoint.productType)
                     endpoint.appreferId?.let { body.put("appreferId", it) }
                     if (endpoint.attributes.isNotEmpty()) body.put("attributes", JSONObject(endpoint.attributes))
+                    if (endpoint.restore) body.put("restore", true)
                 }
                 is BillingEndpoint.Identify -> {
                     path = "/api/billing/v1/identify"

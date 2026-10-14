@@ -12,14 +12,22 @@ import com.apprefer.sdk.internal.SafeRunner.safely
  *
  * Keys mirror iOS (see `sdk/ios/Sources/AppRefer/Services/Storage.swift`).
  */
-internal class AppReferStorage(context: Context) {
+internal class AppReferStorage(context: Context) : DeviceIdStore {
 
     private val prefs: SharedPreferences = context.applicationContext
         .getSharedPreferences(AppReferConfig.PREFS_NAME, Context.MODE_PRIVATE)
 
     // region device_id
 
+    /** Null when missing or unreadable; use [readDeviceId] to tell them apart. */
     fun getDeviceId(): String? = safely(null) { prefs.getString(KEY_DEVICE_ID, null) }
+
+    /** Null when missing; throws when the value can't be read. */
+    override fun readDeviceId(): String? = prefs.getString(KEY_DEVICE_ID, null)
+
+    /** Waits for the disk; false if the id was not saved. */
+    override fun writeDeviceId(value: String): Boolean =
+        safely(false) { prefs.edit().putString(KEY_DEVICE_ID, value).commit() }
 
     fun setDeviceId(value: String) {
         safely(Unit) { prefs.edit().putString(KEY_DEVICE_ID, value).apply() }

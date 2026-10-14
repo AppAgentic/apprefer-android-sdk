@@ -24,6 +24,7 @@ internal fun storePurchase(
     acknowledged: Boolean = false,
     autoRenewing: Boolean = true,
     purchaseTime: Long = NOW - 60_000,
+    accountId: String? = null,
 ) = StorePurchase(
     purchaseToken = token,
     productIds = listOf(productId),
@@ -33,6 +34,7 @@ internal fun storePurchase(
     isAutoRenewing = autoRenewing,
     purchaseTimeMillis = purchaseTime,
     orderId = "GPA.$token",
+    obfuscatedAccountId = accountId,
 )
 
 /** Fake Google Play: owned purchases, acknowledge/consume bookkeeping. */
@@ -42,6 +44,8 @@ internal class FakePlay : PlayBillingGateway {
     var queryCount = 0
     val acknowledged = mutableListOf<String>()
     val consumed = mutableListOf<String>()
+    var acknowledgeWorks = true
+    var consumeWorks = true
     var listener: ((StorePurchasesUpdate) -> Unit)? = null
 
     override fun setPurchasesUpdatedListener(listener: (StorePurchasesUpdate) -> Unit) {
@@ -56,12 +60,14 @@ internal class FakePlay : PlayBillingGateway {
 
     override suspend fun acknowledge(purchaseToken: String): Boolean {
         acknowledged += purchaseToken
+        if (!acknowledgeWorks) return false
         purchases.replaceAll { if (it.purchaseToken == purchaseToken) it.copy(isAcknowledged = true) else it }
         return true
     }
 
     override suspend fun consume(purchaseToken: String): Boolean {
         consumed += purchaseToken
+        if (!consumeWorks) return false
         purchases.removeAll { it.purchaseToken == purchaseToken }
         return true
     }
@@ -77,17 +83,19 @@ internal class FakeServer(private val play: FakePlay? = null) {
     var status: Int? = null
     /** When set, only the purchases endpoint answers with this status. */
     var purchasesStatus: Int? = null
+    /** `Retry-After` sent with error statuses. */
+    var retryAfter: String? = null
     val owned = mutableMapOf<String, MutableSet<String>>()
     val requests = mutableListOf<BillingRequest>()
 
     fun handle(request: BillingRequest): BillingHttpResponse {
         requests += request
         if (!reachable) throw AppReferBillingException.Network("offline")
-        status?.let { return BillingHttpResponse(it, """{"error":"nope"}""") }
+        status?.let { return BillingHttpResponse(it, """{"error":"nope"}""", retryAfter) }
         val body = request.body?.let(::JSONObject) ?: JSONObject()
         return when {
             request.url.contains("/purchases") && purchasesStatus != null ->
-                BillingHttpResponse(purchasesStatus!!, """{"error":"down"}""")
+                BillingHttpResponse(purchasesStatus!!, """{"error":"down"}""", retryAfter)
             request.url.contains("/purchases") -> {
                 val user = body.getString("appUserId")
                 owned.getOrPut(user) { mutableSetOf() }.add(body.getString("productId"))

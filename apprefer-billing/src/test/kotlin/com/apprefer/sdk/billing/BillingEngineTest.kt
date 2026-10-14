@@ -342,17 +342,17 @@ class BillingEngineTest {
     }
 
     @Test
-    fun overdueUnacceptedPurchaseIsAcknowledgedOnDevice() = runTest {
+    fun unacceptedPurchaseIsAcknowledgedOnDeviceOnceQueued() = runTest {
         val h = harness("user_1")
         h.server.reachable = false
-        h.play.purchases += storePurchase("fresh", "pro_monthly")
-        h.play.purchases += storePurchase("old", "pro_yearly", purchaseTime = NOW - 49 * 3600 * 1000L)
-        h.play.purchases += storePurchase("oldCoins", "coins_100", isSubscription = false, purchaseTime = NOW - 3 * DAY)
+        h.play.purchases += storePurchase("sub", "pro_monthly")
+        h.play.purchases += storePurchase("coins", "coins_100", isSubscription = false)
         h.engine.syncPurchases()
-        assertEquals(listOf("old"), h.play.acknowledged)
-        assertEquals(listOf("oldCoins"), h.play.consumed)
+        // Acknowledged right away (no 48 h wait for a reopen); consumables are not consumed.
+        assertEquals(listOf("sub", "coins"), h.play.acknowledged)
+        assertTrue(h.play.consumed.isEmpty())
         // Still queued so AppRefer records them once reachable.
-        assertEquals(setOf("fresh", "old", "oldCoins"), h.queue.entries.map { it.purchaseToken }.toSet())
+        assertEquals(setOf("sub", "coins"), h.queue.entries.map { it.purchaseToken }.toSet())
     }
 
     @Test
@@ -426,7 +426,7 @@ class BillingEngineTest {
         assertEquals("user_1", info.appUserId)
         assertTrue(info.entitlements[premium]!!.isActive)
         assertFalse(h.engine.isAnonymous)
-        assertNull(h.storage.pendingIdentify)
+        assertTrue(h.storage.pendingIdentifies.isEmpty())
     }
 
     @Test
@@ -435,10 +435,10 @@ class BillingEngineTest {
         val anon = h.engine.currentAppUserId
         h.server.reachable = false
         h.engine.logIn("user_1")
-        assertEquals(anon to "user_1", h.storage.pendingIdentify)
+        assertEquals(listOf(anon to "user_1"), h.storage.pendingIdentifies)
         h.server.reachable = true
         h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
-        assertNull(h.storage.pendingIdentify)
+        assertTrue(h.storage.pendingIdentifies.isEmpty())
     }
 
     @Test
@@ -470,7 +470,7 @@ class BillingEngineTest {
         val storage = newStorage()
         val anon = storage.anonymousId()
         harness("user_1", storage)
-        assertEquals(anon to "user_1", storage.pendingIdentify)
+        assertEquals(listOf(anon to "user_1"), storage.pendingIdentifies)
         assertEquals("user_1", storage.currentAppUserId)
     }
 
@@ -478,7 +478,7 @@ class BillingEngineTest {
     fun configureWithAppUserIdOnFreshInstallSkipsIdentify() = runTest {
         val storage = newStorage()
         harness("user_1", storage)
-        assertNull(storage.pendingIdentify)
+        assertTrue(storage.pendingIdentifies.isEmpty())
         assertEquals("user_1", storage.loggedInAppUserId)
     }
 

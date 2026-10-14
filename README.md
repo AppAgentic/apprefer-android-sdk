@@ -177,9 +177,13 @@ Java: every suspend call has a callback overload taking `AppReferCallback<T>` (r
 
 A paying user is never locked out because AppRefer is down:
 
-- If AppRefer can't be reached or returns an error, entitlements come from Google Play's own active purchases (`queryPurchasesAsync`: purchased, not pending, not consumable), mapped through `entitlementsByProduct`, merged with the last server answer for the same user.
-- A purchase AppRefer can't accept right now is saved to a retry queue on disk (max 50 attempts / 90 days). It is resent on the next launch, on foreground and after the next successful call. Google's real-time developer notifications also reach AppRefer on their own.
-- Google refunds purchases that aren't acknowledged within 3 days. If AppRefer still hasn't accepted a purchase 48 hours after it was made, the SDK acknowledges (or consumes) it itself; it stays queued for AppRefer.
+- If AppRefer can't be reached or returns an error, entitlements come from Google Play's own active purchases (`queryPurchasesAsync`: purchased, not pending, not consumable), mapped through `entitlementsByProduct`, merged with the last server answer for the same user. During an outage every purchase on the device counts.
+- When AppRefer does answer, the device's purchases that belong to this user are still merged in, so a purchase the server never got (upload rejected or given up, no account token) never locks a payer out. A purchase belongs to the user when it has no `obfuscatedAccountId`, carries this user's account token, or is still queued for them; one tagged with another user's token is left out.
+- A purchase AppRefer can't accept right now is saved to a retry queue on disk (max 50 attempts / 90 days). It is resent on the next launch, on foreground and after the next successful call, always for the user who made it. A 401/403/404/409/429 pauses the queue (30 s doubling to 1 h, or the server's `Retry-After`) without using up attempts; 400/413/422 are final. Google's real-time developer notifications also reach AppRefer on their own.
+- Google refunds purchases that aren't acknowledged within 3 days. AppRefer acknowledges when it records a purchase; if the upload fails, the SDK acknowledges on device as soon as the retry copy is on disk (never consumes: consumables are consumed only once AppRefer has recorded them). Failed acknowledgements and consumes are retried at launch and on foreground.
+- Only `restorePurchases()` may move a purchase that belongs to another app user to the current one (it sends `"restore": true`); purchases and Play's purchase listener never do.
+- `logOut()` keeps any anonymous-to-user merge that hasn't reached AppRefer yet; waiting merges are sent in order.
+- If the billing identity can't be read from storage, the SDK answers from Google Play alone and never mints a replacement id.
 - The Play connection uses `enableAutoServiceReconnection()` plus a retried first connection.
 
 ### Migrating from RevenueCat

@@ -171,4 +171,71 @@ class BillingApiClientTest {
         assertTrue(AppReferBillingException.Server(502, null).isConnectivity)
         assertFalse(AppReferBillingException.Server(404, null).isConnectivity)
     }
+
+    @Test
+    fun purchaseSendsRestoreOnlyWhenAsked() {
+        val plain = JSONObject(BillingApiClient.makeRequest(BillingEndpoint.Purchase("u", null, "tok", "p", ProductTypes.SUBSCRIPTION, emptyMap()), base, "pk").body!!)
+        assertFalse(plain.has("restore"))
+        val restore = JSONObject(
+            BillingApiClient.makeRequest(BillingEndpoint.Purchase("u", null, "tok", "p", ProductTypes.SUBSCRIPTION, emptyMap(), restore = true), base, "pk").body!!,
+        )
+        assertEquals(true, restore.get("restore"))
+    }
+
+    @Test
+    fun backoffClassification() {
+        for (status in listOf(401, 403, 404, 409, 429)) {
+            assertTrue(AppReferBillingException.Server(status, null).isBackoff)
+            assertTrue(AppReferBillingException.Server(status, null).isRetryable)
+        }
+        for (status in listOf(400, 413, 422, 500, 503)) assertFalse(AppReferBillingException.Server(status, null).isBackoff)
+        assertFalse(AppReferBillingException.Network("x").isBackoff)
+    }
+
+    @Test
+    fun retryAfterIsParsedFromSecondsOrHttpDate() = runTest {
+        assertEquals(30_000L, BillingApiClient.parseRetryAfter("30", 0))
+        assertNull(BillingApiClient.parseRetryAfter("soon", 0))
+        assertNull(BillingApiClient.parseRetryAfter(null, 0))
+        val now = 1_784_000_000_000L // 2026-07-14
+        val date = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }.format(java.util.Date(now + 90_000))
+        assertEquals(90_000L, BillingApiClient.parseRetryAfter(date, now))
+
+        val c = client { BillingHttpResponse(429, """{"error":"slow down"}""", "45") }
+        try {
+            c.api.send(BillingEndpoint.GetCustomer("u"))
+            fail()
+        } catch (e: AppReferBillingException.Server) {
+            assertEquals(45_000L, e.retryAfterMillis)
+        }
+    }
+
+    @Test
+    fun verifiedButNotRecordedIsRetryable() = runTest {
+        val c = client { BillingHttpResponse(503, """{"error":"Purchase verified but not recorded yet; retry","retryable":true}""", "30") }
+        try {
+            c.api.send(BillingEndpoint.Purchase("u", null, "tok", "p", ProductTypes.CONSUMABLE, emptyMap()))
+            fail()
+        } catch (e: AppReferBillingException.Server) {
+            assertEquals(503, e.status)
+            assertEquals(30_000L, e.retryAfterMillis)
+            assertTrue(e.isRetryable)
+        }
+    }
+
+    @Test
+    fun okAnswerSayingLedgerWriteFailedIsTreatedAsNotRecorded() = runTest {
+        val body = JSONObject(ok.body).put("purchase", JSONObject().put("conversion", "failed")).toString()
+        val c = client { BillingHttpResponse(200, body) }
+        try {
+            c.api.send(BillingEndpoint.Purchase("u", null, "tok", "p", ProductTypes.CONSUMABLE, emptyMap()))
+            fail()
+        } catch (e: AppReferBillingException.Server) {
+            assertEquals(503, e.status)
+        }
+        // Other conversions are recorded purchases.
+        val processed = JSONObject(ok.body).put("purchase", JSONObject().put("conversion", "processed")).toString()
+        client { BillingHttpResponse(200, processed) }.api.send(BillingEndpoint.Purchase("u", null, "tok", "p", ProductTypes.CONSUMABLE, emptyMap()))
+    }
 }

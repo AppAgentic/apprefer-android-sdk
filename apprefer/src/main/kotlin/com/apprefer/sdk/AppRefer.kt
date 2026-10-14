@@ -364,13 +364,18 @@ object AppRefer {
 
     private suspend fun resolveAttribution(s: SdkState): Attribution? = coroutineScope {
         // Fan out the slow calls in parallel. Matches iOS/Flutter behavior.
-        val deviceIdJob = async { safely(s.deviceIdManager.getOrCreate()) { s.deviceIdManager.getOrCreate() } }
+        val deviceIdJob = async { safely<String?>(null) { s.deviceIdManager.getOrCreate() } }
         val deviceInfoJob = async { safely(mapOf<String, Any?>("platform" to "android")) { s.deviceInfo.collect() } }
         val referrerJob = async { safely(null) { s.installReferrer.collect() } }
         val gaidJob = async { safely(null) { GaidCollector.getGaid(s.appContext, s.logger) } }
 
         val results = awaitAll(deviceIdJob, deviceInfoJob, referrerJob, gaidJob)
-        val deviceId = results[0] as String
+        val deviceId = results[0] as String? ?: run {
+            // Stored id unreadable: a new one would split this device's attribution.
+            // Not marked attempted, so the next launch retries.
+            s.logger.error("Device ID unavailable — configure request skipped, will retry on next launch")
+            return@coroutineScope null
+        }
         @Suppress("UNCHECKED_CAST")
         val deviceInfoMap = results[1] as Map<String, Any?>
         val referrer = results[2] as com.apprefer.sdk.internal.ReferrerData?

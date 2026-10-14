@@ -19,25 +19,54 @@ import java.util.UUID
  *   - `9774d56d682e549c` — well-known buggy value shared across many Android 2.x devices
  *   - all-zero or all-same-character strings (emulator leftovers)
  */
+internal interface DeviceIdStore {
+    /** The saved device id, or null when there is none. Throws when it can't be read. */
+    fun readDeviceId(): String?
+
+    /** Saves the id; false if it did not reach disk. */
+    fun writeDeviceId(value: String): Boolean
+}
+
 internal class DeviceIdManager(
-    private val context: Context,
-    private val storage: AppReferStorage,
+    private val storage: DeviceIdStore,
+    private val androidId: () -> String?,
     private val logger: Logger,
 ) {
+    constructor(context: Context, storage: AppReferStorage, logger: Logger) :
+        this(storage, { readAndroidId(context) }, logger)
 
-    fun getOrCreate(): String = safely(fallbackUuid()) {
-        storage.getDeviceId()?.takeIf { it.isNotBlank() }?.let {
+    /**
+     * The saved device id, minting one only when none is saved. Returns null when storage
+     * can't be read (after one retry): a new id would replace the device's identity and
+     * split its attribution, so the caller skips this launch's request instead.
+     * Serialized process-wide, so concurrent first-launch callers get the same id.
+     */
+    fun getOrCreate(): String? = synchronized(LOCK) {
+        val existing = try {
+            read()
+        } catch (t: Throwable) {
+            logger.error("Device ID unreadable (${t.javaClass.simpleName}); not creating a new one")
+            return null
+        }
+        existing?.let {
             logger.debug("Device ID from cache: $it")
-            return@safely it
+            return it
         }
         val fresh = resolveFresh()
-        storage.setDeviceId(fresh)
+        if (!storage.writeDeviceId(fresh)) logger.error("Device ID could not be saved; it will be saved on the next launch")
         logger.info("Device ID created: $fresh")
         fresh
     }
 
+    /** One retry: SharedPreferences can fail transiently while its file is being loaded. */
+    private fun read(): String? = try {
+        storage.readDeviceId()
+    } catch (_: Throwable) {
+        storage.readDeviceId()
+    }?.takeIf { it.isNotBlank() }
+
     private fun resolveFresh(): String {
-        val androidId = safely<String?>(null) { readAndroidId() }
+        val androidId = safely<String?>(null) { androidId() }
         return if (androidId != null && isAcceptable(androidId)) {
             androidId
         } else {
@@ -45,10 +74,6 @@ internal class DeviceIdManager(
             fallbackUuid()
         }
     }
-
-    @SuppressLint("HardwareIds")
-    private fun readAndroidId(): String? =
-        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
 
     private fun isAcceptable(value: String): Boolean {
         if (value.isBlank()) return false
@@ -63,6 +88,12 @@ internal class DeviceIdManager(
     }
 
     companion object {
+        private val LOCK = Any()
+
+        @SuppressLint("HardwareIds")
+        private fun readAndroidId(context: Context): String? =
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+
         // Values that have been flagged unreliable across the Android ecosystem.
         private val BLACKLIST = setOf(
             "9774d56d682e549c", // Android 2.x Galaxy Tab shared ID

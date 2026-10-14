@@ -14,8 +14,11 @@ sealed class AppReferBillingException(message: String) : Exception(message) {
     /** AppRefer could not be reached. */
     class Network(val detail: String) : AppReferBillingException("AppRefer unreachable: $detail")
 
-    /** AppRefer answered with an error status. */
-    class Server(val status: Int, val serverMessage: String?) :
+    /**
+     * AppRefer answered with an error status. [retryAfterMillis] is the server's
+     * `Retry-After`, when it sent one.
+     */
+    class Server(val status: Int, val serverMessage: String?, val retryAfterMillis: Long? = null) :
         AppReferBillingException("AppRefer error $status${serverMessage?.let { ": $it" } ?: ""}")
 
     /** AppRefer answered 2xx with a body the SDK could not read. */
@@ -31,6 +34,12 @@ sealed class AppReferBillingException(message: String) : Exception(message) {
     class Store(val responseCode: Int, val debugMessage: String?) :
         AppReferBillingException("Google Play Billing error $responseCode${debugMessage?.takeIf { it.isNotEmpty() }?.let { ": $it" } ?: ""}")
 
+    /**
+     * The customer's identity on this device could not be read or saved. Billing answers
+     * from Google Play alone until it can, and never replaces the identity meanwhile.
+     */
+    class Storage(val detail: String) : AppReferBillingException("AppRefer Billing storage unavailable: $detail")
+
     /** Another `purchase` call is still waiting for Google Play. */
     class PurchaseInProgress : AppReferBillingException("A purchase is already in progress")
 
@@ -42,8 +51,20 @@ sealed class AppReferBillingException(message: String) : Exception(message) {
         get() = when (this) {
             is NotConfigured, is MissingApiKey, is Network, is InvalidResponse -> true
             is Server -> status !in PERMANENT_STATUSES
-            is InvalidAppUserId, is Store, is PurchaseInProgress -> false
+            is InvalidAppUserId, is Store, is PurchaseInProgress, is Storage -> false
         }
+
+    /**
+     * The server can't take requests from this app right now (401/403/404/409/429: key,
+     * billing setup or rate limit). The retry queue backs off and keeps the purchase
+     * without counting an attempt, so a setup problem never uses up a purchase's retries.
+     */
+    internal val isBackoff: Boolean
+        get() = this is Server && status in BACKOFF_STATUSES
+
+    /** How long the server asked us to wait (`Retry-After`), if it did. */
+    internal val retryDelayMillis: Long?
+        get() = (this as? Server)?.retryAfterMillis
 
     internal val isConnectivity: Boolean
         get() = when (this) {
@@ -54,5 +75,6 @@ sealed class AppReferBillingException(message: String) : Exception(message) {
 
     private companion object {
         val PERMANENT_STATUSES = setOf(400, 413, 422)
+        val BACKOFF_STATUSES = setOf(401, 403, 404, 409, 429)
     }
 }

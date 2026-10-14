@@ -83,10 +83,10 @@ class BillingStorageTest {
     @Test
     fun pendingIdentifyPersists() {
         val store = InMemoryKeyValueStore()
-        newStorage(store).pendingIdentify = "\$ARAnon:x" to "user_1"
-        assertEquals("\$ARAnon:x" to "user_1", newStorage(store).pendingIdentify)
-        newStorage(store).pendingIdentify = null
-        assertNull(newStorage(store).pendingIdentify)
+        newStorage(store).addPendingIdentify("\$ARAnon:x", "user_1")
+        assertEquals(listOf("\$ARAnon:x" to "user_1"), newStorage(store).pendingIdentifies)
+        newStorage(store).removePendingIdentify("\$ARAnon:x" to "user_1")
+        assertTrue(newStorage(store).pendingIdentifies.isEmpty())
     }
 
     // region Queue
