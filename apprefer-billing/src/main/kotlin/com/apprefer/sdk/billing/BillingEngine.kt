@@ -295,7 +295,8 @@ internal class BillingEngine(
                     when (purchase?.state) {
                         StorePurchase.State.PURCHASED -> {
                             val typed = purchase.copy(isSubscription = productType == ProductTypes.SUBSCRIPTION)
-                            // A renewal is not this sheet's purchase: its intent stays for the real one.
+                            // Renewals (incl. upgrades/crossgrades) settle the sheet but never match
+                            // or consume an intent: it stays saved for the real purchase.
                             val sheetIntent = intent.takeUnless { purchase.isRenewal }
                             PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user, suppliedIntent = sheetIntent))
                         }
@@ -339,7 +340,7 @@ internal class BillingEngine(
         scope.launch(dispatcher) {
             val waiter = purchaseWaiter
             val forWaiter = waiter != null &&
-                (update.responseCode != BillingResponseCode.OK || update.purchases.any { waiter.first in it.productIds && !it.isRenewal })
+                (update.responseCode != BillingResponseCode.OK || update.purchases.any { waiter.first in it.productIds })
             if (waiter != null && forWaiter) {
                 purchaseWaiter = null
                 waiter.second.complete(update)

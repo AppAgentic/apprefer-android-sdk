@@ -52,30 +52,32 @@ class BillingFinalBlockersTest {
     // region 1. Renewal guard on every path
 
     @Test
-    fun renewalArrivingWhileThePurchaseSheetIsOpenDoesNotCompleteOrConsumeItsIntent() = runTest {
+    fun renewalSettlesThePurchaseSheetButNeverConsumesItsIntent() = runTest {
         val h = Harness(this, "user_1")
         val call = async { runCatching { h.engine.purchase("pro_monthly", ProductTypes.SUBSCRIPTION) { BillingResponseCode.OK to null } } }
         advanceUntilIdle()
         val intent = h.storage.purchaseIntents.single()
 
-        // A renewal of an earlier subscription for the same product lands while the sheet is open.
+        // The sheet's store update carries a renewal (e.g. an upgrade/crossgrade order `..N`).
         val renewal = storePurchase("old..2", "pro_monthly")
         h.play.purchases += renewal
         h.play.listener!!.invoke(ok(renewal))
         advanceUntilIdle()
-        assertFalse(call.isCompleted)
-        assertEquals(listOf(intent), h.storage.purchaseIntents)
-        // Sent on the listener path, without the intent.
-        assertEquals(listOf("old..2"), h.purchaseBodies().map { it.getString("purchaseToken") })
 
-        // The sheet's real purchase completes the waiter and uses the intent.
-        val real = storePurchase("new", "pro_monthly")
-        h.play.purchases += real
-        h.play.listener!!.invoke(ok(real))
-        advanceUntilIdle()
+        // Settled, not hung.
+        assertTrue(call.isCompleted)
         val result = call.await().getOrThrow()
         assertEquals(AppReferBilling.PurchaseResult.Outcome.PURCHASED, result.outcome)
-        assertEquals("new", result.purchase!!.purchaseToken)
+        assertEquals("old..2", result.purchase!!.purchaseToken)
+        // Recorded for whoever opened the sheet, not via the intent, which stays saved.
+        assertEquals("user_1", h.purchaseBodies().single().getString("appUserId"))
+        assertEquals(listOf(intent), h.storage.purchaseIntents)
+
+        // The real purchase arriving later still matches and uses the intent.
+        h.engine.logIn("user_2")
+        h.play.purchases += storePurchase("new", "pro_monthly")
+        h.engine.syncPurchases()
+        assertEquals("user_1", h.purchaseBodies().single { it.getString("purchaseToken") == "new" }.getString("appUserId"))
         assertTrue(h.storage.purchaseIntents.isEmpty())
     }
 
