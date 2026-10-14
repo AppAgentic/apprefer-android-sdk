@@ -276,19 +276,28 @@ internal class BillingEngine(
             if (!storage.addPurchaseIntent(intent)) {
                 throw AppReferBillingException.Storage("could not save who started the purchase; purchase not started")
             }
-            val (code, message) = launch(token)
+            val (code, message) = try {
+                launch(token)
+            } catch (e: Throwable) {
+                // Unknown failures may still end in a purchase: the intent stays.
+                if (e is AppReferBillingException.Store && isDefinitiveFailure(e.responseCode)) dropIntent(intent)
+                throw e
+            }
             if (code != BillingResponseCode.OK) {
-                dropIntent(intent)
+                if (isDefinitiveFailure(code)) dropIntent(intent)
                 return@withContext launchFailed(code, message)
             }
             val update = waiter.await()
             when (update.responseCode) {
                 BillingResponseCode.OK -> {
-                    val purchase = update.purchases.firstOrNull { productId in it.productIds }
+                    val matching = update.purchases.filter { productId in it.productIds }
+                    val purchase = matching.firstOrNull { !it.isRenewal } ?: matching.firstOrNull()
                     when (purchase?.state) {
                         StorePurchase.State.PURCHASED -> {
                             val typed = purchase.copy(isSubscription = productType == ProductTypes.SUBSCRIPTION)
-                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user, intent = intent))
+                            // A renewal is not this sheet's purchase: its intent stays for the real one.
+                            val sheetIntent = intent.takeUnless { purchase.isRenewal }
+                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user, suppliedIntent = sheetIntent))
                         }
                         // Pending (slow payment method): it arrives later through
                         // onPurchasesUpdated or the next foreground sync, and the saved
@@ -303,7 +312,7 @@ internal class BillingEngine(
                 else -> {
                     // Other errors keep the intent: Play sometimes reports one for a purchase
                     // that still goes through.
-                    if (update.responseCode == BillingResponseCode.USER_CANCELED) dropIntent(intent)
+                    if (isDefinitiveFailure(update.responseCode)) dropIntent(intent)
                     launchFailed(update.responseCode, update.debugMessage)
                 }
             }
@@ -330,7 +339,7 @@ internal class BillingEngine(
         scope.launch(dispatcher) {
             val waiter = purchaseWaiter
             val forWaiter = waiter != null &&
-                (update.responseCode != BillingResponseCode.OK || update.purchases.any { waiter.first in it.productIds })
+                (update.responseCode != BillingResponseCode.OK || update.purchases.any { waiter.first in it.productIds && !it.isRenewal })
             if (waiter != null && forWaiter) {
                 purchaseWaiter = null
                 waiter.second.complete(update)
@@ -380,9 +389,10 @@ internal class BillingEngine(
             }
             emptyList()
         }
-        val intent = intents.firstOrNull {
+        // Oldest by start time, never by list order (ties keep list order).
+        val intent = intents.filter {
             it.productId in purchase.productIds && (tag == null || it.accountToken.equals(tag, ignoreCase = true))
-        }
+        }.minByOrNull { it.startedAtMillis }
         if (tagged != null || intent != null) return Owner(tagged ?: intent!!.appUserId, intent)
         if (tag == null) {
             val lostAt = try {
@@ -438,16 +448,18 @@ internal class BillingEngine(
      * acknowledges it; consumables are consumed here once it is recorded. If AppRefer can't
      * take it now, the token is queued on disk, then acknowledged on device so Google never
      * refunds it while the upload waits; access comes from Google Play meanwhile.
-     * [restore] is true only for Restore Purchases.
+     * [restore] is true only for Restore Purchases. A renewal ignores [suppliedIntent]: it
+     * neither uses nor drops it, whichever path delivered it.
      */
     private suspend fun process(
         purchase: StorePurchase,
         productType: String,
         owner: String?,
         restore: Boolean = false,
-        intent: PurchaseIntent? = null,
+        suppliedIntent: PurchaseIntent? = null,
         supportNote: String? = null,
     ): AppReferCustomerInfo {
+        val intent = suppliedIntent.takeUnless { purchase.isRenewal }
         if (purchase.state != StorePurchase.State.PURCHASED) return localFallback()
         if (purchase.purchaseToken.isEmpty() || purchase.productId.isEmpty()) {
             logger.error("Billing: purchase ${purchase.orderId ?: purchase.productId} has no usable store data; not sent")
@@ -687,7 +699,7 @@ internal class BillingEngine(
                     val deferredBefore = deferredForLostIntents
                     val owner = ownerOf(purchase)
                     if (deferredForLostIntents > deferredBefore) continue
-                    process(purchase, type, owner?.appUserId, intent = owner?.intent, supportNote = owner?.supportNote)
+                    process(purchase, type, owner?.appUserId, suppliedIntent = owner?.intent, supportNote = owner?.supportNote)
                 }
             }
         }
@@ -945,6 +957,22 @@ internal class BillingEngine(
          * current user: inside Google's 3-day acknowledgement window.
          */
         const val LOST_INTENT_WAIT_MS = 48L * 3600 * 1000
+
+        /**
+         * Store results that end a purchase for good, so its intent can go: cancelled, or no
+         * purchase can happen. Anything else (service/network errors, generic ERROR, unknown)
+         * may still complete, so the intent stays.
+         */
+        fun isDefinitiveFailure(code: Int): Boolean = when (code) {
+            BillingResponseCode.USER_CANCELED,
+            BillingResponseCode.ITEM_UNAVAILABLE,
+            BillingResponseCode.DEVELOPER_ERROR,
+            BillingResponseCode.FEATURE_NOT_SUPPORTED,
+            BillingResponseCode.BILLING_UNAVAILABLE,
+            BillingResponseCode.ITEM_ALREADY_OWNED,
+            -> true
+            else -> false
+        }
 
         fun isValid(appUserId: String): Boolean =
             appUserId.isNotEmpty() && appUserId.length <= 256 && appUserId.none { it.isWhitespace() }

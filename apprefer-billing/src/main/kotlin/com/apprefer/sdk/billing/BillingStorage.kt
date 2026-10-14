@@ -256,7 +256,9 @@ internal class BillingStorage(
     // restart, logOut or user switch (pending payment methods can take days)
 
     /**
-     * The saved intents, oldest first. Throws [BillingStorageException] when they can't be
+     * The saved intents, in the order they were saved (matching picks the oldest by
+     * `startedAtMillis`, not by position). Starting another purchase for the same user and
+     * product adds an intent and never replaces one. Throws [BillingStorageException] when they can't be
      * read. Malformed storage is quarantined (its raw text copied aside for support), the
      * entries that still decode are kept, and the intents-lost marker is saved
      * ([intentsLostAtMillis]); it throws if any of that can't be saved, so nothing is lost.
