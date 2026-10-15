@@ -1,5 +1,6 @@
 ## [0.5.0] - 2026-10-15
 
+- AI personas: approved name and portrait, explicit AI tag, and a hand-over pill when a person is needed.
 - Add native AppRefer Support home, conversations, screenshot uploads, session recovery and reply push integration.
 - Support chat "Concierge" design, matching iOS: accent hero with presence pill, Continue card, quick-help
   topics, floating message field on the home (no separate compose screen), grouped gradient bubbles,
@@ -7,13 +8,7 @@
   `topics` (`AppReferSupportTopic`, optional `action`) and `appIcon`; a picked topic becomes the conversation
   subject; `compose(text)` opens the home with the field pre-filled.
 
-# Changelog
-
-All notable changes to the AppRefer Android SDK will be documented in this
-file. This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-and stays version-locked with the iOS, Flutter, and React Native SDKs.
-
-## [Unreleased]
+### Billing and attribution
 
 ### Added
 - AppRefer Billing (`apprefer-billing` module, `com.apprefer.sdk.billing.AppReferBilling`):
