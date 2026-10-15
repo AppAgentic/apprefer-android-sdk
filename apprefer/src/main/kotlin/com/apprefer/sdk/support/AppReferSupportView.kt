@@ -540,8 +540,8 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun thumbnails(urls: List<AppReferSupportAttachment>, end: Boolean): View {
-        val strip = row().apply { gravity = if (end) Gravity.END else Gravity.START }
-        urls.forEachIndexed { i, a ->
+        val strip = SupportFlowRow(context, dp(6), end)
+        urls.forEach { a ->
             val (frame, picture) = framedImage(74, 112, 14)
             picture.contentDescription = a.name ?: "Screenshot"
             a.url?.let { url ->
@@ -550,7 +550,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 if (cached != null) picture.setImageBitmap(cached)
                 else scope.launch { try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) } catch (_: Exception) {} }
             }
-            strip.addView(frame, lp(dp(74), dp(112), start = if (i > 0) dp(6) else 0))
+            strip.addView(frame, ViewGroup.LayoutParams(dp(74), dp(112)))
         }
         return strip
     }
@@ -611,11 +611,11 @@ class AppReferSupportView @JvmOverloads constructor(
     private fun pendingBubble(pend: SupportPending): View {
         val box = column().apply { gravity = Gravity.END; setPadding(dp(60), 0, 0, 0) }
         if (pend.images.isNotEmpty()) {
-            val strip = row().apply { gravity = Gravity.END; alpha = .6f }
-            pend.images.forEachIndexed { i, bytes ->
+            val strip = SupportFlowRow(context, dp(6), true).apply { alpha = .6f }
+            pend.images.forEach { bytes ->
                 val (frame, picture) = framedImage(74, 112, 14)
                 picture.setImageBitmap(thumb(bytes))
-                strip.addView(frame, lp(dp(74), dp(112), start = if (i > 0) dp(6) else 0))
+                strip.addView(frame, ViewGroup.LayoutParams(dp(74), dp(112)))
             }
             box.addView(strip, lp(-2))
         }
@@ -808,14 +808,18 @@ class AppReferSupportView @JvmOverloads constructor(
         if (text.isEmpty() && images.isEmpty()) return
         starting = true; sendError = null
         updateSend(); renderAccessories(); saveDraft()
-        val shots = images.toList(); val about = topic?.title; val clientId = homeClientMessageId
+        val sentDraft = draft; val shots = images.toList(); val about = topic?.title; val clientId = homeClientMessageId
         scope.launch {
             try {
                 // Every attempt uses fresh upload slots but keeps the same send identity.
                 val ids = shots.map { api.upload(it) }
                 val t = api.start(text, ids, clientId, about)
                 starting = false
-                draft = ""; images.clear(); topic = null; homeClientMessageId = UUID.randomUUID().toString()
+                // Clear only what was sent: anything typed or picked meanwhile stays as the next home draft.
+                if (draft == sentDraft) draft = ""
+                images.removeAll { kept -> shots.any { it === kept } }
+                if (topic?.title == about) topic = null
+                homeClientMessageId = UUID.randomUUID().toString()
                 id = t.conversation.id; subject = t.conversation.subject
                 timeline.reset(); timeline.merge(t.messages); threadLoaded = true; loadError = null
                 hideKeyboard()
@@ -991,6 +995,13 @@ class AppReferSupportView @JvmOverloads constructor(
             out.writeInt(pending.size)
             pending.forEach { it.write(out) }
             out.writeUTF(topic?.title ?: ""); out.writeUTF(homeClientMessageId)
+            val stash = homeStash
+            out.writeBoolean(stash != null)
+            if (stash != null) {
+                val stashText = stash.draft.toByteArray(Charsets.UTF_8); out.writeInt(stashText.size); out.write(stashText)
+                out.writeInt(stash.images.size); stash.images.forEach { out.writeInt(it.size); out.write(it) }
+                out.writeUTF(stash.topic?.title ?: "")
+            }
             out.flush(); atomic.finishWrite(stream)
         } catch (e: Exception) { atomic.failWrite(stream); throw e }
         file.name
@@ -1028,6 +1039,15 @@ class AppReferSupportView @JvmOverloads constructor(
                     val savedTopic = input.readUTF()
                     topic = AppReferSupport.topics.firstOrNull { it.title == savedTopic && it.action == null }
                     homeClientMessageId = input.readUTF().takeIf { it.matches(Regex("[A-Za-z0-9_-]{8,64}")) } ?: homeClientMessageId
+                }
+                homeStash = null
+                if (input.available() > 0 && input.readBoolean()) {
+                    val stashSize = input.readInt(); require(stashSize in 0..1_000_000)
+                    val stashText = String(ByteArray(stashSize).also { input.readFully(it) }, Charsets.UTF_8)
+                    val stashCount = input.readInt(); require(stashCount in 0..4)
+                    val stashImages = List(stashCount) { val length = input.readInt(); require(length in 1..700_000); ByteArray(length).also { input.readFully(it) } }
+                    val stashTopic = input.readUTF().let { saved -> AppReferSupport.topics.firstOrNull { it.title == saved && it.action == null } }
+                    if (route == "thread") homeStash = HomeStash(stashText, stashImages, stashTopic, null)
                 }
             }
             draftFile = file; render()
@@ -1114,4 +1134,42 @@ internal class SupportHeroDrawable(private val p: SupportPalette, private val de
     override fun setAlpha(alpha: Int) {}
     override fun setColorFilter(colorFilter: ColorFilter?) {}
     @Deprecated("Drawable API") override fun getOpacity() = PixelFormat.OPAQUE
+}
+
+/** Lays children out in rows that wrap, so screenshots never run past a narrow screen. */
+internal class SupportFlowRow(context: Context, private val gap: Int, private val alignEnd: Boolean) : ViewGroup(context) {
+    init { clipChildren = false; clipToPadding = false }
+    private val lines = mutableListOf<List<View>>()
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val limit = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) Int.MAX_VALUE else MeasureSpec.getSize(widthMeasureSpec)
+        lines.clear()
+        var line = mutableListOf<View>(); var lineWidth = 0; var widest = 0; var height = 0; var lineHeight = 0
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            if (child.visibility == GONE) continue
+            val lp = child.layoutParams
+            // A child never measures wider than the row allows.
+            val w = minOf(lp.width.coerceAtLeast(0), limit)
+            val h = if (lp.width > 0 && w < lp.width) lp.height * w / lp.width else lp.height
+            child.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
+            val add = if (line.isEmpty()) w else gap + w
+            if (line.isNotEmpty() && lineWidth + add > limit) {
+                lines.add(line); widest = maxOf(widest, lineWidth); height += lineHeight + gap
+                line = mutableListOf(); lineWidth = 0; lineHeight = 0
+            }
+            lineWidth += if (line.isEmpty()) w else gap + w
+            lineHeight = maxOf(lineHeight, h); line.add(child)
+        }
+        if (line.isNotEmpty()) { lines.add(line); widest = maxOf(widest, lineWidth); height += lineHeight }
+        setMeasuredDimension(resolveSize(widest, widthMeasureSpec), resolveSize(height, heightMeasureSpec))
+    }
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        var y = 0
+        lines.forEach { line ->
+            val lineWidth = line.sumOf { it.measuredWidth } + gap * (line.size - 1)
+            var x = if (alignEnd) width - lineWidth else 0
+            line.forEach { child -> child.layout(x, y, x + child.measuredWidth, y + child.measuredHeight); x += child.measuredWidth + gap }
+            y += line.maxOf { it.measuredHeight } + gap
+        }
+    }
 }
