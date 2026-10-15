@@ -4,7 +4,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.4.1 — full attribution flow, event tracking, and Meta
+> **Status:** 0.5.0 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -29,7 +29,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.4.1")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.5.0")
 }
 ```
 
@@ -238,3 +238,40 @@ Full integration and dashboard docs: https://apprefer.com/docs
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Support chat (AppRefer Support)
+
+Native Android help chat answered from the AppRefer inbox. No additional runtime dependencies.
+Configure AppRefer first, then call from a Help button:
+
+```kotlin
+AppRefer.support.open()                      // optional conversationId
+AppRefer.support.identify("María", "maria@example.com")
+AppRefer.support.accentColor = Color.rgb(120, 82, 255)
+AppRefer.support.title = "My app support"     // defaults to application label + " support"
+AppRefer.support.compose("Problem with my subscription")
+
+// From a coroutine, after obtaining an FCM token:
+AppRefer.support.registerPushToken(token)
+val unread = AppRefer.support.unreadCount()
+AppRefer.support.removePushToken(token)       // when unregistering this device
+
+// From your notification click handler (not on receipt of a background message):
+if (AppRefer.support.handleNotification(data)) return
+```
+
+The host owns Firebase Messaging integration and notification permission prompts. Support creates
+channel `apprefer_support`; post support reply notifications to that channel and pass FCM data
+`{type: "support_reply", conversationId: "…"}` to the click handler. No Firebase dependency is added.
+An explicit `Context` overload is available for `open(context, conversationId)` and `compose(context, prefill)`.
+
+Embed `com.apprefer.sdk.support.AppReferSupportView(context)` in your own layout instead of opening
+the Activity. Wire `onClose`, `onPickImages` (system photo picker, maximum remaining count) and pass
+returned URIs to `addImages`. Forward host `onResume`/`onPause` to `resume`/`pause`; detachment also
+stops polling. The full-screen Activity wires these automatically.
+
+Customers can send up to four screenshots, including image-only messages. Images shrink to at
+most 1600 px and 700 KB before direct storage uploads. Home refreshes every 15 seconds; visible
+conversations check every 4 seconds and merge replies by ID. Failed messages remain available to
+retry. Network failures leave a new-message draft in place. Tokens use Android Keystore encryption
+and no-backup files. Dark mode follows the device; text follows system font scaling.

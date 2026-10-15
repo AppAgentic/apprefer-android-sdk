@@ -10,7 +10,7 @@ plugins {
 
 // Keep this in lockstep with `Version.kt` — plan §13 requires all four SDKs
 // (Flutter / iOS / RN / Android) to ship the same version.
-private val sdkVersion = "0.4.1"
+private val sdkVersion = "0.5.0"
 
 android {
     namespace = "com.apprefer.sdk"
@@ -61,6 +61,9 @@ dependencies {
     api("com.google.android.gms:play-services-ads-identifier:18.1.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 mavenPublishing {

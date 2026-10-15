@@ -36,12 +36,20 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val attribution = AppRefer.configure(
                 context = this@MainActivity,
-                apiKey = BuildConfigSample.API_KEY,
+                apiKey = intent.getStringExtra("api_key") ?: BuildConfigSample.API_KEY,
                 debug = true,
                 logLevel = 3,
             )
 
             deviceIdView.text = "device_id: ${AppRefer.getDeviceId() ?: "—"}"
+
+            // QA hook: `adb shell am start -n com.apprefer.sample/.MainActivity --ez open_support true --es api_key pk_test_…`
+            if (intent.getBooleanExtra("open_support", false)) {
+                AppRefer.setUserId("support-sample-demo")
+                AppRefer.support.identify(name = "María López")
+                val draft = intent.getStringExtra("compose")
+                if (draft != null) AppRefer.support.compose(this@MainActivity, draft) else AppRefer.support.open(this@MainActivity)
+            }
 
             statusView.text = if (attribution == null) {
                 "Attribution: (none — organic or network failure)"

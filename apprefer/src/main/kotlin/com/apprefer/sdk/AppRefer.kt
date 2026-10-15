@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
  * ```
  */
 object AppRefer {
+    val support: com.apprefer.sdk.support.AppReferSupport get() = com.apprefer.sdk.support.AppReferSupport
 
     // One global singleton-ish state, protected for concurrent access.
     @Volatile private var state: SdkState? = null
@@ -77,7 +78,7 @@ object AppRefer {
 
         s.logger.info("AppReferSDK initialized v$APPREFER_SDK_VERSION")
 
-        if (userId != null) safelyRun { s.storage.setUserId(userId) }
+        if (userId != null) safelyRun { s.storage.setUserId(userId); support.identityChanged() }
 
         // Record first run date
         safelyRun { s.storage.getFirstRunDate() }
@@ -265,7 +266,7 @@ object AppRefer {
                 return@safelyRun
             }
 
-            safelyRun { s.storage.setUserId(userId) }
+            safelyRun { s.storage.setUserId(userId); support.identityChanged() }
             s.logger.info("User ID set")
 
             if (!s.storage.isSdkEnabled()) return@safelyRun
@@ -353,6 +354,7 @@ object AppRefer {
             installReferrer = installReferrer,
             appContext = appCtx,
         )
+        com.apprefer.sdk.support.AppReferSupport.configure(appCtx)
         state = s
         s
     }

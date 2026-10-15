@@ -1,3 +1,7 @@
+## [0.5.0] - 2026-10-15
+
+- Add native AppRefer Support home, compose, conversations, screenshot uploads, session recovery and reply push integration.
+
 # Changelog
 
 All notable changes to the AppRefer Android SDK will be documented in this
