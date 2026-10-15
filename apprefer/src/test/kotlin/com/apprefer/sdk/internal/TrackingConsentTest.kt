@@ -2,6 +2,9 @@ package com.apprefer.sdk.internal
 
 import com.apprefer.sdk.TrackingConsent
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -74,5 +77,69 @@ class TrackingConsentTest {
         current = null
         report()
         assertEquals(3, sends)
+    }
+
+    @Test fun firstOpenMustFinishBeforeActivationCanReport() = runBlocking {
+        val reporter = ConsentReporter()
+        var attempted = false
+        var current = "denied"
+        var reported: String? = null
+        val sent = mutableListOf<String>()
+        suspend fun report() = reporter.report({ current }, { reported },
+            { sent.add(it); emptyMap() }, {}, { reported = it },
+            eligible = { attempted })
+        report()
+        current = "granted" // ATT answered while configure was in flight.
+        report()
+        assertTrue(sent.isEmpty())
+        reported = "denied" // First open accepted its original snapshot.
+        attempted = true
+        report() // configure's final check.
+        assertEquals(listOf("granted"), sent)
+        assertEquals("granted", reported)
+    }
+
+    @Test fun killSwitchPreservesCacheAndReportedConsentAndBlocksLaterCalls() = runBlocking {
+        val reporter = ConsentReporter()
+        var enabled = true
+        var saved: String? = "denied"
+        var cache = "paid attribution"
+        var calls = 0
+        suspend fun report() = reporter.report({ "granted" }, { saved },
+            { calls++; mapOf("sdkEnabled" to false) },
+            { cache = "cleared" }, { saved = it },
+            eligible = { enabled }, disabled = { enabled = false })
+        report()
+        assertFalse(enabled)
+        assertEquals("denied", saved)
+        assertEquals("paid attribution", cache)
+        report()
+        assertEquals(1, calls)
+    }
+
+    @Test fun checkDuringInflightReportReadsNewConsentAfterCompletion() = runBlocking {
+        val reporter = ConsentReporter()
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        var current = "denied"
+        var saved: String? = null
+        val sent = mutableListOf<String>()
+        suspend fun report() = reporter.report({ current }, { saved },
+            {
+                sent.add(it)
+                if (sent.size == 1) { started.complete(Unit); finish.await() }
+                emptyMap()
+            }, {}, { saved = it })
+        val first = launch { report() }
+        started.await()
+        current = "granted"
+        val second = launch { report() }
+        yield()
+        assertEquals(listOf("denied"), sent)
+        finish.complete(Unit)
+        first.join()
+        second.join()
+        assertEquals(listOf("denied", "granted"), sent)
+        assertEquals("granted", saved)
     }
 }

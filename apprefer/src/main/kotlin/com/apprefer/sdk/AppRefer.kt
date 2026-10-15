@@ -52,7 +52,7 @@ object AppRefer {
         synchronized(this) {
             pendingConsentSet = true
             pendingConsent = TrackingConsent.mapped(granted)
-            state?.storage?.setTrackingConsent(pendingConsent)
+            safelyRun { state?.storage?.setTrackingConsent(pendingConsent) }
         }
         trackingConsentDidChange()
     }
@@ -69,8 +69,10 @@ object AppRefer {
         else context?.let { AppReferStorage(it).getTrackingConsent() }
     }
 
-    private suspend fun reportConsent(s: SdkState) {
+    private suspend fun reportConsent(s: SdkState) = safelyRun {
         consentReporter.report(
+            eligible = { s.storage.isSdkEnabled() && s.storage.isMatchRequestAttempted() },
+            disabled = { s.storage.setSdkEnabled(false) },
             current = { s.storage.getTrackingConsent() },
             reported = { s.storage.getReportedConsent() },
             send = { consent ->
@@ -80,6 +82,18 @@ object AppRefer {
                         "device_id" to deviceId, "tracking_consent" to consent,
                         "device_info" to s.deviceInfo.collect(), "sdk_version" to APPREFER_SDK_VERSION,
                     )
+                    if (TrackingConsent.allowed(consent)) {
+                        body["gaid"] = GaidCollector.getGaid(s.appContext, s.logger)
+                    }
+                    if (s.storage.getReportedConsent() == null) {
+                        val referrer = s.installReferrer.collect()
+                        body["install_referrer"] = referrer?.installReferrer
+                        body["ar_click_id"] = InstallReferrerCollector.extractArClickId(referrer?.installReferrer)
+                        body["referrer_click_ts"] = referrer?.referrerClickTimestampSeconds
+                        body["referrer_install_ts"] = referrer?.installBeginTimestampSeconds
+                        body["install_version"] = referrer?.installVersion
+                        body["google_play_instant_param"] = referrer?.googlePlayInstantParam
+                    }
                     s.storage.getUserId()?.let { body["customer_user_id"] = it }
                     s.http.post("/api/track/configure", body, consent, true)
                 }
@@ -136,7 +150,7 @@ object AppRefer {
         // Record first run date
         safelyRun { s.storage.getFirstRunDate() }
 
-        if (s.storage.isMatchRequestAttempted() || !s.storage.isSdkEnabled()) reportConsent(s)
+        if (s.storage.isMatchRequestAttempted()) reportConsent(s)
 
         if (!s.storage.isSdkEnabled()) {
             s.logger.info("SDK disabled by kill switch")
@@ -488,7 +502,6 @@ object AppRefer {
             return@coroutineScope null
         }
 
-        if (consent != null) s.storage.setReportedConsent(consent)
         val sdkEnabled = (response["sdkEnabled"] as? Boolean) ?: true
         s.storage.setSdkEnabled(sdkEnabled)
         if (!sdkEnabled) {
@@ -496,6 +509,8 @@ object AppRefer {
             s.storage.setMatchRequestAttempted(true)
             return@coroutineScope null
         }
+
+        if (consent != null) s.storage.setReportedConsent(consent)
 
         @Suppress("UNCHECKED_CAST")
         val attrMap = response["attribution"] as? Map<String, Any?>
@@ -517,7 +532,8 @@ object AppRefer {
             ).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date())
         )
 
-        attribution
+        reportConsent(s)
+        cachedAttribution(s) ?: attribution
     }
 
     // endregion

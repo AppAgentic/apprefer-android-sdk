@@ -22,7 +22,7 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
         val editor = prefs.edit()
         if (value == null) editor.remove("apprefer_tracking_consent")
         else editor.putString("apprefer_tracking_consent", value)
-        check(editor.commit()) { "Could not persist tracking consent" }
+        editor.apply()
     }
     fun getReportedConsent(): String? = prefs.getString("apprefer_reported_tracking_consent", null)
     fun setReportedConsent(value: String) {
