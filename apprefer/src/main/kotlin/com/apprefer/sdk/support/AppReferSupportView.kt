@@ -90,7 +90,8 @@ class AppReferSupportView @JvmOverloads constructor(
     private var route = if (conversationId != null) "thread" else if (composing != null) "compose" else "home"
     private var id = conversationId
     private var subject = "Conversation"
-    private var cursor: String? = null
+    private val timeline = SupportTimeline { date(it) }
+    private val cursor get() = timeline.cursor
     private var header: TextView? = null
     private var draft = composing ?: ""
     private var busy = false
@@ -98,14 +99,14 @@ class AppReferSupportView @JvmOverloads constructor(
     private var draftFile: java.io.File? = null
     private var error: String? = null
     private val images = mutableListOf<ByteArray>()
-    private val messages = mutableListOf<AppReferSupportMessage>()
-    private val pending = mutableListOf<Pending>()
+    private val messages get() = timeline.messages
+    private val pending = mutableListOf<SupportPending>()
     private var conversations = emptyList<AppReferSupportConversation>()
     private lateinit var body: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var field: EditText
     private var sender: View? = null
-    private data class Pending(val conversationId: String?, val text: String, val images: List<ByteArray>, var failed: Boolean = false)
+
     init { orientation = VERTICAL; setBackgroundColor(backgroundColor); render() }
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     private fun shape(color: Int, radius: Int = 22, stroke: Boolean = false) = GradientDrawable().apply {
@@ -177,7 +178,7 @@ class AppReferSupportView @JvmOverloads constructor(
             item.addView(text(if (c.unread > 0) "${c.unread}" else time(c.lastMessageAt), 12f, if(c.unread > 0) Color.WHITE else muted).apply {
                 if (c.unread > 0) { background = shape(accent); padded(this, 6); contentDescription = "${c.unread} unread" }
             })
-            item.setOnClickListener { id = c.id; subject = c.subject; messages.clear(); cursor = null; navigate("thread") }; list.addView(item)
+            item.setOnClickListener { id = c.id; subject = c.subject; timeline.reset(); navigate("thread") }; list.addView(item)
         }
         val cta = row().apply {
             background = shape(accent); setPadding(dp(20), dp(14), dp(20), dp(14)); isClickable = true; isFocusable = true
@@ -212,6 +213,13 @@ class AppReferSupportView @JvmOverloads constructor(
             }
         }
         attachmentStrip(body)
+        pending.filter { it.conversationId == null }.forEach { p ->
+            body.addView(text(p.text, 17f))
+            p.images.forEach { body.addView(image(it), LayoutParams(dp(72), dp(84))) }
+            body.addView(text(if (p.failed) "Not sent · Tap to retry" else "Sending…", 12f, muted).apply {
+                if (p.failed) setOnClickListener { deliver(p) }
+            })
+        }
         val c = AppReferSupport.deviceContext(context)
         body.addView(text("Sent with: app ${c["appVersion"]} · ${c["device"]} · ${c["os"]}", 12f, muted).apply { setPadding(0, dp(16), 0, 0) })
     }
@@ -242,18 +250,26 @@ class AppReferSupportView @JvmOverloads constructor(
     // Large images stay out of Binder saved-state parcels during Activity recreation.
     internal fun saveDraft(): String? = runCatching {
         val file = draftFile ?: java.io.File.createTempFile("apprefer-support-", ".draft", context.cacheDir).also { draftFile = it }
-        java.io.DataOutputStream(file.outputStream().buffered()).use { out ->
+        val atomic = android.util.AtomicFile(file)
+        val stream = atomic.startWrite()
+        try {
+        val out = java.io.DataOutputStream(stream)
+        run {
             out.writeUTF(route); out.writeUTF(id ?: ""); out.writeUTF(subject)
             val text = draft.toByteArray(Charsets.UTF_8); out.writeInt(text.size); out.write(text)
             out.writeInt(images.size); images.forEach { out.writeInt(it.size); out.write(it) }
+            out.writeInt(pending.size)
+            pending.forEach { it.write(out) }
         }
+        out.flush(); atomic.finishWrite(stream)
+        } catch (e: Exception) { atomic.failWrite(stream); throw e }
         file.name
     }.getOrNull()
     internal fun restoreDraft(filename: String) {
         if (!filename.startsWith("apprefer-support-") || filename.contains('/')) return
         runCatching {
             val file = java.io.File(context.cacheDir, filename)
-            if (file.length() > 4_000_000) return
+            if (file.length() > 64_000_000) return
             java.io.DataInputStream(file.inputStream().buffered()).use { input ->
                 route = input.readUTF(); require(route in listOf("home", "compose", "thread"))
                 id = input.readUTF().takeIf { it.isNotEmpty() }; subject = input.readUTF()
@@ -261,6 +277,11 @@ class AppReferSupportView @JvmOverloads constructor(
                 draft = String(ByteArray(size).also { input.readFully(it) }, Charsets.UTF_8)
                 images.clear(); val count = input.readInt(); require(count in 0..4)
                 repeat(count) { val length = input.readInt(); require(length in 1..700_000); images.add(ByteArray(length).also { input.readFully(it) }) }
+                pending.clear()
+                if (input.available() > 0) {
+                    val countPending = input.readInt(); require(countPending in 0..100)
+                    repeat(countPending) { pending.add(SupportPending.read(input)) }
+                }
             }
             draftFile = file; render()
         }
@@ -293,10 +314,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 group.addView(picture, LayoutParams(dp(180), dp(240)))
                 scope.launch { try {
                     val bitmap = withContext(Dispatchers.IO) {
-                        val url = java.net.URL(a.url ?: return@withContext null)
-                        require(url.protocol == "https")
-                        val c = url.openConnection().apply { connectTimeout = 10_000; readTimeout = 10_000 }
-                        c.getInputStream().use { BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }) }
+                        a.url?.let { SupportImages.remote(it) }
                     }
                     picture.setImageBitmap(bitmap)
                 } catch (_: Exception) {} }
@@ -318,31 +336,34 @@ class AppReferSupportView @JvmOverloads constructor(
         background = shape(if(mine) accent else surface, 20); padded(this, 14); setTextIsSelectable(true)
     }
     private fun merge(incoming: List<AppReferSupportMessage>) {
-        val known = messages.map { it.id }.toHashSet()
-        val fresh = incoming.filter { known.add(it.id) }
-        if (fresh.isEmpty()) return
-        messages.addAll(fresh); messages.sortBy { date(it.createdAt) }; renderMessages()
+        timeline.merge(incoming); renderMessages()
     }
     private fun send() {
         if (busy || (draft.isBlank() && images.isEmpty())) return
-        val p = Pending(id, draft.trim(), images.toList())
-        if (route == "compose") {
-            busy = true; updateSend()
-            scope.launch {
-                try {
-                    val ids = p.images.map { api.upload(it) }; val t = api.start(p.text, ids)
-                    id = t.conversation.id; subject = t.conversation.subject; messages.clear(); messages.addAll(t.messages); cursor = null
-                    draft = ""; images.clear(); error = null; navigate("thread")
-                } catch(e: Exception) { error = e.message; render() }
-                finally { busy = false; updateSend() }
-            }
-        } else { pending.add(p); draft = ""; images.clear(); render(); deliver(p) }
+        val p = SupportPending(if (route == "compose") null else id, draft.trim(), images.toList())
+        pending.add(p); draft = ""; images.clear(); saveDraft(); render(); deliver(p)
     }
-    private fun deliver(p: Pending) {
-        renderMessages()
+    private fun deliver(p: SupportPending) {
+        if (p.conversationId == null) busy = true
+        p.failed = false
+        saveDraft(); render()
         scope.launch {
-            try { val ids = p.images.map { api.upload(it) }; val m = api.send(requireNotNull(p.conversationId), p.text, ids); pending.remove(p); if(route == "thread" && id == p.conversationId) { merge(listOf(m)); renderMessages() } }
-            catch (e: Exception) { p.failed = true; if(route == "thread" && id == p.conversationId) renderMessages() }
+            try {
+                // Every attempt uses fresh slots, but keeps the original send identity.
+                val ids = p.images.map { api.upload(it) }
+                if (p.conversationId == null) {
+                    val t = api.start(p.text, ids, p.clientMessageId)
+                    id = t.conversation.id; subject = t.conversation.subject
+                    timeline.reset(); timeline.merge(t.messages)
+                    pending.remove(p); navigate("thread")
+                } else {
+                    val m = api.send(p.conversationId, p.text, ids, p.clientMessageId)
+                    pending.remove(p)
+                    if (route == "thread" && id == p.conversationId) merge(listOf(m))
+                }
+            } catch (e: CancellationException) { p.failed = true; throw e }
+            catch (e: Exception) { p.failed = true; error = e.message }
+            finally { busy = false; if (isAttachedToWindow) { saveDraft(); render() } }
         }
     }
     private fun navigate(next: String) {
@@ -364,8 +385,9 @@ class AppReferSupportView @JvmOverloads constructor(
                     else if (route == "thread") {
                         val t = api.thread(requireNotNull(id), cursor)
                         subject = t.conversation.subject; header?.text = subject
-                        t.messages.maxByOrNull { date(it.createdAt) }?.let { cursor = it.createdAt }
-                        if(messages.isEmpty()) { messages.addAll(t.messages); render() } else merge(t.messages)
+                        val empty = messages.isEmpty()
+                        timeline.merge(t.messages, fromLoad = true)
+                        if (empty) render() else renderMessages()
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { error = e.message; if(route == "home") render() else if(route == "thread" && messages.isEmpty()) { body.removeAllViews(); body.addView(text(error ?: "Could not load conversation", 14f, muted)) } }
@@ -374,7 +396,7 @@ class AppReferSupportView @JvmOverloads constructor(
         }
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); if(!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate); resume() }
-    override fun onDetachedFromWindow() { pause(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
     private fun date(s: String): Long {
         val normalized = s.replace(Regex("Z$"), "+0000").replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
         return listOf("yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ssZ").firstNotNullOfOrNull { pattern ->

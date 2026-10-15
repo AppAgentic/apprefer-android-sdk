@@ -52,8 +52,8 @@ internal class SupportAPI(
         val p = identity().toSortedMap(); val fingerprint = JsonCodec.encode(p)
         val old = store.token
         if (old != null) {
-            if (store.profile != fingerprint) { raw("POST", "$root/session", p, old); store.profile = fingerprint }
-            return old
+            if (store.profile != fingerprint) { val replacement = raw("POST", "$root/session", p, old)["session"] as? String ?: error("Missing support session"); store.token = replacement; store.profile = fingerprint }
+            return requireNotNull(store.token)
         }
         val token = raw("POST", "$root/session", p, null)["session"] as? String ?: error("Missing support session")
         store.token = token; store.profile = fingerprint
@@ -77,8 +77,8 @@ internal class SupportAPI(
     }; Unit }
     suspend fun conversations(): List<AppReferSupportConversation> = call("GET", "/conversations").objects("conversations").map { AppReferSupportConversation(it) }
     suspend fun thread(id: String, after: String? = null): SupportThread = SupportThread(call("GET", "/conversations/${escape(id)}" + (after?.let { "?after=${escape(it)}" } ?: "")))
-    suspend fun start(text: String, ids: List<String>): SupportThread = SupportThread(call("POST", "/conversations", messageBody(text, ids) + ("context" to context())))
-    suspend fun send(id: String, text: String, ids: List<String>): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids)).obj("message"))
+    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString()): SupportThread = SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context())))
+    suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString()): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId)).obj("message"))
     suspend fun register(token: String) { call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")) }
     suspend fun remove(token: String) { call("DELETE", "/push-token", mapOf("token" to token)) }
     suspend fun upload(bytes: ByteArray): String {
@@ -90,9 +90,9 @@ internal class SupportAPI(
             slot["attachmentId"] as String
         }
     }
-    private fun messageBody(text: String, ids: List<String>): Map<String, Any?> {
-        require(ids.size <= 4); require(text.isNotBlank() || ids.isNotEmpty())
-        return mapOf("text" to text) + if (ids.isEmpty()) emptyMap() else mapOf("attachmentIds" to ids)
+    private fun messageBody(text: String, ids: List<String>, clientMessageId: String): Map<String, Any?> {
+        require(clientMessageId.matches(Regex("[A-Za-z0-9_-]{8,64}"))); require(ids.size <= 4); require(text.isNotBlank() || ids.isNotEmpty())
+        return mapOf("text" to text, "clientMessageId" to clientMessageId) + if (ids.isEmpty()) emptyMap() else mapOf("attachmentIds" to ids)
     }
     private fun escape(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 }

@@ -29,9 +29,22 @@ class SupportAPITest {
         assertNull(h.requests[0].headers["X-AppRefer-Support-Session"])
         assertEquals("s1", h.requests[1].headers["X-AppRefer-Support-Session"])
         h.reply("""{"conversations":[]}"""); h.api.conversations(); assertEquals(3, h.requests.size)
-        h.profile = h.profile + ("name" to "Jane"); h.reply(); h.reply("""{"conversations":[]}"""); h.api.conversations()
+        h.profile = h.profile + ("name" to "Jane"); h.reply("""{"session":"s2"}"""); h.reply("""{"conversations":[]}"""); h.api.conversations()
         assertTrue(h.requests[3].url.endsWith("/session")); assertEquals("s1", h.requests[3].headers["X-AppRefer-Support-Session"])
-        assertEquals("Jane", h.requests[3].body["name"])
+        assertEquals("Jane", h.requests[3].body["name"]); assertEquals("s2", h.store.token); assertEquals("s2", h.requests.last().headers["X-AppRefer-Support-Session"])
+    }
+    @Test fun explicitRetryKeepsIdentityAndRefreshesAttachments() = runBlocking {
+        val h = Harness(); h.session()
+        h.reply("""{"error":"lost response"}""", 503)
+        try { h.api.start("hello", listOf("old"), "client-123"); fail() } catch (_: AppReferSupportException) {}
+        h.reply("""{"conversation":{"id":"c"},"messages":[],"duplicate":true}""")
+        h.api.start("hello", listOf("fresh"), "client-123")
+        assertEquals("client-123", h.requests[1].body["clientMessageId"])
+        assertEquals("client-123", h.requests[2].body["clientMessageId"])
+        assertEquals(listOf("fresh"), h.requests[2].body["attachmentIds"])
+        h.reply("""{"message":{"id":"m"}}"""); h.api.send("c", "hi", emptyList(), "message-123")
+        h.reply("""{"message":{"id":"m"},"duplicate":true}"""); h.api.send("c", "hi", emptyList(), "message-123")
+        assertEquals(h.requests[3].body["clientMessageId"], h.requests[4].body["clientMessageId"])
     }
     @Test fun retryExpiredSessionOnce() = runBlocking {
         val h = Harness(); h.session(); h.reply("""{"error":"Invalid support session"}""",401); h.reply("""{"session":"s2"}"""); h.reply("""{"conversations":[]}""")
@@ -70,5 +83,10 @@ class SupportAPITest {
         val previous = h.store.profile; h.profile = h.profile + ("appUserId" to "u2"); h.reply("""{"error":"offline"}""",503)
         try { h.api.conversations(); fail() } catch (_: AppReferSupportException) {}
         assertEquals(previous,h.store.profile)
+        h.reply("""{"session":"replacement"}"""); h.api.syncIdentity()
+        assertEquals("replacement", h.store.token)
+        assertNotEquals(previous, h.store.profile)
+        h.reply("""{"conversations":[]}"""); h.api.conversations()
+        assertEquals("replacement", h.requests.last().headers["X-AppRefer-Support-Session"])
     }
 }

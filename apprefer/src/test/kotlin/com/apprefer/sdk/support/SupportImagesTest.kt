@@ -2,6 +2,23 @@ package com.apprefer.sdk.support
 import org.junit.Assert.*
 import org.junit.Test
 class SupportImagesTest {
+    @org.junit.Test fun decodedCacheReusesUrlAndEvictsLeastRecentlyUsed() {
+        val cache = SupportImageCache<ByteArray>(6) { it.size }
+        val first = byteArrayOf(1, 2, 3)
+        cache.put("https://a", first); cache.put("https://b", byteArrayOf(4, 5, 6))
+        org.junit.Assert.assertSame(first, cache.get("https://a"))
+        cache.put("https://c", byteArrayOf(7, 8, 9))
+        org.junit.Assert.assertNull(cache.get("https://b"))
+        org.junit.Assert.assertSame(first, cache.get("https://a"))
+    }
+
+    @org.junit.Test fun receivedImagesHaveBoundedDecodeSize() {
+        listOf(1 to 1, 1601 to 100, 100000 to 20, 8000 to 12000).forEach { (w, h) ->
+            val sample = SupportImages.sampleSize(w, h)
+            org.junit.Assert.assertTrue((maxOf(w, h).toLong() + sample - 1) / sample <= 1600)
+        }
+    }
+
     @Test fun boundsAndAspectRatio() {
         assertEquals(1600 to 800, SupportImages.dimensions(4000,2000))
         assertEquals(800 to 1600, SupportImages.dimensions(2000,4000))

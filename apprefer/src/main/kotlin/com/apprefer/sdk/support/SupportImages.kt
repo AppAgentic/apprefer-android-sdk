@@ -11,6 +11,39 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 internal object SupportImages {
+    fun sampleSize(width: Int, height: Int): Int {
+        require(width > 0 && height > 0)
+        var sample = 1
+        while ((max(width, height).toLong() + sample - 1) / sample > 1600) sample *= 2
+        return sample
+    }
+    private val cache = SupportImageCache<Bitmap>(24 * 1024 * 1024) { it.byteCount }
+    // Serialize cache misses so simultaneous re-renders share the decoded image.
+    @Synchronized fun remote(url: String): Bitmap {
+        cache.get(url)?.let { return it }
+        require(java.net.URL(url).protocol == "https")
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        val bytes = try {
+            connection.connectTimeout = 10_000; connection.readTimeout = 10_000
+            connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buffer); if (n < 0) break
+                    require(output.size() + n <= 20_000_000) { "Screenshot too large" }
+                    output.write(buffer, 0, n)
+                }
+                output.toByteArray()
+            }
+        } finally { connection.disconnect() }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight) }
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: error("Unreadable screenshot")
+        cache.put(url, bitmap)
+        return bitmap
+    }
+
     fun dimensions(width: Int, height: Int): Pair<Int, Int> {
         require(width > 0 && height > 0)
         val scale = minOf(1.0, 1600.0 / max(width, height))
