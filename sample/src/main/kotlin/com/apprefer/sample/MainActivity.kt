@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.apprefer.sdk.AppRefer
+import com.apprefer.sdk.billing.AppReferBilling
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -20,18 +21,40 @@ class MainActivity : AppCompatActivity() {
         val advancedMatchingButton = findViewById<Button>(R.id.btn_set_advanced_matching)
         val setUserIdButton = findViewById<Button>(R.id.btn_set_user_id)
         val fuzzButton = findViewById<Button>(R.id.btn_fuzz)
+        val billingButton = findViewById<Button>(R.id.btn_billing)
 
         statusView.text = "Configuring AppRefer…"
+
+        // Normally in Application.onCreate. Uses the AppRefer.configure SDK key.
+        AppReferBilling.configure(
+            context = this,
+            entitlementsByProduct = mapOf("pro_monthly" to listOf("premium")),
+            debug = true,
+            logLevel = 3,
+        )
 
         lifecycleScope.launch {
             val attribution = AppRefer.configure(
                 context = this@MainActivity,
-                apiKey = BuildConfigSample.API_KEY,
+                apiKey = intent.getStringExtra("api_key") ?: BuildConfigSample.API_KEY,
                 debug = true,
                 logLevel = 3,
             )
 
             deviceIdView.text = "device_id: ${AppRefer.getDeviceId() ?: "—"}"
+
+            // QA hook: `adb shell am start -n com.apprefer.sample/.MainActivity --ez open_support true --es api_key pk_test_…`
+            // Optional: `--es compose "text"` (home with the field pre-filled), `--es accent "#FFD60A"`
+            // (bright accents switch hero text to dark), `--es team_names "Jay,Ana"` ("" for none).
+            if (intent.getBooleanExtra("open_support", false)) {
+                AppRefer.setUserId("support-sample-demo")
+                AppRefer.support.identify(name = "María López")
+                AppRefer.support.teamNames = (intent.getStringExtra("team_names") ?: "Jay,Ana")
+                    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                intent.getStringExtra("accent")?.let { runCatching { AppRefer.support.accentColor = android.graphics.Color.parseColor(it) } }
+                val draft = intent.getStringExtra("compose")
+                if (draft != null) AppRefer.support.compose(this@MainActivity, draft) else AppRefer.support.open(this@MainActivity)
+            }
 
             statusView.text = if (attribution == null) {
                 "Attribution: (none — organic or network failure)"
@@ -88,6 +111,18 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity,
                     "setUserId sent",
                     Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+
+        billingButton.setOnClickListener {
+            lifecycleScope.launch {
+                val info = AppReferBilling.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+                val premium = info.entitlements["premium"]?.isActive == true
+                Toast.makeText(
+                    this@MainActivity,
+                    "${info.appUserId}: premium=$premium (${info.source})",
+                    Toast.LENGTH_LONG,
                 ).show()
             }
         }

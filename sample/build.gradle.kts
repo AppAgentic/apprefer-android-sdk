@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -9,10 +11,11 @@ android {
 
     defaultConfig {
         applicationId = "com.apprefer.sample"
-        minSdk = 21
+        // 23: AppRefer Billing (Play Billing 8) needs API 23; attribution alone needs 21.
+        minSdk = 23
         targetSdk = 35
         versionCode = 1
-        versionName = "0.4.1"
+        versionName = "0.5.0"
     }
 
     // Exercise R8 + our consumer-rules.pro on every release build. If our
@@ -34,13 +37,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+}
+
+kotlin {
+    compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
 dependencies {
     implementation(project(":apprefer"))
+    implementation(project(":apprefer-billing"))
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
 }

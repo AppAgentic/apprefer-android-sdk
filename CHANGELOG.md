@@ -1,8 +1,54 @@
-# Changelog
+## [0.5.0] - 2026-10-15
 
-All notable changes to the AppRefer Android SDK will be documented in this
-file. This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-and stays version-locked with the iOS, Flutter, and React Native SDKs.
+- AI personas: approved name and portrait, explicit AI tag, and a hand-over pill when a person is needed.
+- Add native AppRefer Support home, conversations, screenshot uploads, session recovery and reply push integration.
+- Support chat "Concierge" design, matching iOS: accent hero with presence pill, Continue card, quick-help
+  topics, floating message field on the home (no separate compose screen), grouped gradient bubbles,
+  quick replies and a full-screen screenshot viewer. New `replyTime` (replaces `replyTimeText`), `teamNames`,
+  `topics` (`AppReferSupportTopic`, optional `action`) and `appIcon`; a picked topic becomes the conversation
+  subject; `compose(text)` opens the home with the field pre-filled.
+
+### Billing and attribution
+
+### Added
+- AppRefer Billing (`apprefer-billing` module, `com.apprefer.sdk.billing.AppReferBilling`):
+  Google Play purchases and entitlements verified by AppRefer, replacing RevenueCat.
+  Mirrors the iOS `AppReferBilling` API.
+  - `configure(context, apiKey?, appUserId?, entitlementsByProduct, defaultEntitlement?, consumableProductIds)`
+    with an anonymous `$ARAnon:<UUID>` id kept on device
+  - `products(ids)`, `purchase(activity, product, offerToken?, oldProductId?, replacementMode)`
+    (sets `obfuscatedAccountId` to the AppRefer account token), `restorePurchases()`
+  - `customerInfo(fetchPolicy)`, `customerInfoStream` (Flow), `listener`;
+    `entitlements["premium"]?.isActive`, `source` (`SERVER` / `CACHE` / `LOCAL_FALLBACK`)
+  - `logIn` (merges anonymous purchases via `/identify`), `logOut`, `setAttributes`,
+    `setEmail` / `setDisplayName` / `setPhoneNumber`; Java callback overloads
+  - Play Billing Library 8.3: pending purchases, automatic service reconnection,
+    `queryPurchasesAsync` for restore, sync and outage fallback; consumables consumed
+    after AppRefer records them; purchases AppRefer couldn't take are acknowledged on
+    device as soon as they are queued, and failed acknowledge/consume is retried on foreground
+  - Outage safety: Google Play's active purchases merged with the cached server answer;
+    the user's own Play purchases are also merged into server answers; disk retry queue
+    (50 attempts / 90 days) with back-off on 401/403/404/409/429 and `Retry-After`
+  - `restorePurchases()` sends `"restore": true` (the only call that may move another
+    user's purchase); pending identifies survive `logOut`
+  - Rejected-purchase archive: a final 400/413/422, missing store data or a queue give-up
+    is saved to disk before the purchase is acknowledged (never consumed);
+    `rejectedPurchases()` lists them and `restorePurchases()` resends them
+  - Purchase intents: who started a purchase is saved before Google Play opens (or the
+    purchase is not started), so pending purchases completing after a restart, `logOut`
+    or user switch are recorded for them
+- Attribution: an unreadable stored device id is no longer replaced with a new one
+  (the configure request is skipped and retried next launch).
+  - Sends the AppRefer attribution device id as `appreferId` automatically
+- `InternalAppReferApi` / `AppReferInternal` (opt-in, for AppRefer modules only).
+
+### Changed
+- Built with Kotlin 2.2.20. The attribution module still targets Kotlin language/API 2.0
+  and stdlib 2.0.21, so attribution-only apps on Kotlin 2.0 are unaffected.
+- JitPack now publishes two modules. `com.github.AppAgentic:apprefer-android-sdk:<tag>`
+  brings in both; attribution-only apps should use
+  `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:<tag>`.
+- Sample app: `minSdk` 23 and a billing entitlement check.
 
 ## [0.4.1] - 2026-04-23
 

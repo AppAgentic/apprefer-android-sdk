@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "apprefer-android-sdk"
-include(":apprefer", ":sample")
+include(":apprefer", ":apprefer-billing", ":sample")

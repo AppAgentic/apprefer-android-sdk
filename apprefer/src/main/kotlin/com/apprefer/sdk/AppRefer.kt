@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
  * ```
  */
 object AppRefer {
+    val support: com.apprefer.sdk.support.AppReferSupport get() = com.apprefer.sdk.support.AppReferSupport
 
     // One global singleton-ish state, protected for concurrent access.
     @Volatile private var state: SdkState? = null
@@ -77,7 +78,7 @@ object AppRefer {
 
         s.logger.info("AppReferSDK initialized v$APPREFER_SDK_VERSION")
 
-        if (userId != null) safelyRun { s.storage.setUserId(userId) }
+        if (userId != null) safelyRun { s.storage.setUserId(userId); support.identityChanged() }
 
         // Record first run date
         safelyRun { s.storage.getFirstRunDate() }
@@ -265,7 +266,7 @@ object AppRefer {
                 return@safelyRun
             }
 
-            safelyRun { s.storage.setUserId(userId) }
+            safelyRun { s.storage.setUserId(userId); support.identityChanged() }
             s.logger.info("User ID set")
 
             if (!s.storage.isSdkEnabled()) return@safelyRun
@@ -321,6 +322,9 @@ object AppRefer {
 
     // region internals
 
+    /** SDK key passed to `configure` in this process (read by AppRefer Billing). */
+    internal fun currentApiKey(): String? = state?.apiKey
+
     private suspend fun ensureState(
         context: Context,
         apiKey: String,
@@ -350,6 +354,7 @@ object AppRefer {
             installReferrer = installReferrer,
             appContext = appCtx,
         )
+        com.apprefer.sdk.support.AppReferSupport.configure(appCtx)
         state = s
         s
     }
@@ -361,13 +366,18 @@ object AppRefer {
 
     private suspend fun resolveAttribution(s: SdkState): Attribution? = coroutineScope {
         // Fan out the slow calls in parallel. Matches iOS/Flutter behavior.
-        val deviceIdJob = async { safely(s.deviceIdManager.getOrCreate()) { s.deviceIdManager.getOrCreate() } }
+        val deviceIdJob = async { safely<String?>(null) { s.deviceIdManager.getOrCreate() } }
         val deviceInfoJob = async { safely(mapOf<String, Any?>("platform" to "android")) { s.deviceInfo.collect() } }
         val referrerJob = async { safely(null) { s.installReferrer.collect() } }
         val gaidJob = async { safely(null) { GaidCollector.getGaid(s.appContext, s.logger) } }
 
         val results = awaitAll(deviceIdJob, deviceInfoJob, referrerJob, gaidJob)
-        val deviceId = results[0] as String
+        val deviceId = results[0] as String? ?: run {
+            // Stored id unreadable: a new one would split this device's attribution.
+            // Not marked attempted, so the next launch retries.
+            s.logger.error("Device ID unavailable — configure request skipped, will retry on next launch")
+            return@coroutineScope null
+        }
         @Suppress("UNCHECKED_CAST")
         val deviceInfoMap = results[1] as Map<String, Any?>
         val referrer = results[2] as com.apprefer.sdk.internal.ReferrerData?

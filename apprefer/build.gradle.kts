@@ -1,4 +1,6 @@
 import com.vanniktech.maven.publish.SonatypeHost
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
     id("com.android.library")
@@ -8,7 +10,7 @@ plugins {
 
 // Keep this in lockstep with `Version.kt` — plan §13 requires all four SDKs
 // (Flutter / iOS / RN / Android) to ship the same version.
-private val sdkVersion = "0.4.1"
+private val sdkVersion = "0.5.0"
 
 android {
     namespace = "com.apprefer.sdk"
@@ -24,12 +26,25 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     buildFeatures {
         buildConfig = false
+    }
+
+    testOptions {
+        // android.util.Log etc. return defaults in JVM unit tests.
+        unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    // Built with Kotlin 2.2 (for :apprefer-billing) but kept consumable by Kotlin 2.0
+    // apps: emit 2.0 metadata and depend on the 2.0 stdlib.
+    coreLibrariesVersion = "2.0.21"
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        languageVersion.set(KotlinVersion.KOTLIN_2_0)
+        apiVersion.set(KotlinVersion.KOTLIN_2_0)
     }
 }
 
@@ -44,6 +59,11 @@ dependencies {
     // Google Advertising ID. Ported from Flutter plugin lines 52–69.
     // Optional signal — we catch all errors if it's missing on the host device.
     api("com.google.android.gms:play-services-ads-identifier:18.1.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 mavenPublishing {
