@@ -125,6 +125,9 @@ class AppReferSupportActivity : Activity() {
     @Deprecated("Platform back bridge") override fun onBackPressed() { if (!chat.goBack()) super.onBackPressed() }
 }
 
+/** How long a portrait that failed to load waits before it is tried again. */
+private const val PORTRAIT_RETRY_MS = 30_000L
+
 /**
  * Native embeddable help chat: the help home (with its message field) and conversations.
  * Call pause/resume with the host lifecycle.
@@ -190,7 +193,8 @@ class AppReferSupportView @JvmOverloads constructor(
     private var presenceHolder: FrameLayout? = null
     /** The AI assistant the screen currently shows. */
     private var shownPersona: AppReferSupportPersona? = null
-    private val failedPortraits = mutableSetOf<String>()
+    /** Portrait URL → when it last failed; tried again after [PORTRAIT_RETRY_MS]. */
+    private val failedPortraits = mutableMapOf<String, Long>()
     private var shownQuickReplies: Boolean? = null
     private var renderedCount = -1
     private var lastStatusDark: Boolean? = null
@@ -247,14 +251,14 @@ class AppReferSupportView @JvmOverloads constructor(
             imageUrl?.let { url -> portrait(url) { image = it } }
         }
     private val agentColors get() = intArrayOf(p.warm, p.hot)
-    /** Uses the shared image cache; a portrait that can't load isn't tried again by this view. */
+    /** Uses the shared image cache; a portrait that failed is tried again after 30 s (the initial shows meanwhile). */
     private fun portrait(url: String, show: (Bitmap) -> Unit) {
         SupportImages.cached(url)?.let { show(it); return }
-        if (url in failedPortraits) return
+        failedPortraits[url]?.let { if (System.currentTimeMillis() - it < PORTRAIT_RETRY_MS) return }
         scope.launch {
-            try { show(withContext(Dispatchers.IO) { SupportImages.remote(url) }) }
+            try { show(withContext(Dispatchers.IO) { SupportImages.remote(url) }); failedPortraits.remove(url) }
             catch (e: CancellationException) { throw e }
-            catch (_: Exception) { failedPortraits.add(url) }
+            catch (_: Exception) { failedPortraits[url] = System.currentTimeMillis() }
         }
     }
     /** The persona as last read from AppRefer (shared by every help screen). */
@@ -531,7 +535,8 @@ class AppReferSupportView @JvmOverloads constructor(
         val labels = column()
         val face = if (persona != null) {
             labels.addView(row().apply {
-                addView(text(persona.name, 16f, c.ink, 700, 1), lp(-2))
+                // Capped so the AI tag always shows, even with a long name and large text.
+                addView(text(persona.name, 16f, c.ink, 700, 1).apply { maxWidth = dp(150); ellipsize = android.text.TextUtils.TruncateAt.END }, lp(-2))
                 addView(aiTag(), lp(-2, start = dp(6)))
             }, lp(-2))
             labels.addView(text("${appName()} team · replies instantly", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
@@ -677,7 +682,7 @@ class AppReferSupportView @JvmOverloads constructor(
         }
         shadow(bubble, 2, .06f)
         bubble.addView(row().apply {
-            addView(text(name, 13f, c.ink, 700, 1), lp(-2))
+            addView(text(name, 13f, c.ink, 700, 1).apply { maxWidth = dp(140); ellipsize = android.text.TextUtils.TruncateAt.END }, lp(-2))
             addView(aiTag(), lp(-2, start = dp(6)))
         }, lp(-2))
         bubble.addView(text(m.text, 16f, c.ink).apply { setLineSpacing(dpf(2), 1f); setTextIsSelectable(true) }, lp(-2, top = dp(4)))
