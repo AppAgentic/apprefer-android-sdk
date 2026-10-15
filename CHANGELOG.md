@@ -1,6 +1,11 @@
 ## [0.5.0] - 2026-10-15
 
-- Add native AppRefer Support home, compose, conversations, screenshot uploads, session recovery and reply push integration.
+- Add native AppRefer Support home, conversations, screenshot uploads, session recovery and reply push integration.
+- Support chat "Concierge" design, matching iOS: accent hero with presence pill, Continue card, quick-help
+  topics, floating message field on the home (no separate compose screen), grouped gradient bubbles,
+  quick replies and a full-screen screenshot viewer. New `replyTime` (replaces `replyTimeText`), `teamNames`,
+  `topics` (`AppReferSupportTopic`, optional `action`) and `appIcon`; a picked topic becomes the conversation
+  subject; `compose(text)` opens the home with the field pre-filled.
 
 # Changelog
 

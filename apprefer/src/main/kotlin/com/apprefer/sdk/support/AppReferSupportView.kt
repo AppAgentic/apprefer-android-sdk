@@ -1,33 +1,63 @@
 package com.apprefer.sdk.support
 
+import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.AdaptiveIconDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
+import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import com.apprefer.sdk.R
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
+import kotlin.math.max
 
 /** Full-screen host. The view can also be embedded in any native layout. */
 class AppReferSupportActivity : Activity() {
     private lateinit var chat: AppReferSupportView
+    private val night get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+
+    @Suppress("DEPRECATION") // Bar colours and decor fitting are still needed below API 35.
     override fun onCreate(state: Bundle?) {
-        setTheme(if (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES)
-            android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
+        setTheme(if (night) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(state)
         chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"))
         chat.onClose = { finish() }
@@ -40,22 +70,44 @@ class AppReferSupportActivity : Activity() {
         }
         state?.getString("appreferSupportState")?.let { chat.restoreDraft(it) }
         setContentView(chat)
+        // Edge to edge: the hero runs under the status bar, the view pads for bars and keyboard itself.
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = chat.backgroundColor
+        @Suppress("DEPRECATION") window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         if (Build.VERSION.SDK_INT >= 30) {
             window.setDecorFitsSystemWindows(false)
-            chat.setOnApplyWindowInsetsListener { view, insets ->
-                val edges = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
-                view.setPadding(edges.left, edges.top, edges.right, edges.bottom)
+            chat.setOnApplyWindowInsetsListener { _, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                val ime = insets.getInsets(WindowInsets.Type.ime())
+                chat.applyInsets(bars.left, bars.top, bars.right, max(bars.bottom, ime.bottom))
                 insets
             }
-            chat.requestApplyInsets()
-        }
-        window.statusBarColor = chat.backgroundColor
-        window.navigationBarColor = chat.backgroundColor
-        if (Build.VERSION.SDK_INT >= 23 && resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK != Configuration.UI_MODE_NIGHT_YES) {
+            if (!night) window.insetsController?.setSystemBarsAppearance(
+                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS, WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        } else {
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                (if (!night && Build.VERSION.SDK_INT >= 26) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
+            chat.setOnApplyWindowInsetsListener { _, insets ->
+                @Suppress("DEPRECATION")
+                chat.applyInsets(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                insets
+            }
+        }
+        chat.onStatusBarStyle = { darkIcons -> statusBarIcons(darkIcons) }
+        chat.requestApplyInsets()
+    }
+
+    private fun statusBarIcons(dark: Boolean) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.setSystemBarsAppearance(if (dark) WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS else 0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+        } else if (Build.VERSION.SDK_INT >= 23) {
+            @Suppress("DEPRECATION") val flags = window.decorView.systemUiVisibility
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (dark) flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR else flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
         }
     }
+
     override fun onSaveInstanceState(outState: Bundle) {
         if (::chat.isInitialized) outState.putString("appreferSupportState", chat.saveDraft())
         super.onSaveInstanceState(outState)
@@ -71,208 +123,890 @@ class AppReferSupportActivity : Activity() {
     @Deprecated("Platform back bridge") override fun onBackPressed() { if (!chat.goBack()) super.onBackPressed() }
 }
 
-/** Native embeddable help home, compose and conversation screens. Call pause/resume with the host lifecycle. */
+/**
+ * Native embeddable help chat: the help home (with its message field) and conversations.
+ * Call pause/resume with the host lifecycle.
+ */
 class AppReferSupportView @JvmOverloads constructor(
     context: Context, conversationId: String? = null, composing: String? = null,
-) : LinearLayout(context) {
+) : FrameLayout(context) {
     var onClose: () -> Unit = {}
     var onPickImages: ((Int) -> Unit)? = null
+    /** True when the status bar should use dark icons (set by the full-screen Activity). */
+    internal var onStatusBarStyle: ((Boolean) -> Unit)? = null
+        set(value) { field = value; lastStatusDark = null; updateChrome() }
+
     private val api = AppReferSupport.api(context.applicationContext)
     private val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-    val backgroundColor: Int = if (dark) Color.rgb(18, 18, 20) else Color.WHITE
-    private val ink = if (dark) Color.WHITE else Color.BLACK
-    private val muted = if (dark) Color.LTGRAY else Color.GRAY
-    private val surface = if (dark) Color.rgb(42, 42, 46) else Color.rgb(243, 242, 247)
-    private val accent get() = AppReferSupport.accentColor
+    private val c = SupportColors(dark)
+    val backgroundColor: Int = c.background
+    private var p = SupportPalette(AppReferSupport.accentColor)
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var polling: Job? = null
     private var visible = false
-    private var route = if (conversationId != null) "thread" else if (composing != null) "compose" else "home"
+
+    private var route = if (conversationId != null) "thread" else "home"
     private var id = conversationId
     private var subject = "Conversation"
     private val timeline = SupportTimeline { date(it) }
     private val cursor get() = timeline.cursor
-    private var header: TextView? = null
-    private var draft = composing ?: ""
-    private var busy = false
-    private var focusedCompose = false
-    private var draftFile: java.io.File? = null
-    private var error: String? = null
-    private val images = mutableListOf<ByteArray>()
     private val messages get() = timeline.messages
-    private val pending = mutableListOf<SupportPending>()
+    private var threadLoaded = false
     private var conversations = emptyList<AppReferSupportConversation>()
-    private lateinit var body: LinearLayout
-    private lateinit var scroll: ScrollView
-    private lateinit var field: EditText
-    private var sender: View? = null
+    private var homeLoaded = false
+    private var loadError: String? = null
 
-    init { orientation = VERTICAL; setBackgroundColor(backgroundColor); render() }
-    private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
-    private fun shape(color: Int, radius: Int = 22, stroke: Boolean = false) = GradientDrawable().apply {
-        setColor(color); cornerRadius = dp(radius).toFloat(); if (stroke) setStroke(dp(1), if (dark) 0xff55555a.toInt() else 0xffe6e6e9.toInt())
+    // The field on the current screen.
+    private var draft = composing ?: ""
+    private val images = mutableListOf<ByteArray>()
+    private var topic: AppReferSupportTopic? = null
+    private var sendError: String? = null
+    private var focusOnOpen = composing != null
+    /** The same on every retry of a new conversation, so the server never stores it twice. */
+    private var homeClientMessageId = UUID.randomUUID().toString()
+    private var starting = false
+    private val pending = mutableListOf<SupportPending>()
+    private var homeStash: HomeStash? = null
+    private class HomeStash(val draft: String, val images: List<ByteArray>, val topic: AppReferSupportTopic?, val error: String?)
+    private var draftFile: java.io.File? = null
+
+    private var insetL = 0; private var insetT = 0; private var insetR = 0; private var insetB = 0
+    private lateinit var scroll: SupportScrollView
+    private lateinit var body: LinearLayout
+    private lateinit var field: EditText
+    private lateinit var accessories: LinearLayout
+    private lateinit var composerBox: LinearLayout
+    private lateinit var sendButton: FrameLayout
+    private lateinit var sendIcon: ImageView
+    private lateinit var sendSpinner: ProgressBar
+    private lateinit var scrim: View
+    private var hero: View? = null
+    private var header: View? = null
+    private var headerTitle: TextView? = null
+    private var headerAvatar: FrameLayout? = null
+    private var shownQuickReplies: Boolean? = null
+    private var renderedCount = -1
+    private var lastStatusDark: Boolean? = null
+    private val thumbs = WeakHashMap<ByteArray, Bitmap>()
+
+    init { setBackgroundColor(backgroundColor); render() }
+
+    // MARK: - Building blocks
+
+    private fun dp(n: Number) = (resources.displayMetrics.density * n.toFloat()).toInt()
+    private fun dpf(n: Number) = resources.displayMetrics.density * n.toFloat()
+    private fun font(weight: Int): Typeface = if (Build.VERSION.SDK_INT >= 28) Typeface.create(Typeface.DEFAULT, weight, false) else when {
+        weight >= 800 -> Typeface.create("sans-serif-black", Typeface.NORMAL)
+        weight >= 700 -> Typeface.DEFAULT_BOLD
+        weight >= 500 -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        else -> Typeface.DEFAULT
     }
-    private fun text(value: String, size: Float = 16f, color: Int = ink, bold: Boolean = false) = TextView(context).apply {
-        text = value; textSize = size; setTextColor(color); if (bold) setTypeface(null, Typeface.BOLD)
+    private fun text(value: String, size: Float, color: Int = c.ink, weight: Int = 400, lines: Int = 0) = TextView(context).apply {
+        text = value; setTextSize(TypedValue.COMPLEX_UNIT_SP, size); setTextColor(color); typeface = font(weight); includeFontPadding = false
+        if (lines > 0) { maxLines = lines; ellipsize = TextUtils.TruncateAt.END }
     }
-    private fun column() = LinearLayout(context).apply { orientation = VERTICAL }
-    private fun row() = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-    private fun padded(v: View, n: Int) { v.setPadding(dp(n), dp(n), dp(n), dp(n)) }
-    private fun button(label: String, description: String = label, action: () -> Unit): TextView = text(label, 20f).apply {
-        gravity = Gravity.CENTER; minWidth = dp(48); minHeight = dp(48); background = shape(if (dark) 0xee303034.toInt() else 0xfafafafa.toInt(), 24, true); elevation = dp(1).toFloat()
-        contentDescription = description; isClickable = true; isFocusable = true; setOnClickListener { action() }
+    private fun label(value: String) = text(value.uppercase(Locale.getDefault()), 12f, c.muted, 700).apply { letterSpacing = 0.05f }
+    private fun column() = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+    private fun row() = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
+    private fun lp(w: Int = -1, h: Int = -2, top: Int = 0, start: Int = 0, end: Int = 0, weight: Float = 0f) =
+        LinearLayout.LayoutParams(w, h, weight).apply { topMargin = top; marginStart = start; marginEnd = end }
+    private fun rounded(color: Int, radius: Number, strokeColor: Int? = null, stroke: Number = 1) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dpf(radius); strokeColor?.let { setStroke(dp(stroke), it) }
     }
-    private fun icon(res: Int, tint: Int, size: Int = 22) = ImageView(context).apply {
-        setImageResource(res); setColorFilter(tint); layoutParams = LayoutParams(dp(size), dp(size))
+    private fun oval(color: Int, strokeColor: Int? = null) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL; setColor(color); strokeColor?.let { setStroke(dp(1), it) }
     }
-    private val glass get() = if (dark) 0xee303034.toInt() else 0xfafafafa.toInt()
-    /** Round 48 dp button with a vector icon, on a glass-like surface or filled with [fill]. */
-    private fun iconButton(res: Int, description: String, tint: Int = ink, fill: Int? = null, action: () -> Unit) = FrameLayout(context).apply {
-        background = if (fill != null) shape(fill, 24) else shape(glass, 24, true); elevation = if (fill == null) dp(1).toFloat() else 0f
-        addView(icon(res, tint, 20).apply { layoutParams = FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER) })
-        contentDescription = description; isClickable = true; isFocusable = true; setOnClickListener { action() }
-        layoutParams = LayoutParams(dp(48), dp(48))
+    private fun gradient(radii: FloatArray? = null, oval: Boolean = false) = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(p.light, p.deep)).apply {
+        if (oval) shape = GradientDrawable.OVAL else cornerRadii = radii
     }
+    /** Per-corner radii in dp: top-left, top-right, bottom-right, bottom-left. */
+    private fun corners(tl: Number, tr: Number, br: Number, bl: Number) =
+        floatArrayOf(dpf(tl), dpf(tl), dpf(tr), dpf(tr), dpf(br), dpf(br), dpf(bl), dpf(bl))
+    private fun shadow(v: View, elevation: Number, alpha: Float) {
+        v.elevation = dpf(elevation)
+        if (Build.VERSION.SDK_INT >= 28) { v.outlineSpotShadowColor = supportAlpha(c.shadow, alpha); v.outlineAmbientShadowColor = supportAlpha(c.shadow, alpha) }
+    }
+    private fun icon(res: Int, tint: Int, size: Number) = ImageView(context).apply {
+        setImageResource(res); setColorFilter(tint); layoutParams = FrameLayout.LayoutParams(dp(size), dp(size), Gravity.CENTER)
+    }
+    private fun circleButton(res: Int, description: String, size: Number, iconSize: Number, tint: Int, bg: Drawable, action: () -> Unit) = FrameLayout(context).apply {
+        background = bg; addView(icon(res, tint, iconSize)); contentDescription = description
+        isClickable = true; isFocusable = true; setOnClickListener { action() }
+        layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+    }
+    private fun avatar(name: String?, size: Number, colors: IntArray, icon: Int? = null, ring: Boolean = false) =
+        SupportAvatarView(context, colors, name?.let { SupportText.initial(it) }, icon, ring).apply { layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)) }
+    private val agentColors get() = intArrayOf(p.warm, p.hot)
+    private fun badge(count: Int) = text("$count", 12f, p.onAccent, 700).apply {
+        background = rounded(p.accent, 99); setPadding(dp(8), dp(3), dp(8), dp(3)); contentDescription = "$count unread"
+    }
+
+    /** Springy press like the iOS chat; the click still fires. */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun View.pressable(description: String? = null, action: () -> Unit) {
+        isClickable = true; isFocusable = true; description?.let { contentDescription = it }
+        setOnClickListener { action() }
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(.97f).scaleY(.97f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(160).start()
+            }
+            false
+        }
+    }
+    private fun ripple() = RippleDrawable(ColorStateList.valueOf(supportAlpha(c.ink, .08f)), null, ColorDrawable(Color.WHITE))
+
     private fun title() = AppReferSupport.resolvedTitle(context)
-    private fun top() {
-        val bar = row(); bar.setPadding(dp(16), dp(10), dp(16), dp(10))
-        bar.addView(iconButton(if (route == "home") R.drawable.apprefer_support_close else R.drawable.apprefer_support_back, if (route == "home") "Close" else "Back") { if (!goBack()) onClose() })
-        val pill = column(); pill.setPadding(dp(18), dp(7), dp(18), dp(7)); pill.gravity = Gravity.CENTER; pill.background = shape(glass, 28, true); pill.elevation = dp(1).toFloat()
-        pill.addView(text(when(route) { "home" -> "Help"; "compose" -> "New message"; else -> subject }, 17f, bold = true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; gravity = Gravity.CENTER; header = this })
-        if (route != "home") pill.addView(text(title(), 12f, muted).apply { maxLines = 1; gravity = Gravity.CENTER })
-        // The title pill sizes to its text and sits in the middle, like the iOS bar.
-        val middle = FrameLayout(context).apply { addView(pill, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)) }
-        bar.addView(middle, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(10), 0, dp(10), 0) })
-        if (route == "compose") { sender = sendButton { send() }; bar.addView(sender) }
-        else bar.addView(Space(context), LayoutParams(dp(48), dp(1)))
-        addView(bar)
-    }
-    private fun sendButton(action: () -> Unit) = iconButton(R.drawable.apprefer_support_send, "Send", Color.WHITE, accent, action)
-    private fun updateSend() { sender?.apply { isEnabled = !busy && (draft.isNotBlank() || images.isNotEmpty()); alpha = if (isEnabled) 1f else .35f } }
+    private fun appName() = AppReferSupport.appName(context)
+
+    // MARK: - Screens
+
     private fun render() {
-        val restoreFocus = ::field.isInitialized && field.hasFocus()
-        removeAllViews(); sender = null; top()
-        body = column(); padded(body, 20)
-        scroll = ScrollView(context).apply { isFillViewport = false; addView(body) }
-        addView(scroll, LayoutParams(-1, 0, 1f))
-        when (route) { "home" -> renderHome(); "compose" -> renderCompose(); else -> { renderMessages(); composer() } }
-        error?.let { body.addView(text(it, 13f, muted).apply { setOnClickListener { resume() } }) }
-        updateSend()
-        if (restoreFocus && route != "home" && ::field.isInitialized) field.requestFocus()
+        p = SupportPalette(AppReferSupport.accentColor)
+        removeAllViews(); hero = null; header = null; headerTitle = null; headerAvatar = null; shownQuickReplies = null; renderedCount = -1; lastStatusDark = null
+        if (route == "home") buildHome() else buildThread()
+        applyInsets(insetL, insetT, insetR, insetB)
+        updateChrome()
     }
-    private fun renderHome() {
-        body.addView(text(title(), 16f, accent, true).apply { setPadding(0, dp(20), 0, dp(8)) })
-        body.addView(text("Hi ${AppReferSupport.name?.split(" ")?.firstOrNull()?.takeIf { it.isNotBlank() } ?: "there"} 👋", 34f, bold = true))
-        body.addView(text(AppReferSupport.replyTimeText, 17f, muted).apply { setPadding(0, dp(8), 0, dp(26)) })
-        if (conversations.isNotEmpty()) body.addView(text(if (conversations.size == 1) "Your conversation" else "Your conversations", 13f, muted, true))
-        val list = column().apply { background = shape(surface) }; body.addView(list)
-        conversations.forEach { c ->
-            val item = row(); padded(item, 12)
-            item.addView(FrameLayout(context).apply {
-                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor((accent and 0x00ffffff) or 0x26000000) }
-                addView(icon(if (c.status == "closed") R.drawable.apprefer_support_check else R.drawable.apprefer_support_bubble, accent, 18).apply { layoutParams = FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER) })
-            }, LayoutParams(dp(40), dp(40)).apply { setMargins(0, 0, dp(12), 0) })
-            val labels = column(); labels.addView(text(c.subject, bold = c.unread > 0).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-            labels.addView(text(c.preview, 14f, muted).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-            item.addView(labels, LayoutParams(0, -2, 1f))
-            item.addView(text(if (c.unread > 0) "${c.unread}" else time(c.lastMessageAt), 12f, if(c.unread > 0) Color.WHITE else muted).apply {
-                if (c.unread > 0) { background = shape(accent); padded(this, 6); contentDescription = "${c.unread} unread" }
-            })
-            item.setOnClickListener { id = c.id; subject = c.subject; timeline.reset(); navigate("thread") }; list.addView(item)
+
+    private fun buildHome() {
+        scroll = SupportScrollView(context)
+        val page = column()
+        hero = buildHero().also { page.addView(it, lp()) }
+        body = column().apply { setPadding(dp(16), 0, dp(16), dp(140)) }
+        page.addView(body, lp(top = -dp(62)))
+        scroll.addView(page, FrameLayout.LayoutParams(-1, -2))
+        addView(scroll, LayoutParams(-1, -1))
+        scrim = View(context).apply { setBackgroundColor(backgroundColor); alpha = 0f }
+        addView(scrim, LayoutParams(-1, 0, Gravity.TOP))
+        composerBox = buildComposer(topic?.prompt ?: "Ask us anything…", R.drawable.apprefer_support_camera) { startConversation() }
+        addView(composerBox, LayoutParams(-1, -2, Gravity.BOTTOM))
+        composerBox.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) post { if (route == "home") body.setPadding(dp(16), 0, dp(16), max(dp(140), composerBox.height + dp(16))) }
         }
-        val cta = row().apply {
-            background = shape(accent); setPadding(dp(20), dp(14), dp(20), dp(14)); isClickable = true; isFocusable = true
-            contentDescription = "Send us a message, Screenshots welcome"; setOnClickListener { navigate("compose") }
-            addView(icon(R.drawable.apprefer_support_forum, Color.WHITE, 24))
-            addView(column().apply {
-                addView(text("Send us a message", 17f, Color.WHITE, true))
-                addView(text("Screenshots welcome", 12f, Color.WHITE).apply { alpha = .85f })
-            }, LayoutParams(0, -2, 1f).apply { setMargins(dp(12), 0, dp(8), 0) })
-            addView(icon(R.drawable.apprefer_support_chevron, Color.WHITE, 20))
-        }
-        addView(cta, LayoutParams(-1, -2).apply { setMargins(dp(20), dp(12), dp(20), dp(16)) })
+        renderHomeContent(); renderAccessories(); updateSend()
     }
-    private fun editor(placeholder: String) = EditText(context).apply {
-        setText(draft); hint = placeholder; textSize = 17f; setTextColor(ink); setHintTextColor(muted)
-        background = null; gravity = Gravity.TOP; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { draft = s.toString(); updateSend() }
-            override fun afterTextChanged(s: Editable?) {}
+
+    private fun buildHero(): View {
+        val box = column().apply { background = SupportHeroDrawable(p, resources.displayMetrics.density) }
+        val top = row().apply { gravity = Gravity.TOP }
+        top.addView(appIconView())
+        top.addView(Space(context), lp(0, 1, weight = 1f))
+        top.addView(circleButton(R.drawable.apprefer_support_close, "Close", 40, 18, p.onAccent,
+            oval(supportAlpha(p.onAccent, .2f), supportAlpha(p.onAccent, .35f))) { if (!goBack()) onClose() })
+        box.addView(top, lp())
+        box.addView(text(title(), 15f, supportAlpha(p.onAccent, .85f), 600, 1), lp(top = dp(20)))
+        box.addView(text(SupportText.greeting(AppReferSupport.name), 38f, p.onAccent, 800).apply {
+            letterSpacing = -0.026f; maxLines = 1
+            if (Build.VERSION.SDK_INT >= 26) setAutoSizeTextTypeUniformWithConfiguration(22, 38, 1, TypedValue.COMPLEX_UNIT_SP) else ellipsize = TextUtils.TruncateAt.END
+        }, lp(top = dp(4)))
+        box.addView(text("How can we help today?", 19f, supportAlpha(p.onAccent, .92f), 500), lp(top = dp(6)))
+        box.addView(presence(), lp(-2, top = dp(18)))
+        return box
+    }
+
+    private fun appIconView(): View {
+        val size = dp(46)
+        val drawable = AppReferSupport.resolvedIcon(context)
+        val view: View = if (drawable != null) ImageView(context).apply {
+            setImageBitmap(iconBitmap(drawable, size)); scaleType = ImageView.ScaleType.CENTER_CROP
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) { outline.setRoundRect(0, 0, view.width, view.height, dpf(13)) }
+            }
+            clipToOutline = true
+        } else text(SupportText.initials(appName()), 15f, p.light, 800).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF29205C.toInt(), 0xFF0F0A1F.toInt())).apply { cornerRadius = dpf(13) }
+        }
+        view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        view.elevation = dpf(6)
+        view.layoutParams = LinearLayout.LayoutParams(size, size)
+        return view
+    }
+
+    /** Launcher icons are often adaptive: draw both layers so the art fills the rounded tile. */
+    private fun iconBitmap(source: Drawable, size: Int): Bitmap {
+        val d = source.constantState?.newDrawable(resources)?.mutate() ?: source.mutate()
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        if (Build.VERSION.SDK_INT >= 26 && d is AdaptiveIconDrawable) {
+            val inset = size / 4 // 108 dp layers, 72 dp visible
+            listOfNotNull(d.background, d.foreground).forEach { it.setBounds(-inset, -inset, size + inset, size + inset); it.draw(canvas) }
+        } else { d.setBounds(0, 0, size, size); d.draw(canvas) }
+        return bitmap
+    }
+
+    private fun presence(): View {
+        val names = AppReferSupport.teamNames.take(3)
+        val pill = row().apply {
+            setPadding(dp(8), dp(7), dp(14), dp(7))
+            background = rounded(supportAlpha(Color.BLACK, if (p.onAccentIsDark) .06f else .16f), 22, supportAlpha(p.onAccent, .3f))
+        }
+        val stack = FrameLayout(context)
+        val count = max(1, names.size)
+        // Added last-first so the first person sits on top, like the iOS pill.
+        for (i in count - 1 downTo 0) {
+            val face = if (names.isEmpty()) avatar(null, 28, agentColors, R.drawable.apprefer_support_bubble, ring = true)
+            else avatar(names[i], 28, avatarColors(i), ring = true)
+            stack.addView(face, FrameLayout.LayoutParams(dp(28), dp(28)).apply { leftMargin = dp(20) * i })
+        }
+        pill.addView(stack, lp(dp(28) + dp(20) * (count - 1), dp(28)))
+        pill.addView(text(SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime), 14f, p.onAccent, 500).apply { maxLines = 2 }, lp(-2, start = dp(10)))
+        pill.contentDescription = SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime)
+        return pill
+    }
+
+    private fun avatarColors(i: Int) = when (i % 3) {
+        0 -> agentColors
+        1 -> intArrayOf(0xFF5CADFF.toInt(), 0xFF2E73F2.toInt())
+        else -> intArrayOf(0xFF4D4D4D.toInt(), 0xFF141414.toInt())
+    }
+
+    private fun renderHomeContent() {
+        if (route != "home") return
+        body.removeAllViews()
+        val sections = SupportHomeSections(conversations)
+        fun add(v: View) = body.addView(v, lp(top = if (body.childCount > 0) dp(24) else 0))
+        sections.current?.let { add(continueCard(it)) }
+        if (AppReferSupport.topics.isNotEmpty()) add(quickHelp(sections.current != null))
+        if (sections.others.isNotEmpty()) add(pastConversations(sections.others))
+        if (!homeLoaded && conversations.isEmpty()) add(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.accent) }.let {
+            FrameLayout(context).apply { addView(it, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER)) }
         })
+        loadError?.takeIf { conversations.isEmpty() && homeLoaded }?.let { add(text(it, 13f, c.muted).apply { setPadding(dp(6), 0, dp(6), 0) }) }
     }
-    private fun renderCompose() {
-        field = editor("How can we help? Tell us what happened.").apply { minHeight = dp(160) }; body.addView(field)
-        if (!focusedCompose) {
-            focusedCompose = true
-            field.post {
-                if (visible && route == "compose") {
-                    field.requestFocus()
-                    (context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-                }
+
+    private fun continueCard(conversation: AppReferSupportConversation): View {
+        val card = column().apply { setPadding(dp(16), dp(16), dp(16), dp(16)); background = rounded(c.card, 26) }
+        shadow(card, 12, .22f)
+        card.addView(label("Continue"))
+        val line = row()
+        val agent = SupportText.firstName(AppReferSupport.teamNames.firstOrNull())
+        line.addView(avatar(agent, 46, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null))
+        val labels = column()
+        labels.addView(text(conversation.subject, 16f, c.ink, 600, 1))
+        labels.addView(text(if (conversation.lastFrom == "customer") "You: ${conversation.preview}" else conversation.preview, 14f, c.muted, lines = 1), lp(top = dp(3)))
+        line.addView(labels, lp(0, weight = 1f, start = dp(12)))
+        line.addView(if (conversation.unread > 0) badge(conversation.unread) else text(time(conversation.lastMessageAt), 12f, c.muted), lp(-2, start = dp(6)))
+        card.addView(line, lp(top = dp(12)))
+        card.pressable("Continue: ${conversation.subject}") { openThread(conversation) }
+        return card
+    }
+
+    private fun quickHelp(showLabel: Boolean): View {
+        val box = column()
+        if (showLabel) box.addView(label("Quick help").apply { setPadding(dp(6), 0, 0, 0) }, lp())
+        AppReferSupport.topics.chunked(2).forEachIndexed { r, pair ->
+            val line = row().apply { gravity = Gravity.TOP }
+            pair.forEachIndexed { i, t -> line.addView(tile(t), lp(0, weight = 1f, start = if (i == 1) dp(10) else 0)) }
+            if (pair.size == 1) line.addView(Space(context), lp(0, 1, weight = 1f, start = dp(10)))
+            box.addView(line, lp(top = if (r > 0 || showLabel) dp(10) else 0))
+        }
+        return box
+    }
+
+    private fun tile(t: AppReferSupportTopic): View {
+        val tile = column().apply { setPadding(dp(14), dp(14), dp(14), dp(14)); background = rounded(c.card, 20) }
+        shadow(tile, 3, .07f)
+        tile.addView(FrameLayout(context).apply {
+            background = rounded(supportAlpha(t.tint, .13f), 11); addView(icon(t.icon, t.tint, 18))
+        }, lp(dp(34), dp(34)))
+        tile.addView(text(t.title, 15f, c.ink, 600, 1), lp(top = dp(10)))
+        tile.addView(text(t.subtitle, 12.5f, c.muted, lines = 1), lp(top = dp(3)))
+        tile.pressable("${t.title}, ${t.subtitle}") { pick(t) }
+        return tile
+    }
+
+    private fun pastConversations(list: List<AppReferSupportConversation>): View {
+        val box = column()
+        box.addView(label("Your conversations").apply { setPadding(dp(6), 0, 0, 0) })
+        val card = column().apply { background = rounded(c.card, 20); clipToOutline = true }
+        shadow(card, 3, .07f)
+        list.forEachIndexed { i, conversation ->
+            if (i > 0) card.addView(View(context).apply { setBackgroundColor(c.divider) }, lp(h = max(1, dp(.5f)), start = dp(64)))
+            card.addView(conversationRow(conversation))
+        }
+        box.addView(card, lp(top = dp(10)))
+        return box
+    }
+
+    private fun conversationRow(conversation: AppReferSupportConversation): View {
+        val open = conversation.status != "closed"
+        val line = row().apply { setPadding(dp(12), dp(11), dp(12), dp(11)); background = ripple() }
+        line.addView(FrameLayout(context).apply {
+            background = oval(supportAlpha(p.accent, .13f))
+            addView(icon(if (open) R.drawable.apprefer_support_bubble else R.drawable.apprefer_support_check, p.accent, 16))
+        }, lp(dp(40), dp(40)))
+        val labels = column()
+        labels.addView(text(conversation.subject, 15f, c.ink, if (conversation.unread > 0) 600 else 400, 1))
+        labels.addView(text(conversation.preview, 13.5f, c.muted, lines = 1), lp(top = dp(3)))
+        line.addView(labels, lp(0, weight = 1f, start = dp(12)))
+        line.addView(if (conversation.unread > 0) badge(conversation.unread).apply { setPadding(dp(7), dp(3), dp(7), dp(3)) } else text(time(conversation.lastMessageAt), 12f, c.muted), lp(-2, start = dp(8)))
+        line.isClickable = true; line.isFocusable = true
+        line.contentDescription = conversation.subject
+        line.setOnClickListener { openThread(conversation) }
+        return line
+    }
+
+    private fun buildThread() {
+        scroll = SupportScrollView(context)
+        body = column().apply { setPadding(dp(14), dp(86), dp(14), dp(12)) }
+        scroll.addView(body, FrameLayout.LayoutParams(-1, -2))
+        addView(scroll, LayoutParams(-1, -1))
+        scrim = View(context).apply { setBackgroundColor(supportAlpha(backgroundColor, .96f)) }
+        addView(scrim, LayoutParams(-1, 0, Gravity.TOP))
+        header = buildHeader().also { addView(it, LayoutParams(-1, dp(64), Gravity.TOP).apply { setMargins(dp(12), dp(10), dp(12), 0) }) }
+        composerBox = buildComposer("Message", R.drawable.apprefer_support_add) { sendTyped() }
+        addView(composerBox, LayoutParams(-1, -2, Gravity.BOTTOM))
+        composerBox.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) post {
+                if (route == "thread") { body.setPadding(dp(14), dp(86) + insetT, dp(14), composerBox.height + dp(12)); scroll.stickToBottom() }
             }
         }
-        attachmentStrip(body)
-        pending.filter { it.conversationId == null }.forEach { p ->
-            body.addView(text(p.text, 17f))
-            p.images.forEach { body.addView(image(it), LayoutParams(dp(72), dp(84))) }
-            body.addView(text(if (p.failed) "Not sent · Tap to retry" else "Sending…", 12f, muted).apply {
-                if (p.failed) setOnClickListener { deliver(p) }
+        renderMessages(); renderAccessories(); updateSend()
+    }
+
+    private fun buildHeader(): View {
+        val bar = row().apply { setPadding(dp(10), 0, dp(10), 0); background = rounded(c.card, 32) }
+        shadow(bar, 8, .14f)
+        bar.addView(circleButton(R.drawable.apprefer_support_back, "Back", 42, 18, p.accent, oval(supportAlpha(c.ink, .05f))) { goBack() })
+        headerAvatar = FrameLayout(context).also { bar.addView(it, lp(dp(42), dp(42), start = dp(10))) }
+        val labels = column()
+        headerTitle = text("", 16f, c.ink, 700, 1).also { labels.addView(it) }
+        labels.addView(text("Usually replies in ${AppReferSupport.replyTime}", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
+        bar.addView(labels, lp(0, weight = 1f, start = dp(10)))
+        return bar
+    }
+
+    /** The person answering: the newest team reply's author. */
+    private fun updateHeader() {
+        val agent = messages.lastOrNull { it.from == "team" && SupportText.firstName(it.authorName) != null }?.let { SupportText.firstName(it.authorName) }
+        val name = agent ?: "${appName()} team"
+        if (headerTitle?.text?.toString() == name) return
+        headerTitle?.text = name
+        headerAvatar?.apply {
+            removeAllViews()
+            addView(avatar(agent, 42, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null), FrameLayout.LayoutParams(-1, -1))
+        }
+    }
+
+    private fun showsTime(i: Int): Boolean {
+        if (i !in messages.indices) return false
+        if (i == 0) return true
+        val a = date(messages[i - 1].createdAt); val b = date(messages[i].createdAt)
+        return a > 0 && b > 0 && b - a > 3_600_000
+    }
+    private fun sameSide(a: Int, b: Int) = a in messages.indices && b in messages.indices && messages[a].from == messages[b].from
+    private val pendingHere get() = pending.filter { it.conversationId == id }
+
+    private fun renderMessages() {
+        if (route != "thread") return
+        body.removeAllViews()
+        val waiting = pendingHere
+        if (!threadLoaded && messages.isEmpty() && waiting.isEmpty()) {
+            if (loadError != null) body.addView(text(loadError ?: "", 14f, c.muted).apply { gravity = Gravity.CENTER }, lp(top = dp(30)))
+            else body.addView(FrameLayout(context).apply {
+                addView(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.accent) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+            }, lp(top = dp(30)))
+        }
+        messages.forEachIndexed { i, m ->
+            val timed = showsTime(i)
+            if (timed) body.addView(text(time(m.createdAt), 12f, c.muted, 600).apply { gravity = Gravity.CENTER }, lp().apply {
+                topMargin = if (i == 0) dp(4) else dp(16); bottomMargin = dp(8)
+            })
+            val last = i == messages.size - 1 || !sameSide(i, i + 1) || showsTime(i + 1)
+            val view = when {
+                m.from == "customer" -> customerBubble(m, last)
+                m.from == "bot" -> botCard(m)
+                else -> teamBubble(m, last)
+            }
+            body.addView(view, lp(top = if (i > 0 && !timed) (if (sameSide(i - 1, i)) dp(3) else dp(10)) else 0))
+        }
+        waiting.forEach { body.addView(pendingBubble(it), lp(top = dp(6))) }
+        val last = messages.lastOrNull()
+        if (threadLoaded && waiting.isEmpty() && last?.from == "customer") {
+            body.addView(text("Sent ${clock(last.createdAt)} · we'll notify you when the team replies", 11.5f, c.muted, 500).apply {
+                gravity = Gravity.END; setPadding(0, 0, dp(4), 0)
+            }, lp(top = dp(5)))
+        }
+        updateHeader()
+        val count = messages.size + waiting.size
+        if (count != renderedCount) { scroll.scrollToBottom(animated = renderedCount > 0); renderedCount = count }
+        refreshQuickReplies()
+    }
+
+    private fun bubbleText(value: String, color: Int) = text(value, 16f, color).apply {
+        setLineSpacing(dpf(2), 1f); setPadding(dp(15), dp(11), dp(15), dp(11)); setTextIsSelectable(true)
+    }
+
+    private fun thumbnails(urls: List<AppReferSupportAttachment>, end: Boolean): View {
+        val strip = row().apply { gravity = if (end) Gravity.END else Gravity.START }
+        urls.forEachIndexed { i, a ->
+            val (frame, picture) = framedImage(74, 112, 14)
+            picture.contentDescription = a.name ?: "Screenshot"
+            a.url?.let { url ->
+                frame.pressable(a.name ?: "Screenshot") { viewImage(url) }
+                val cached = SupportImages.cached(url)
+                if (cached != null) picture.setImageBitmap(cached)
+                else scope.launch { try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) } catch (_: Exception) {} }
+            }
+            strip.addView(frame, lp(dp(74), dp(112), start = if (i > 0) dp(6) else 0))
+        }
+        return strip
+    }
+
+    /** A picture with a white border, rounded corners and a soft shadow. */
+    private fun framedImage(w: Int, h: Int, radius: Int): Pair<FrameLayout, ImageView> {
+        val picture = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(supportAlpha(c.ink, .06f))
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) { outline.setRoundRect(0, 0, view.width, view.height, dpf(radius - 3)) }
+            }
+            clipToOutline = true
+        }
+        val frame = FrameLayout(context).apply {
+            background = rounded(Color.WHITE, radius); setPadding(dp(3), dp(3), dp(3), dp(3))
+            addView(picture, FrameLayout.LayoutParams(-1, -1))
+            layoutParams = LinearLayout.LayoutParams(dp(w), dp(h))
+        }
+        shadow(frame, 3, .12f)
+        return frame to picture
+    }
+
+    private fun customerBubble(m: AppReferSupportMessage, tail: Boolean): View {
+        val box = column().apply { gravity = Gravity.END; setPadding(dp(60), 0, 0, 0) }
+        val shots = m.attachments.filter { it.contentType?.startsWith("image/") == true }
+        if (shots.isNotEmpty()) box.addView(thumbnails(shots, true), lp(-2))
+        if (m.text.isNotEmpty()) box.addView(bubbleText(m.text, p.onAccent).apply {
+            background = gradient(corners(22, 22, if (tail) 6 else 22, 22))
+        }, lp(-2, top = if (shots.isNotEmpty()) dp(6) else 0))
+        return box
+    }
+
+    private fun teamBubble(m: AppReferSupportMessage, showAvatar: Boolean): View {
+        val line = row().apply { gravity = Gravity.BOTTOM; setPadding(0, 0, dp(40), 0) }
+        if (showAvatar) line.addView(avatar(SupportText.firstName(m.authorName), 30, agentColors))
+        else line.addView(Space(context), lp(dp(30), dp(30)))
+        val box = column()
+        val shots = m.attachments.filter { it.contentType?.startsWith("image/") == true }
+        if (shots.isNotEmpty()) box.addView(thumbnails(shots, false), lp(-2))
+        if (m.text.isNotEmpty()) box.addView(bubbleText(m.text, c.ink).apply {
+            background = GradientDrawable().apply { setColor(c.card); cornerRadii = corners(22, 22, 22, if (showAvatar) 6 else 22) }
+            shadow(this, 2, .06f)
+        }, lp(-2, top = if (shots.isNotEmpty()) dp(6) else 0))
+        line.addView(box, lp(-2, start = dp(8)))
+        return line
+    }
+
+    private fun botCard(m: AppReferSupportMessage): View {
+        val line = row().apply { setPadding(0, 0, dp(50), 0) }
+        val card = column().apply { setPadding(dp(14), dp(12), dp(14), dp(12)); background = rounded(c.card, 20) }
+        shadow(card, 2, .06f)
+        card.addView(text("✦ INSTANT ANSWER", 11.5f, p.accent, 700).apply { letterSpacing = 0.035f })
+        card.addView(text(m.text, 15.5f, c.ink).apply { setLineSpacing(dpf(2), 1f); setTextIsSelectable(true) }, lp(-2, top = dp(4)))
+        line.addView(card, lp(-2))
+        return line
+    }
+
+    private fun pendingBubble(pend: SupportPending): View {
+        val box = column().apply { gravity = Gravity.END; setPadding(dp(60), 0, 0, 0) }
+        if (pend.images.isNotEmpty()) {
+            val strip = row().apply { gravity = Gravity.END; alpha = .6f }
+            pend.images.forEachIndexed { i, bytes ->
+                val (frame, picture) = framedImage(74, 112, 14)
+                picture.setImageBitmap(thumb(bytes))
+                strip.addView(frame, lp(dp(74), dp(112), start = if (i > 0) dp(6) else 0))
+            }
+            box.addView(strip, lp(-2))
+        }
+        if (pend.text.isNotEmpty()) box.addView(bubbleText(pend.text, p.onAccent).apply {
+            background = gradient(corners(22, 22, 6, 22)); alpha = .6f
+        }, lp(-2, top = if (pend.images.isNotEmpty()) dp(5) else 0))
+        box.addView(if (pend.failed) text("Not sent · Tap to retry", 12f, c.error, 600).apply {
+            setPadding(0, dp(4), 0, dp(4)); setOnClickListener { deliver(pend) }
+        } else text("Sending…", 11.5f, c.muted, 500), lp(-2, top = dp(5)))
+        return box
+    }
+
+    // MARK: - Composer
+
+    private fun buildComposer(placeholder: String, leading: Int, onSend: () -> Unit): LinearLayout {
+        val box = column().apply { setPadding(0, 0, 0, dp(8)) }
+        accessories = column()
+        box.addView(accessories, lp())
+        val bar = row().apply {
+            gravity = Gravity.BOTTOM; setPadding(dp(6), dp(7), dp(7), dp(7)); background = rounded(c.card, 29)
+        }
+        shadow(bar, 10, .18f)
+        bar.addView(circleButton(leading, "Add screenshot", 44, 22, c.muted, ColorDrawable(Color.TRANSPARENT)) { pick() })
+        field = EditText(context).apply {
+            setText(draft); hint = placeholder; setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f); setTextColor(c.ink); setHintTextColor(supportAlpha(c.muted, .75f))
+            background = null; minLines = 1; maxLines = 5; gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setPadding(dp(4), dp(11), dp(4), dp(11)); minHeight = dp(44)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            highlightColor = supportAlpha(p.accent, .3f)
+            if (Build.VERSION.SDK_INT >= 29) setTextCursorDrawable(GradientDrawable().apply { setColor(p.accent); setSize(dp(2), dp(1)) })
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    draft = s.toString(); updateSend(); if (route == "thread") refreshQuickReplies()
+                }
+                override fun afterTextChanged(s: Editable?) {}
             })
         }
-        val c = AppReferSupport.deviceContext(context)
-        body.addView(text("Sent with: app ${c["appVersion"]} · ${c["device"]} · ${c["os"]}", 12f, muted).apply { setPadding(0, dp(16), 0, 0) })
-    }
-    private fun composer() {
-        val panel = column(); padded(panel, 12)
-        if (images.isNotEmpty()) attachmentStrip(panel)
-        val bar = row(); bar.addView(iconButton(R.drawable.apprefer_support_add, "Add screenshot") { pick() })
-        field = editor("Message").apply { minLines = 1; maxLines = 5; background = shape(surface, 24, true); padded(this, 12) }
-        bar.addView(field, LayoutParams(0, -2, 1f).apply { setMargins(dp(10), 0, dp(10), 0) })
-        sender = sendButton { send() }; bar.addView(sender); panel.addView(bar); addView(panel)
-    }
-    private fun pick() { if (images.size < 4 && !busy) onPickImages?.invoke(4 - images.size) }
-    private fun attachmentStrip(parent: LinearLayout) {
-        val strip = row()
-        images.forEachIndexed { index, bytes ->
-            val tile = column(); tile.addView(image(bytes), LayoutParams(dp(72), dp(84)))
-            tile.addView(iconButton(R.drawable.apprefer_support_close, "Remove screenshot", Color.WHITE, 0x99000000.toInt()) { if (!busy) { images.removeAt(index); render() } })
-            strip.addView(tile)
+        bar.addView(field, lp(0, weight = 1f, start = dp(2), end = dp(4)))
+        sendIcon = icon(R.drawable.apprefer_support_send, Color.WHITE, 22)
+        sendSpinner = ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.onAccent); visibility = View.GONE; layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER) }
+        sendButton = FrameLayout(context).apply {
+            addView(sendIcon); addView(sendSpinner); contentDescription = "Send"
+            isClickable = true; isFocusable = true; setOnClickListener { onSend() }
         }
-        if (images.size < 4) strip.addView(column().apply {
-            gravity = Gravity.CENTER; background = shape((accent and 0x00ffffff) or 0x1a000000, 12)
-            contentDescription = "Add screenshot"; isClickable = true; isFocusable = true; setOnClickListener { pick() }
-            addView(icon(R.drawable.apprefer_support_photo, accent, 26).apply { layoutParams = LayoutParams(dp(26), dp(26)).apply { gravity = Gravity.CENTER_HORIZONTAL } })
-            addView(text("Screenshot", 13f, accent, true).apply { setPadding(0, dp(6), 0, 0) })
-        }, LayoutParams(dp(96), dp(96)))
-        parent.addView(HorizontalScrollView(context).apply { addView(strip) })
+        bar.addView(sendButton, lp(dp(44), dp(44)))
+        box.addView(bar, lp().apply { marginStart = dp(14); marginEnd = dp(14) })
+        return box
     }
+
+    private fun updateSend() {
+        if (!::sendButton.isInitialized) return
+        val can = !starting && (draft.isNotBlank() || images.isNotEmpty())
+        sendButton.isEnabled = can
+        sendButton.background = if (can) gradient(oval = true) else oval(0x4D808080)
+        sendIcon.setColorFilter(if (can) p.onAccent else Color.WHITE)
+        val spinning = starting && route == "home"
+        sendIcon.visibility = if (spinning) View.INVISIBLE else View.VISIBLE
+        sendSpinner.visibility = if (spinning) View.VISIBLE else View.GONE
+        if (spinning) sendButton.background = gradient(oval = true)
+    }
+
+    private val showsQuickReplies get() = route == "thread" && threadLoaded && pendingHere.isEmpty() && draft.isEmpty() && images.isEmpty() &&
+        messages.lastOrNull()?.let { it.from != "customer" } == true
+
+    private fun refreshQuickReplies() { if (shownQuickReplies != showsQuickReplies) renderAccessories() }
+
+    /** What sits above the bar: error, topic chip, quick replies and picked screenshots. */
+    private fun renderAccessories() {
+        if (!::accessories.isInitialized) return
+        accessories.removeAllViews()
+        fun add(v: View, w: Int = -2) = accessories.addView(v, lp(w).apply { bottomMargin = dp(8) })
+        if (route == "home") {
+            sendError?.let { add(text(it, 13f, c.error, 500).apply {
+                setPadding(dp(12), dp(6), dp(12), dp(6)); background = rounded(c.card, 99)
+            }.withMargins(dp(18))) }
+            topic?.let { add(topicChip(it).withMargins(dp(18))) }
+        }
+        shownQuickReplies = showsQuickReplies
+        if (shownQuickReplies == true) add(quickReplies(), -1)
+        if (images.isNotEmpty()) add(attachmentStrip(), -1)
+        field.hint = if (route == "home") topic?.prompt ?: "Ask us anything…" else "Message"
+    }
+
+    private fun View.withMargins(h: Int): View = FrameLayout(context).also { holder ->
+        holder.clipChildren = false; holder.clipToPadding = false
+        holder.addView(this, FrameLayout.LayoutParams(-2, -2).apply { marginStart = h; marginEnd = h })
+    }
+
+    private fun topicChip(t: AppReferSupportTopic): View {
+        val chip = row().apply {
+            setPadding(dp(12), dp(6), dp(6), dp(6)); background = rounded(c.card, 99, supportAlpha(t.tint, .25f))
+        }
+        chip.addView(icon(t.icon, t.tint, 14), lp(dp(14), dp(14)))
+        chip.addView(text(t.title, 14f, t.tint, 600, 1), lp(-2, start = dp(6)))
+        chip.addView(circleButton(R.drawable.apprefer_support_close, "Remove topic", 24, 12, t.tint, ColorDrawable(Color.TRANSPARENT)) {
+            topic = null; renderAccessories(); saveDraft()
+        }, lp(dp(24), dp(24), start = dp(2)))
+        return chip
+    }
+
+    private fun quickReplies(): View {
+        val strip = row().apply { setPadding(dp(14), 0, dp(14), 0) }
+        fun chip(title: String, action: () -> Unit) = text(title, 14f, p.accent, 600, 1).apply {
+            setPadding(dp(13), dp(8), dp(13), dp(8)); background = rounded(c.card, 99, supportAlpha(p.accent, .18f))
+            pressable(title, action)
+        }
+        strip.addView(chip("👍 Thanks, that's sorted") { sendText("👍 Thanks, that's sorted") })
+        strip.addView(chip("I have another question") { focusField() }, lp(-2, start = dp(8)))
+        return HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; addView(strip) }
+    }
+
+    private fun attachmentStrip(): View {
+        val strip = row().apply { gravity = Gravity.BOTTOM; setPadding(dp(18), dp(2), dp(18), dp(4)) }
+        images.toList().forEachIndexed { index, bytes ->
+            val holder = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
+            val (frame, picture) = framedImage(62, 88, 12)
+            picture.setImageBitmap(thumb(bytes)); picture.contentDescription = "Screenshot ${index + 1}"
+            holder.addView(frame, FrameLayout.LayoutParams(dp(62), dp(88), Gravity.BOTTOM or Gravity.START))
+            val remove = circleButton(R.drawable.apprefer_support_close, "Remove screenshot", 22, 12, Color.WHITE, oval(0x99000000.toInt(), Color.WHITE)) {
+                if (!starting && index < images.size) { images.removeAt(index); renderAccessories(); updateSend(); saveDraft() }
+            }
+            remove.elevation = dpf(4)
+            holder.addView(remove, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END))
+            strip.addView(holder, lp(dp(68), dp(94), start = if (index > 0) dp(4) else 0))
+        }
+        if (images.size < 4) strip.addView(FrameLayout(context).apply {
+            background = rounded(supportAlpha(c.card, .9f), 12); addView(icon(R.drawable.apprefer_support_add, p.accent, 22))
+            pressable("Add another screenshot") { pick() }
+        }, lp(dp(62), dp(88), start = dp(10)))
+        return HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; clipChildren = false; addView(strip) }
+    }
+
+    /** Small decoded copies for the strip and pending bubbles (the upload keeps the full JPEG). */
+    private fun thumb(bytes: ByteArray): Bitmap? = thumbs[bytes] ?: run {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 240 && bounds.outHeight / (sample * 2) >= 240) sample *= 2
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.also { thumbs[bytes] = it }
+    }
+
+    private fun viewImage(url: String) {
+        val dialog = Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val root = FrameLayout(context).apply { setBackgroundColor(Color.BLACK) }
+        val picture = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "Screenshot" }
+        root.addView(picture, FrameLayout.LayoutParams(-1, -1))
+        val spinner = ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(Color.WHITE) }
+        root.addView(spinner, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+        root.addView(circleButton(R.drawable.apprefer_support_close, "Close", 40, 18, Color.WHITE, oval(0x33FFFFFF)) { dialog.dismiss() },
+            FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.END).apply { setMargins(dp(16), dp(16), dp(16), dp(16)) })
+        root.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(root)
+        dialog.show()
+        scope.launch {
+            try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) } catch (_: Exception) {}
+            spinner.visibility = View.GONE
+        }
+    }
+
+    // MARK: - Actions
+
+    private fun pick() { if (images.size < 4 && !starting) onPickImages?.invoke(4 - images.size) }
+
+    private fun pick(t: AppReferSupportTopic) {
+        t.action?.let { it(); return }
+        topic = t; renderAccessories(); saveDraft(); focusField()
+    }
+
+    private fun focusField() {
+        if (!::field.isInitialized) return
+        field.requestFocus(); field.setSelection(field.text.length)
+        field.post { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(field, InputMethodManager.SHOW_IMPLICIT) }
+    }
+
+    private fun hideKeyboard() {
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(windowToken, 0)
+    }
+
+    private fun openThread(conversation: AppReferSupportConversation) {
+        if (starting) return
+        id = conversation.id; subject = conversation.subject; timeline.reset(); threadLoaded = false; loadError = null
+        navigate("thread")
+    }
+
+    /** Starts a conversation from the home field; the message stays in place if it fails. */
+    private fun startConversation() {
+        if (starting) return
+        val text = draft.trim()
+        if (text.isEmpty() && images.isEmpty()) return
+        starting = true; sendError = null
+        updateSend(); renderAccessories(); saveDraft()
+        val shots = images.toList(); val about = topic?.title; val clientId = homeClientMessageId
+        scope.launch {
+            try {
+                // Every attempt uses fresh upload slots but keeps the same send identity.
+                val ids = shots.map { api.upload(it) }
+                val t = api.start(text, ids, clientId, about)
+                starting = false
+                draft = ""; images.clear(); topic = null; homeClientMessageId = UUID.randomUUID().toString()
+                id = t.conversation.id; subject = t.conversation.subject
+                timeline.reset(); timeline.merge(t.messages); threadLoaded = true; loadError = null
+                hideKeyboard()
+                navigate("thread")
+            } catch (e: CancellationException) { starting = false; throw e }
+            catch (e: Exception) {
+                starting = false; sendError = e.message ?: "Your message wasn't sent. Try again."
+                if (route == "home") { updateSend(); renderAccessories() }
+            } finally { if (isAttachedToWindow) saveDraft() }
+        }
+    }
+
+    private fun sendTyped() {
+        val text = draft.trim()
+        if (text.isEmpty() && images.isEmpty()) return
+        val shots = images.toList()
+        images.clear(); field.setText("")
+        send(text, shots)
+    }
+
+    private fun sendText(text: String) = send(text, emptyList())
+
+    private fun send(text: String, shots: List<ByteArray>) {
+        val conversation = id ?: return
+        val message = SupportPending(conversation, text, shots)
+        pending.add(message); renderAccessories(); updateSend(); deliver(message)
+    }
+
+    private fun deliver(message: SupportPending) {
+        val conversation = message.conversationId ?: return
+        message.failed = false
+        saveDraft(); renderMessages()
+        scope.launch {
+            try {
+                val ids = message.images.map { api.upload(it) }
+                val m = api.send(conversation, message.text, ids, message.clientMessageId)
+                pending.remove(message)
+                if (route == "thread" && id == conversation) timeline.merge(listOf(m))
+            } catch (e: CancellationException) { message.failed = true; throw e }
+            catch (_: Exception) { message.failed = true }
+            finally { if (isAttachedToWindow) { saveDraft(); renderMessages() } }
+        }
+    }
+
+    private fun navigate(next: String) {
+        if (route == "home" && next == "thread") {
+            homeStash = HomeStash(draft, images.toList(), topic, sendError)
+            draft = ""; images.clear(); topic = null; sendError = null
+            hideKeyboard()
+        } else if (route == "thread" && next == "home") {
+            hideKeyboard()
+            val stash = homeStash; homeStash = null
+            draft = stash?.draft ?: ""; images.clear(); stash?.let { images.addAll(it.images) }; topic = stash?.topic; sendError = stash?.error
+        }
+        route = next; loadError = null; render(); saveDraft()
+        if (visible) startPolling()
+    }
+
+    fun goBack(): Boolean {
+        if (starting) return true
+        if (route == "home") return false
+        navigate("home"); return true
+    }
+
+    fun addImages(uris: List<Uri>) {
+        scope.launch {
+            try {
+                val room = 4 - images.size
+                val bytes = withContext(Dispatchers.IO) { uris.take(room).map { SupportImages.jpeg(context, it) } }
+                images.addAll(bytes.take(4 - images.size)); sendError = null
+            } catch (e: Exception) { sendError = e.message ?: "This image could not be read" }
+            renderAccessories(); updateSend(); saveDraft()
+        }
+    }
+
+    fun pause() { visible = false; polling?.cancel(); polling = null }
+    fun resume() { visible = true; startPolling() }
+
+    private fun startPolling() {
+        polling?.cancel()
+        polling = scope.launch {
+            while (true) {
+                val screen = route; val conversation = id
+                try {
+                    if (screen == "home") {
+                        val list = api.conversations()
+                        // Re-render only on change, so a poll never resets a press or the scroll.
+                        if (route == "home" && (list != conversations || !homeLoaded || loadError != null)) {
+                            conversations = list; homeLoaded = true; loadError = null; renderHomeContent()
+                        }
+                    } else if (conversation != null) {
+                        val t = api.thread(conversation, cursor)
+                        if (route == "thread" && id == conversation) {
+                            subject = t.conversation.subject
+                            val before = messages.size; val first = !threadLoaded || loadError != null
+                            timeline.merge(t.messages, fromLoad = true); threadLoaded = true; loadError = null
+                            if (first || messages.size != before) renderMessages()
+                        }
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    loadError = e.message ?: "Couldn't load. Check your connection."
+                    if (route == "home") { homeLoaded = true; renderHomeContent() } else if (messages.isEmpty()) renderMessages()
+                }
+                delay(if (route == "thread") 4_000 else 15_000)
+            }
+        }
+    }
+
+    // MARK: - Insets and system bars
+
+    internal fun applyInsets(left: Int, top: Int, right: Int, bottom: Int) {
+        insetL = left; insetT = top; insetR = right; insetB = bottom
+        setPadding(left, 0, right, bottom)
+        hero?.setPadding(dp(22), dp(18) + top, dp(22), dp(88))
+        if (::scrim.isInitialized) scrim.layoutParams = (scrim.layoutParams as LayoutParams).apply { height = top }
+        header?.let { it.layoutParams = (it.layoutParams as LayoutParams).apply { topMargin = dp(10) + top } }
+        if (route == "thread" && ::body.isInitialized) body.setPadding(dp(14), dp(86) + top, dp(14), body.paddingBottom)
+        updateChrome()
+    }
+
+    /** Status bar: over the hero its icons follow the accent; elsewhere a solid band in the page colour. */
+    private fun updateChrome() {
+        if (!::scrim.isInitialized) return
+        val overHero = route == "home" && hero.let { it == null || scroll.scrollY < it.height - insetT - dp(8) }
+        if (route == "home") scrim.alpha = if (overHero) 0f else 1f
+        val darkIcons = if (overHero) p.onAccentIsDark else !dark
+        if (darkIcons != lastStatusDark) { lastStatusDark = darkIcons; onStatusBarStyle?.invoke(darkIcons) }
+    }
+
+    /** Hides the keyboard when the customer drags the page, and keeps a conversation pinned to its end. */
+    private inner class SupportScrollView(context: Context) : ScrollView(context) {
+        private var downY = 0; private var dismissed = false; private var pinPending = false; private var animate = false
+        private val slop = ViewConfiguration.get(context).scaledTouchSlop
+        init { isVerticalScrollBarEnabled = false; clipToPadding = false; isFillViewport = true }
+        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); updateChrome() }
+        override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downY = scrollY; dismissed = false }
+                MotionEvent.ACTION_MOVE -> if (!dismissed && abs(scrollY - downY) > slop) { dismissed = true; hideKeyboard() }
+            }
+            return super.dispatchTouchEvent(e)
+        }
+        fun scrollToBottom(animated: Boolean) { pinPending = true; animate = animated; requestLayout() }
+        fun stickToBottom() { if (atBottom()) scrollToBottom(false) }
+        private fun atBottom() = getChildAt(0)?.let { scrollY + height >= it.height - dp(24) } ?: true
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            val wasAtBottom = route == "thread" && oldh > 0 && getChildAt(0)?.let { scrollY + oldh >= it.height - dp(24) } == true
+            super.onSizeChanged(w, h, oldw, oldh)
+            if (wasAtBottom && h < oldh) { pinPending = true; animate = false }
+        }
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            super.onLayout(changed, l, t, r, b)
+            if (!pinPending) return
+            pinPending = false
+            val end = max(0, (getChildAt(0)?.height ?: 0) - height)
+            if (animate) smoothScrollTo(0, end) else scrollTo(0, end)
+        }
+    }
+
+    // MARK: - Saved state
+
     // Large images stay out of Binder saved-state parcels during Activity recreation.
     internal fun saveDraft(): String? = runCatching {
         val file = draftFile ?: java.io.File.createTempFile("apprefer-support-", ".draft", context.cacheDir).also { draftFile = it }
         val atomic = android.util.AtomicFile(file)
         val stream = atomic.startWrite()
         try {
-        val out = java.io.DataOutputStream(stream)
-        run {
+            val out = java.io.DataOutputStream(stream)
             out.writeUTF(route); out.writeUTF(id ?: ""); out.writeUTF(subject)
             val text = draft.toByteArray(Charsets.UTF_8); out.writeInt(text.size); out.write(text)
             out.writeInt(images.size); images.forEach { out.writeInt(it.size); out.write(it) }
             out.writeInt(pending.size)
             pending.forEach { it.write(out) }
-        }
-        out.flush(); atomic.finishWrite(stream)
+            out.writeUTF(topic?.title ?: ""); out.writeUTF(homeClientMessageId)
+            out.flush(); atomic.finishWrite(stream)
         } catch (e: Exception) { atomic.failWrite(stream); throw e }
         file.name
     }.getOrNull()
+
     internal fun restoreDraft(filename: String) {
         if (!filename.startsWith("apprefer-support-") || filename.contains('/')) return
         runCatching {
             val file = java.io.File(context.cacheDir, filename)
             if (file.length() > 64_000_000) return
             java.io.DataInputStream(file.inputStream().buffered()).use { input ->
-                route = input.readUTF(); require(route in listOf("home", "compose", "thread"))
-                id = input.readUTF().takeIf { it.isNotEmpty() }; subject = input.readUTF()
+                val savedRoute = input.readUTF(); require(savedRoute in listOf("home", "compose", "thread"))
+                val savedId = input.readUTF().takeIf { it.isNotEmpty() }; val savedSubject = input.readUTF()
+                // Older saves had a separate compose screen; it is now the home field.
+                route = if (savedRoute == "thread" && savedId != null) "thread" else "home"
+                id = savedId; subject = savedSubject
                 val size = input.readInt(); require(size in 0..1_000_000)
                 draft = String(ByteArray(size).also { input.readFully(it) }, Charsets.UTF_8)
                 images.clear(); val count = input.readInt(); require(count in 0..4)
@@ -280,129 +1014,43 @@ class AppReferSupportView @JvmOverloads constructor(
                 pending.clear()
                 if (input.available() > 0) {
                     val countPending = input.readInt(); require(countPending in 0..100)
-                    repeat(countPending) { pending.add(SupportPending.read(input)) }
+                    repeat(countPending) {
+                        val restored = SupportPending.read(input)
+                        // A new conversation that was being sent goes back into the home field, same identity.
+                        if (restored.conversationId == null) {
+                            if (draft.isEmpty()) draft = restored.text
+                            if (images.isEmpty()) images.addAll(restored.images)
+                            homeClientMessageId = restored.clientMessageId
+                        } else pending.add(restored)
+                    }
+                }
+                if (input.available() > 0) {
+                    val savedTopic = input.readUTF()
+                    topic = AppReferSupport.topics.firstOrNull { it.title == savedTopic && it.action == null }
+                    homeClientMessageId = input.readUTF().takeIf { it.matches(Regex("[A-Za-z0-9_-]{8,64}")) } ?: homeClientMessageId
                 }
             }
             draftFile = file; render()
         }
     }
-    fun addImages(uris: List<Uri>) {
-        scope.launch {
-            try {
-                val room = 4 - images.size
-                val bytes = withContext(Dispatchers.IO) { uris.take(room).map { SupportImages.jpeg(context, it) } }
-                images.addAll(bytes.take(4 - images.size)); error = null
-            } catch (e: Exception) { error = e.message }
-            render()
-        }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        resume()
+        if (focusOnOpen && route == "home") { focusOnOpen = false; focusField() }
     }
-    private fun image(bytes: ByteArray) = ImageView(context).apply {
-        setImageBitmap(BitmapFactory.decodeByteArray(bytes, 0, bytes.size)); scaleType = ImageView.ScaleType.CENTER_CROP
-        background = shape(surface, 16); clipToOutline = true; contentDescription = "Screenshot"
-    }
-    private fun renderMessages() {
-        body.removeAllViews()
-        if (messages.isEmpty() && pending.none { it.conversationId == id } && error == null) body.addView(ProgressBar(context))
-        messages.forEachIndexed { i, m ->
-            if (i == 0 || date(m.createdAt) - date(messages[i-1].createdAt) > 3_600_000) body.addView(text(time(m.createdAt), 12f, muted).apply { gravity = Gravity.CENTER; padded(this, 8) })
-            val mine = m.from == "customer"
-            val group = column().apply { gravity = if (mine) Gravity.END else Gravity.START }
-            if (!mine && (i == 0 || messages[i-1].from != m.from || messages[i-1].authorName != m.authorName)) group.addView(text(
-                if (m.from == "bot") "${title()} · instant answer" else m.authorName?.takeUnless { it.contains("@") }?.split(" ")?.firstOrNull() ?: "Team", 12f, muted, true))
-            m.attachments.filter { it.contentType?.startsWith("image/") == true }.forEach { a ->
-                val picture = ImageView(context).apply { background = shape(surface, 16); clipToOutline = true; scaleType = ImageView.ScaleType.CENTER_CROP; contentDescription = a.name ?: "Screenshot" }
-                group.addView(picture, LayoutParams(dp(180), dp(240)))
-                scope.launch { try {
-                    val bitmap = withContext(Dispatchers.IO) {
-                        a.url?.let { SupportImages.remote(it) }
-                    }
-                    picture.setImageBitmap(bitmap)
-                } catch (_: Exception) {} }
-            }
-            if (m.text.isNotEmpty()) group.addView(bubble(m.text, mine))
-            body.addView(group, LayoutParams(-1, -2).apply { setMargins(if(mine) dp(48) else 0, dp(4), if(mine) 0 else dp(48), dp(4)) })
-        }
-        pending.filter { it.conversationId == id }.forEach { p ->
-            val group = column().apply { gravity = Gravity.END; alpha = .6f }
-            p.images.forEach { group.addView(image(it), LayoutParams(dp(180), dp(240))) }
-            if (p.text.isNotEmpty()) group.addView(bubble(p.text, true))
-            group.addView(text(if(p.failed) "Not sent · Tap to retry" else "Sending…", 12f, muted).apply { if(p.failed) setOnClickListener { p.failed = false; deliver(p) } })
-            body.addView(group)
-        }
-        if (messages.lastOrNull()?.from == "customer" && pending.none { it.conversationId == id }) body.addView(text("We'll notify you when the team replies.", 12f, muted).apply { gravity = Gravity.CENTER; padded(this, 8) })
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-    }
-    private fun bubble(value: String, mine: Boolean) = text(value, 17f, if (mine) Color.WHITE else ink).apply {
-        background = shape(if(mine) accent else surface, 20); padded(this, 14); setTextIsSelectable(true)
-    }
-    private fun merge(incoming: List<AppReferSupportMessage>) {
-        timeline.merge(incoming); renderMessages()
-    }
-    private fun send() {
-        if (busy || (draft.isBlank() && images.isEmpty())) return
-        val p = SupportPending(if (route == "compose") null else id, draft.trim(), images.toList())
-        pending.add(p); draft = ""; images.clear(); saveDraft(); render(); deliver(p)
-    }
-    private fun deliver(p: SupportPending) {
-        if (p.conversationId == null) busy = true
-        p.failed = false
-        saveDraft(); render()
-        scope.launch {
-            try {
-                // Every attempt uses fresh slots, but keeps the original send identity.
-                val ids = p.images.map { api.upload(it) }
-                if (p.conversationId == null) {
-                    val t = api.start(p.text, ids, p.clientMessageId)
-                    id = t.conversation.id; subject = t.conversation.subject
-                    timeline.reset(); timeline.merge(t.messages)
-                    pending.remove(p); navigate("thread")
-                } else {
-                    val m = api.send(p.conversationId, p.text, ids, p.clientMessageId)
-                    pending.remove(p)
-                    if (route == "thread" && id == p.conversationId) merge(listOf(m))
-                }
-            } catch (e: CancellationException) { p.failed = true; throw e }
-            catch (e: Exception) { p.failed = true; error = e.message }
-            finally { busy = false; if (isAttachedToWindow) { saveDraft(); render() } }
-        }
-    }
-    private fun navigate(next: String) {
-        if (next == "compose") focusedCompose = false
-        if (next == "home" || route == "compose") {
-            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(windowToken, 0)
-        }
-        route = next; error = null; render(); if (visible) startPolling()
-    }
-    fun goBack(): Boolean { if (busy) return true; if(route == "home") return false; draft = ""; images.clear(); navigate("home"); return true }
-    fun pause() { visible = false; polling?.cancel(); polling = null }
-    fun resume() { visible = true; startPolling() }
-    private fun startPolling() {
-        polling?.cancel()
-        polling = scope.launch {
-            do {
-                try {
-                    if (route == "home") { conversations = api.conversations().sortedWith(compareBy<AppReferSupportConversation> { it.status == "closed" }.thenByDescending { it.lastMessageAt }); error = null; render() }
-                    else if (route == "thread") {
-                        val t = api.thread(requireNotNull(id), cursor)
-                        subject = t.conversation.subject; header?.text = subject
-                        val empty = messages.isEmpty()
-                        timeline.merge(t.messages, fromLoad = true)
-                        if (empty) render() else renderMessages()
-                    }
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { error = e.message; if(route == "home") render() else if(route == "thread" && messages.isEmpty()) { body.removeAllViews(); body.addView(text(error ?: "Could not load conversation", 14f, muted)) } }
-                delay(if(route == "thread") 4_000 else 15_000)
-            } while (route != "compose")
-        }
-    }
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); if(!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate); resume() }
     override fun onDetachedFromWindow() { pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
+
+    // MARK: - Dates
+
     private fun date(s: String): Long {
         val normalized = s.replace(Regex("Z$"), "+0000").replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
         return listOf("yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ssZ").firstNotNullOfOrNull { pattern ->
             runCatching { SimpleDateFormat(pattern, Locale.US).parse(normalized)?.time }.getOrNull()
         } ?: 0L
     }
+    private fun clock(s: String): String = date(s).takeIf { it > 0 }?.let { android.text.format.DateFormat.getTimeFormat(context).format(Date(it)) } ?: ""
     /** "Today, 12:35", "Yesterday, 09:10" or "14 Oct, 18:02", like the iOS SDK. */
     private fun time(s: String): String {
         val ms = date(s).takeIf { it > 0 } ?: return ""
@@ -417,4 +1065,53 @@ class AppReferSupportView @JvmOverloads constructor(
             else -> "${android.text.format.DateFormat.getMediumDateFormat(context).format(Date(ms))}, $clock"
         }
     }
+}
+
+/** A round avatar: a person's initial, or an icon, on a diagonal gradient, optionally ringed in white. */
+internal class SupportAvatarView(
+    context: Context, private val colors: IntArray, private val initial: String?, icon: Int?, private val ring: Boolean,
+) : View(context) {
+    private val glyph = icon?.let { context.getDrawable(it)?.mutate()?.apply { setTint(Color.WHITE) } }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xE6FFFFFF.toInt() }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textAlign = Paint.Align.CENTER
+        typeface = if (Build.VERSION.SDK_INT >= 28) Typeface.create(Typeface.DEFAULT, 700, false) else Typeface.DEFAULT_BOLD
+    }
+    init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat(); val r = w / 2
+        fill.shader = LinearGradient(0f, 0f, w, w, colors[0], colors[1], Shader.TileMode.CLAMP)
+        canvas.drawCircle(r, r, r, fill)
+        if (ring) { val sw = resources.displayMetrics.density * 2; stroke.strokeWidth = sw; canvas.drawCircle(r, r, r - sw / 2, stroke) }
+        if (glyph != null) {
+            val s = (w * 0.44f).toInt(); val o = ((w - s) / 2).toInt()
+            glyph.setBounds(o, o, o + s, o + s); glyph.draw(canvas)
+        } else {
+            label.textSize = w * 0.4f
+            canvas.drawText(initial ?: "•", r, r - (label.descent() + label.ascent()) / 2, label)
+        }
+    }
+}
+
+/** The home hero: the accent with three soft radial glows (light, hot and warm neighbours). */
+internal class SupportHeroDrawable(private val p: SupportPalette, private val density: Float) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.isEmpty) return
+        paint.shader = null; paint.color = p.accent; canvas.drawRect(b, paint)
+        glow(canvas, p.light, 1f, .10f, 0f, 380f)
+        glow(canvas, p.hot, 1f, 1f, .2f, 320f)
+        glow(canvas, p.warm, .95f, .6f, 1.05f, 340f)
+    }
+    private fun glow(canvas: Canvas, color: Int, alpha: Float, x: Float, y: Float, radius: Float) {
+        val b = bounds
+        paint.shader = RadialGradient(b.left + b.width() * x, b.top + b.height() * y, radius * density,
+            intArrayOf(supportAlpha(color, alpha), supportAlpha(color, 0f)), null, Shader.TileMode.CLAMP)
+        canvas.drawRect(b, paint)
+    }
+    override fun setAlpha(alpha: Int) {}
+    override fun setColorFilter(colorFilter: ColorFilter?) {}
+    @Deprecated("Drawable API") override fun getOpacity() = PixelFormat.OPAQUE
 }

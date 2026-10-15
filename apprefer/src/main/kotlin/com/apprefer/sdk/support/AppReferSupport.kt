@@ -6,17 +6,28 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.os.Build
 import com.apprefer.sdk.AppRefer
+import com.apprefer.sdk.R
 import com.apprefer.sdk.internal.AppReferStorage
 import kotlinx.coroutines.*
 import java.util.Locale
 
 /** In-app support. Configure AppRefer before opening. Network methods are suspending. */
 object AppReferSupport {
+    /** Hero, bubble and button colour. Text on it turns dark automatically when the colour is bright. */
     var accentColor: Int = Color.rgb(120, 82, 255)
+    /** Line above the greeting. Defaults to "<App name> support". */
     var title: String? = null
-    var replyTimeText: String = "Ask us anything. We usually reply in under an hour."
+    /** How fast the team usually answers, completing "We usually reply in …". */
+    var replyTime: String = "under an hour"
+    /** First names of the people who answer (e.g. `listOf("Jay")`), shown on the help home. */
+    var teamNames: List<String> = emptyList()
+    /** The quick-help tiles on the home screen. Empty hides them. */
+    var topics: List<AppReferSupportTopic> = AppReferSupportTopic.defaults
+    /** The icon on the home screen. Defaults to the app's launcher icon, else its initials. */
+    var appIcon: Drawable? = null
     @Volatile internal var name: String? = null
     @Volatile private var email: String? = null
     @Volatile private var app: Context? = null
@@ -46,6 +57,7 @@ object AppReferSupport {
     internal fun identityChanged() { app?.let { c -> scope.launch { try { api(c).syncIdentity() } catch (_: Exception) {} } } }
     @JvmOverloads fun open(conversationId: String? = null) { app?.let { open(it, conversationId) } }
     @JvmOverloads fun open(context: Context, conversationId: String? = null) { launch(context, conversationId, null) }
+    /** Opens the help home with the message field focused and optionally pre-filled. */
     @JvmOverloads fun compose(prefill: String = "") { app?.let { launch(it, null, prefill) } }
     @JvmOverloads fun compose(context: Context, prefill: String = "") { launch(context, null, prefill) }
     private fun launch(context: Context, id: String?, draft: String?) {
@@ -60,9 +72,38 @@ object AppReferSupport {
         open(data["conversationId"]); return true
     }
     suspend fun unreadCount(): Int = app?.let { api(it).conversations().sumOf { c -> c.unread } } ?: 0
-    internal fun resolvedTitle(context: Context): String = title ?: "${context.applicationInfo.loadLabel(context.packageManager)} support"
+    internal fun appName(context: Context): String = context.applicationInfo.loadLabel(context.packageManager).toString()
+    internal fun resolvedTitle(context: Context): String = title ?: "${appName(context)} support"
+    /** The override, else the launcher icon (null when the app has none, so initials are shown). */
+    internal fun resolvedIcon(context: Context): Drawable? = appIcon ?: runCatching {
+        if (context.applicationInfo.icon == 0) null else context.packageManager.getApplicationIcon(context.applicationInfo)
+    }.getOrNull()
     @Suppress("DEPRECATION") internal fun deviceContext(context: Context): Map<String, Any?> = mapOf(
         "appVersion" to context.packageManager.getPackageInfo(context.packageName, 0).versionName,
         "os" to "Android ${Build.VERSION.RELEASE}", "device" to "${Build.MANUFACTURER} ${Build.MODEL}",
         "locale" to Locale.getDefault().toLanguageTag(), "platform" to "android")
+}
+
+/**
+ * A quick-help tile on the home screen. Tapping it starts a message on that topic (its title becomes
+ * the conversation subject), or runs [action] instead (e.g. your own restore-purchases flow).
+ */
+data class AppReferSupportTopic @JvmOverloads constructor(
+    val title: String,
+    val subtitle: String,
+    /** A drawable resource, tinted with [tint]. */
+    val icon: Int,
+    /** ARGB colour of the icon and the topic chip. */
+    val tint: Int,
+    /** The hint in the message field once the tile is picked. */
+    val prompt: String,
+    val action: (() -> Unit)? = null,
+) {
+    companion object {
+        @JvmField val billing = AppReferSupportTopic("Billing & refunds", "Charges, plans, receipts", R.drawable.apprefer_support_card, 0xFF6E4AFF.toInt(), "What happened with the charge?")
+        @JvmField val restore = AppReferSupportTopic("Restore purchase", "Get your plan back", R.drawable.apprefer_support_restore, 0xFF2E8FFA.toInt(), "Which plan did you buy, and on which account?")
+        @JvmField val bug = AppReferSupportTopic("Report a bug", "Screenshots welcome", R.drawable.apprefer_support_bug, 0xFFF04554.toInt(), "What went wrong? A screenshot helps.")
+        @JvmField val idea = AppReferSupportTopic("Suggest an idea", "We read every one", R.drawable.apprefer_support_idea, 0xFF1FB866.toInt(), "What would make the app better for you?")
+        @JvmStatic val defaults: List<AppReferSupportTopic> get() = listOf(billing, restore, bug, idea)
+    }
 }

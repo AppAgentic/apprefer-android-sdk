@@ -249,7 +249,18 @@ AppRefer.support.open()                      // optional conversationId
 AppRefer.support.identify("María", "maria@example.com")
 AppRefer.support.accentColor = Color.rgb(120, 82, 255)
 AppRefer.support.title = "My app support"     // defaults to application label + " support"
-AppRefer.support.compose("Problem with my subscription")
+AppRefer.support.replyTime = "under an hour"  // completes "We usually reply in …"
+AppRefer.support.teamNames = listOf("Jay")    // first names shown on the help home
+AppRefer.support.appIcon = drawable           // defaults to the launcher icon, else the app's initials
+AppRefer.support.compose("Problem with my subscription") // opens the help home, field pre-filled and focused
+
+// Quick-help tiles (defaults: Billing & refunds, Restore purchase, Report a bug, Suggest an idea).
+// A tile starts a message with its title as the subject, or runs `action` instead. Empty hides them.
+AppRefer.support.topics = listOf(
+    AppReferSupportTopic.billing,
+    AppReferSupportTopic.restore.copy(action = { restorePurchases() }),
+    AppReferSupportTopic("Report a bug", "Screenshots welcome", R.drawable.ic_bug, Color.RED, "What went wrong?"),
+)
 
 // From a coroutine, after obtaining an FCM token:
 AppRefer.support.registerPushToken(token)
@@ -264,6 +275,12 @@ The host owns Firebase Messaging integration and notification permission prompts
 channel `apprefer_support`; post support reply notifications to that channel and pass FCM data
 `{type: "support_reply", conversationId: "…"}` to the click handler. No Firebase dependency is added.
 An explicit `Context` overload is available for `open(context, conversationId)` and `compose(context, prefill)`.
+
+The help home has a coloured hero built from `accentColor` (its text turns dark on a bright accent
+such as yellow), a "Continue" card for the open conversation (unread first, then the newest), the
+quick-help tiles, earlier conversations and a message field pinned to the bottom. Messages start
+right from that field; there is no separate compose screen. Conversations show who is answering
+(team members appear by first name only), group bubbles, and offer quick replies after an answer.
 
 Embed `com.apprefer.sdk.support.AppReferSupportView(context)` in your own layout instead of opening
 the Activity. Wire `onClose`, `onPickImages` (system photo picker, maximum remaining count) and pass

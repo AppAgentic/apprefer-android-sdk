@@ -44,9 +44,14 @@ class MainActivity : AppCompatActivity() {
             deviceIdView.text = "device_id: ${AppRefer.getDeviceId() ?: "—"}"
 
             // QA hook: `adb shell am start -n com.apprefer.sample/.MainActivity --ez open_support true --es api_key pk_test_…`
+            // Optional: `--es compose "text"` (home with the field pre-filled), `--es accent "#FFD60A"`
+            // (bright accents switch hero text to dark), `--es team_names "Jay,Ana"` ("" for none).
             if (intent.getBooleanExtra("open_support", false)) {
                 AppRefer.setUserId("support-sample-demo")
                 AppRefer.support.identify(name = "María López")
+                AppRefer.support.teamNames = (intent.getStringExtra("team_names") ?: "Jay,Ana")
+                    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                intent.getStringExtra("accent")?.let { runCatching { AppRefer.support.accentColor = android.graphics.Color.parseColor(it) } }
                 val draft = intent.getStringExtra("compose")
                 if (draft != null) AppRefer.support.compose(this@MainActivity, draft) else AppRefer.support.open(this@MainActivity)
             }

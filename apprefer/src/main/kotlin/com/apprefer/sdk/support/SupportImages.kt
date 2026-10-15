@@ -18,6 +18,8 @@ internal object SupportImages {
         return sample
     }
     private val cache = SupportImageCache<Bitmap>(24 * 1024 * 1024) { it.byteCount }
+    /** A screenshot already decoded, so a re-render can paint it without a flash. */
+    fun cached(url: String): Bitmap? = cache.get(url)
     // Serialize cache misses so simultaneous re-renders share the decoded image.
     @Synchronized fun remote(url: String): Bitmap {
         cache.get(url)?.let { return it }

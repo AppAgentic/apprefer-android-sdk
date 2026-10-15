@@ -77,7 +77,9 @@ internal class SupportAPI(
     }; Unit }
     suspend fun conversations(): List<AppReferSupportConversation> = call("GET", "/conversations").objects("conversations").map { AppReferSupportConversation(it) }
     suspend fun thread(id: String, after: String? = null): SupportThread = SupportThread(call("GET", "/conversations/${escape(id)}" + (after?.let { "?after=${escape(it)}" } ?: "")))
-    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString()): SupportThread = SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context())))
+    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null): SupportThread =
+        SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
+            (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap())))
     suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString()): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId)).obj("message"))
     suspend fun register(token: String) { call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")) }
     suspend fun remove(token: String) { call("DELETE", "/push-token", mapOf("token" to token)) }
