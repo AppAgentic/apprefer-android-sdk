@@ -1,3 +1,9 @@
+## 0.7.0 - 2026-10-16
+
+- Version alignment with iOS 0.7.0 and its SKAdNetwork / AdAttributionKit conversion values.
+- New `AppRefer.updateConversionValue()` for API parity: iOS-only, a no-op on Android.
+- README: iOS Info.plist keys to receive postback copies (`NSAdvertisingAttributionReportEndpoint`, `AdAttributionKit.AttributionCopyEndpoint`).
+
 ## 0.6.0
 
 - Split tracking and first-party requests by current consent, including billing; known consent never falls back across hosts. Support remains on apprefer.com.

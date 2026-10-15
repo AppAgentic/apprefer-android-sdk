@@ -37,6 +37,10 @@ import kotlinx.coroutines.withContext
  * ```
  */
 object AppRefer {
+    /** iOS-only SKAdNetwork / AdAttributionKit conversion values. No-op on Android. */
+    @JvmStatic
+    fun updateConversionValue() = Unit
+
     val support: com.apprefer.sdk.support.AppReferSupport get() = com.apprefer.sdk.support.AppReferSupport
 
     // One global singleton-ish state, protected for concurrent access.
