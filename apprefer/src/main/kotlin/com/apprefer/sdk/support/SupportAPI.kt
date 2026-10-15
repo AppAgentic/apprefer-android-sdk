@@ -75,8 +75,16 @@ internal class SupportAPI(
             store.token = null; store.profile = null; session()
         }
     }; Unit }
-    suspend fun conversations(): List<AppReferSupportConversation> = call("GET", "/conversations").objects("conversations").map { AppReferSupportConversation(it) }
-    suspend fun thread(id: String, after: String? = null): SupportThread = SupportThread(call("GET", "/conversations/${escape(id)}" + (after?.let { "?after=${escape(it)}" } ?: "")))
+    /** The app's AI assistant, from the latest list or conversation read (null when the app has none). */
+    @Volatile var persona: AppReferSupportPersona? = null
+        private set
+    suspend fun conversations(): List<AppReferSupportConversation> {
+        val list = call("GET", "/conversations")
+        persona = AppReferSupportPersona.from(list)
+        return list.objects("conversations").map { AppReferSupportConversation(it) }
+    }
+    suspend fun thread(id: String, after: String? = null): SupportThread =
+        SupportThread(call("GET", "/conversations/${escape(id)}" + (after?.let { "?after=${escape(it)}" } ?: ""))).also { persona = it.persona }
     suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null): SupportThread =
         SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
             (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap())))
@@ -105,10 +113,34 @@ data class AppReferSupportConversation(val id: String, val subject: String, val 
     internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["subject"] as? String ?: "Conversation", m["status"].toString(), m["preview"] as? String ?: "", m["lastMessageAt"] as? String ?: "", m["lastFrom"].toString(), (m["unread"] as? Number)?.toInt() ?: 0)
 }
 data class AppReferSupportAttachment(val url: String?, val name: String?, val contentType: String?, val size: Long?)
-data class AppReferSupportMessage(val id: String, val from: String, val authorName: String?, val text: String, val createdAt: String, val attachments: List<AppReferSupportAttachment>) {
-    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) })
+data class AppReferSupportMessage @JvmOverloads constructor(
+    val id: String, val from: String,
+    /** A team member's first name, or the AI assistant's name on "bot" messages. */
+    val authorName: String?, val text: String, val createdAt: String, val attachments: List<AppReferSupportAttachment>,
+    /** The AI assistant's note that it passed the conversation to a person. */
+    val handoff: Boolean? = null,
+) {
+    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean)
+    val isHandoff: Boolean get() = handoff == true
+}
+/** The app's AI support assistant, set in AppRefer. Every message from it is tagged "AI". */
+data class AppReferSupportPersona(
+    val name: String,
+    val avatarUrl: String?,
+    /** Who it passes conversations to ("Jay"); null means the team. */
+    val handoffTo: String?,
+) {
+    internal companion object {
+        /** The response's `persona`; null when it is null, missing (older servers) or has no name. */
+        fun from(response: Map<String, Any?>): AppReferSupportPersona? {
+            val m = response["persona"] as? Map<*, *> ?: return null
+            val name = (m["name"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return AppReferSupportPersona(name, (m["avatarUrl"] as? String)?.takeIf { it.startsWith("https://") }, (m["handoffTo"] as? String)?.trim()?.takeIf { it.isNotEmpty() })
+        }
+    }
 }
 internal class SupportThread(m: Map<String, Any?>) {
     val conversation = AppReferSupportConversation(m.obj("conversation"))
     val messages = m.objects("messages").map { AppReferSupportMessage(it) }
+    val persona = AppReferSupportPersona.from(m)
 }

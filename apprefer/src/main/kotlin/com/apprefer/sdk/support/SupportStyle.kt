@@ -91,12 +91,24 @@ internal object SupportText {
 
     fun greeting(name: String?): String = firstName(name)?.let { "Hi $it 👋" } ?: "Hi there 👋"
 
-    fun presence(teamNames: List<String>, replyTime: String): String {
-        val names = teamNames.take(3)
-        val first = names.firstOrNull() ?: return "We usually reply in $replyTime"
+    fun presence(teamNames: List<String>, replyTime: String, persona: String? = null): String {
+        val first = teamNames.firstOrNull()
+        if (persona != null) {
+            return if (first == null) "$persona replies instantly · the team in $replyTime"
+            else "$persona replies instantly · $first and the team in $replyTime"
+        }
+        first ?: return "We usually reply in $replyTime"
         return if (teamNames.size == 1) "$first · usually replies in $replyTime" else "$first and the team · usually $replyTime"
     }
+
+    /** The home field's hint: the picked topic's question, else the AI assistant's name. */
+    fun homeHint(topicPrompt: String?, persona: String?): String = topicPrompt ?: persona?.let { "Message $it…" } ?: "Ask us anything…"
+
+    fun handoff(to: String?, replyTime: String): String = "Passed to ${to ?: "the team"} · usually replies in $replyTime"
 }
+
+/** Quick-reply chips follow an answer, but not a hand-over: the customer is waiting for a person, not done. */
+internal fun supportOffersQuickReplies(last: AppReferSupportMessage?): Boolean = last != null && last.from != "customer" && !last.isHandoff
 
 /** The home screen's conversation sections. */
 internal class SupportHomeSections(conversations: List<AppReferSupportConversation>) {

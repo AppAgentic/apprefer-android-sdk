@@ -9,6 +9,8 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
+import android.graphics.Matrix
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -182,8 +184,13 @@ class AppReferSupportView @JvmOverloads constructor(
     private lateinit var scrim: View
     private var hero: View? = null
     private var header: View? = null
-    private var headerTitle: TextView? = null
+    private var headerLabels: FrameLayout? = null
     private var headerAvatar: FrameLayout? = null
+    private var headerKey: String? = null
+    private var presenceHolder: FrameLayout? = null
+    /** The AI assistant the screen currently shows. */
+    private var shownPersona: AppReferSupportPersona? = null
+    private val failedPortraits = mutableSetOf<String>()
     private var shownQuickReplies: Boolean? = null
     private var renderedCount = -1
     private var lastStatusDark: Boolean? = null
@@ -234,9 +241,29 @@ class AppReferSupportView @JvmOverloads constructor(
         isClickable = true; isFocusable = true; setOnClickListener { action() }
         layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
     }
-    private fun avatar(name: String?, size: Number, colors: IntArray, icon: Int? = null, ring: Boolean = false) =
-        SupportAvatarView(context, colors, name?.let { SupportText.initial(it) }, icon, ring).apply { layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)) }
+    private fun avatar(name: String?, size: Number, colors: IntArray, icon: Int? = null, ring: Boolean = false, imageUrl: String? = null) =
+        SupportAvatarView(context, colors, name?.let { SupportText.initial(it) }, icon, ring).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+            imageUrl?.let { url -> portrait(url) { image = it } }
+        }
     private val agentColors get() = intArrayOf(p.warm, p.hot)
+    /** Uses the shared image cache; a portrait that can't load isn't tried again by this view. */
+    private fun portrait(url: String, show: (Bitmap) -> Unit) {
+        SupportImages.cached(url)?.let { show(it); return }
+        if (url in failedPortraits) return
+        scope.launch {
+            try { show(withContext(Dispatchers.IO) { SupportImages.remote(url) }) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { failedPortraits.add(url) }
+        }
+    }
+    /** The persona as last read from AppRefer (shared by every help screen). */
+    private val persona get() = api.persona
+    /** The small "AI" tag on everything the AI assistant says. */
+    private fun aiTag() = text("AI", 10f, p.accent, 900).apply {
+        letterSpacing = 0.04f; setPadding(dp(6), dp(2), dp(6), dp(2))
+        background = rounded(supportAlpha(p.accent, .12f), 6); contentDescription = "AI assistant"
+    }
     private fun badge(count: Int) = text("$count", 12f, p.onAccent, 700).apply {
         background = rounded(p.accent, 99); setPadding(dp(8), dp(3), dp(8), dp(3)); contentDescription = "$count unread"
     }
@@ -263,7 +290,8 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private fun render() {
         p = SupportPalette(AppReferSupport.accentColor)
-        removeAllViews(); hero = null; header = null; headerTitle = null; headerAvatar = null; shownQuickReplies = null; renderedCount = -1; lastStatusDark = null
+        removeAllViews(); hero = null; header = null; headerLabels = null; headerAvatar = null; headerKey = null; presenceHolder = null; shownQuickReplies = null; renderedCount = -1; lastStatusDark = null
+        shownPersona = persona
         if (route == "home") buildHome() else buildThread()
         applyInsets(insetL, insetT, insetR, insetB)
         updateChrome()
@@ -279,7 +307,7 @@ class AppReferSupportView @JvmOverloads constructor(
         addView(scroll, LayoutParams(-1, -1))
         scrim = View(context).apply { setBackgroundColor(backgroundColor); alpha = 0f }
         addView(scrim, LayoutParams(-1, 0, Gravity.TOP))
-        composerBox = buildComposer(topic?.prompt ?: "Ask us anything…", R.drawable.apprefer_support_camera) { startConversation() }
+        composerBox = buildComposer(SupportText.homeHint(topic?.prompt, persona?.name), R.drawable.apprefer_support_camera) { startConversation() }
         addView(composerBox, LayoutParams(-1, -2, Gravity.BOTTOM))
         composerBox.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
             if (bottom - top != oldBottom - oldTop) post { if (route == "home") body.setPadding(dp(16), 0, dp(16), max(dp(140), composerBox.height + dp(16))) }
@@ -301,8 +329,18 @@ class AppReferSupportView @JvmOverloads constructor(
             if (Build.VERSION.SDK_INT >= 26) setAutoSizeTextTypeUniformWithConfiguration(22, 38, 1, TypedValue.COMPLEX_UNIT_SP) else ellipsize = TextUtils.TruncateAt.END
         }, lp(top = dp(4)))
         box.addView(text("How can we help today?", 19f, supportAlpha(p.onAccent, .92f), 500), lp(top = dp(6)))
-        box.addView(presence(), lp(-2, top = dp(18)))
+        presenceHolder = FrameLayout(context).apply { clipChildren = false; addView(presence()) }.also { box.addView(it, lp(-2, top = dp(18))) }
         return box
+    }
+
+    /** A new or changed AI assistant from the latest read: refresh what shows it, keeping the field and scroll. */
+    private fun personaChanged() {
+        if (persona == shownPersona) return
+        shownPersona = persona
+        if (route == "home") {
+            presenceHolder?.apply { removeAllViews(); addView(presence()) }
+            renderHomeContent(); renderAccessories()
+        } else renderMessages()
     }
 
     private fun appIconView(): View {
@@ -337,22 +375,25 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun presence(): View {
-        val names = AppReferSupport.teamNames.take(3)
+        val persona = persona
+        val names = AppReferSupport.teamNames.take(if (persona == null) 3 else 2)
         val pill = row().apply {
             setPadding(dp(8), dp(7), dp(14), dp(7))
             background = rounded(supportAlpha(Color.BLACK, if (p.onAccentIsDark) .06f else .16f), 22, supportAlpha(p.onAccent, .3f))
         }
+        // The AI assistant first (with its portrait), then the team.
+        val faces = mutableListOf<View>()
+        persona?.let { faces.add(avatar(it.name, 28, agentColors, ring = true, imageUrl = it.avatarUrl)) }
+        names.forEachIndexed { i, n -> faces.add(avatar(n, 28, avatarColors(i), ring = true)) }
+        if (faces.isEmpty()) faces.add(avatar(null, 28, agentColors, R.drawable.apprefer_support_bubble, ring = true))
         val stack = FrameLayout(context)
-        val count = max(1, names.size)
-        // Added last-first so the first person sits on top, like the iOS pill.
-        for (i in count - 1 downTo 0) {
-            val face = if (names.isEmpty()) avatar(null, 28, agentColors, R.drawable.apprefer_support_bubble, ring = true)
-            else avatar(names[i], 28, avatarColors(i), ring = true)
-            stack.addView(face, FrameLayout.LayoutParams(dp(28), dp(28)).apply { leftMargin = dp(20) * i })
-        }
+        val count = faces.size
+        // Added last-first so the first face sits on top, like the iOS pill.
+        for (i in count - 1 downTo 0) stack.addView(faces[i], FrameLayout.LayoutParams(dp(28), dp(28)).apply { leftMargin = dp(20) * i })
         pill.addView(stack, lp(dp(28) + dp(20) * (count - 1), dp(28)))
-        pill.addView(text(SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime), 14f, p.onAccent, 500).apply { maxLines = 2 }, lp(-2, start = dp(10)))
-        pill.contentDescription = SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime)
+        val line = SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime, persona?.name)
+        pill.addView(text(line, 14f, p.onAccent, 500).apply { maxLines = 2 }, lp(-2, start = dp(10)))
+        pill.contentDescription = line
         return pill
     }
 
@@ -382,7 +423,9 @@ class AppReferSupportView @JvmOverloads constructor(
         card.addView(label("Continue"))
         val line = row()
         val agent = SupportText.firstName(AppReferSupport.teamNames.firstOrNull())
-        line.addView(avatar(agent, 46, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null))
+        val persona = persona
+        line.addView(if (conversation.lastFrom == "bot" && persona != null) avatar(persona.name, 46, agentColors, imageUrl = persona.avatarUrl)
+            else avatar(agent, 46, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null))
         val labels = column()
         labels.addView(text(conversation.subject, 16f, c.ink, 600, 1))
         labels.addView(text(if (conversation.lastFrom == "customer") "You: ${conversation.preview}" else conversation.preview, 14f, c.muted, lines = 1), lp(top = dp(3)))
@@ -471,23 +514,35 @@ class AppReferSupportView @JvmOverloads constructor(
         shadow(bar, 8, .14f)
         bar.addView(circleButton(R.drawable.apprefer_support_back, "Back", 42, 18, p.accent, oval(supportAlpha(c.ink, .05f))) { goBack() })
         headerAvatar = FrameLayout(context).also { bar.addView(it, lp(dp(42), dp(42), start = dp(10))) }
-        val labels = column()
-        headerTitle = text("", 16f, c.ink, 700, 1).also { labels.addView(it) }
-        labels.addView(text("Usually replies in ${AppReferSupport.replyTime}", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
-        bar.addView(labels, lp(0, weight = 1f, start = dp(10)))
+        headerLabels = FrameLayout(context).also { bar.addView(it, lp(0, weight = 1f, start = dp(10))) }
         return bar
     }
 
-    /** The person answering: the newest team reply's author. */
+    /**
+     * The person answering: the newest team reply's author. Until someone on the team has replied,
+     * the AI assistant (when the app has one) is who's answering.
+     */
     private fun updateHeader() {
         val agent = messages.lastOrNull { it.from == "team" && SupportText.firstName(it.authorName) != null }?.let { SupportText.firstName(it.authorName) }
-        val name = agent ?: "${appName()} team"
-        if (headerTitle?.text?.toString() == name) return
-        headerTitle?.text = name
-        headerAvatar?.apply {
-            removeAllViews()
-            addView(avatar(agent, 42, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null), FrameLayout.LayoutParams(-1, -1))
+        val persona = persona.takeIf { agent == null }
+        val key = "$agent|$persona"
+        if (headerKey == key) return
+        headerKey = key
+        val labels = column()
+        val face = if (persona != null) {
+            labels.addView(row().apply {
+                addView(text(persona.name, 16f, c.ink, 700, 1), lp(-2))
+                addView(aiTag(), lp(-2, start = dp(6)))
+            }, lp(-2))
+            labels.addView(text("${appName()} team · replies instantly", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
+            avatar(persona.name, 42, agentColors, imageUrl = persona.avatarUrl)
+        } else {
+            labels.addView(text(agent ?: "${appName()} team", 16f, c.ink, 700, 1))
+            labels.addView(text("Usually replies in ${AppReferSupport.replyTime}", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
+            avatar(agent, 42, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null)
         }
+        headerAvatar?.apply { removeAllViews(); addView(face, FrameLayout.LayoutParams(-1, -1)) }
+        headerLabels?.apply { removeAllViews(); addView(labels, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER_VERTICAL)) }
     }
 
     private fun showsTime(i: Int): Boolean {
@@ -517,6 +572,7 @@ class AppReferSupportView @JvmOverloads constructor(
             val last = i == messages.size - 1 || !sameSide(i, i + 1) || showsTime(i + 1)
             val view = when {
                 m.from == "customer" -> customerBubble(m, last)
+                m.from == "bot" && SupportText.firstName(m.authorName) != null -> personaMessage(m, requireNotNull(SupportText.firstName(m.authorName)), last)
                 m.from == "bot" -> botCard(m)
                 else -> teamBubble(m, last)
             }
@@ -608,6 +664,41 @@ class AppReferSupportView @JvmOverloads constructor(
         return line
     }
 
+    /** A message from the AI assistant: its portrait, name and "AI" tag, then the text; a hand-over adds who has it now. */
+    private fun personaMessage(m: AppReferSupportMessage, name: String, last: Boolean): View {
+        val persona = persona
+        val showAvatar = last || m.isHandoff
+        val line = row().apply { gravity = Gravity.BOTTOM; setPadding(0, 0, dp(40), 0) }
+        if (showAvatar) line.addView(avatar(name, 30, agentColors, imageUrl = persona?.takeIf { it.name == name }?.avatarUrl))
+        else line.addView(Space(context), lp(dp(30), dp(30)))
+        val bubble = column().apply {
+            setPadding(dp(15), dp(10), dp(15), dp(12))
+            background = GradientDrawable().apply { setColor(c.card); cornerRadii = corners(22, 22, 22, if (showAvatar) 6 else 22) }
+        }
+        shadow(bubble, 2, .06f)
+        bubble.addView(row().apply {
+            addView(text(name, 13f, c.ink, 700, 1), lp(-2))
+            addView(aiTag(), lp(-2, start = dp(6)))
+        }, lp(-2))
+        bubble.addView(text(m.text, 16f, c.ink).apply { setLineSpacing(dpf(2), 1f); setTextIsSelectable(true) }, lp(-2, top = dp(4)))
+        line.addView(bubble, lp(-2, start = dp(8)))
+        if (!m.isHandoff) return line
+        val box = column()
+        box.addView(line, lp())
+        box.addView(handoffPill(persona?.handoffTo), lp(top = dp(10)))
+        return box
+    }
+
+    /** Under the hand-over: who has the conversation now. */
+    private fun handoffPill(to: String?): View {
+        val pill = row().apply {
+            setPadding(dp(5), dp(5), dp(12), dp(5)); background = rounded(c.card, 99, supportAlpha(c.muted, .18f))
+        }
+        pill.addView(avatar(to, 22, agentColors, if (to == null) R.drawable.apprefer_support_people else null))
+        pill.addView(text(SupportText.handoff(to, AppReferSupport.replyTime), 12.5f, c.muted, 600, 2), lp(-2, start = dp(8)))
+        return FrameLayout(context).apply { addView(pill, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL)) }
+    }
+
     private fun pendingBubble(pend: SupportPending): View {
         val box = column().apply { gravity = Gravity.END; setPadding(dp(60), 0, 0, 0) }
         if (pend.images.isNotEmpty()) {
@@ -679,7 +770,7 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private val showsQuickReplies get() = route == "thread" && threadLoaded && pendingHere.isEmpty() && draft.isEmpty() && images.isEmpty() &&
-        messages.lastOrNull()?.let { it.from != "customer" } == true
+        supportOffersQuickReplies(messages.lastOrNull())
 
     private fun refreshQuickReplies() { if (shownQuickReplies != showsQuickReplies) renderAccessories() }
 
@@ -697,7 +788,7 @@ class AppReferSupportView @JvmOverloads constructor(
         shownQuickReplies = showsQuickReplies
         if (shownQuickReplies == true) add(quickReplies(), -1)
         if (images.isNotEmpty()) add(attachmentStrip(), -1)
-        field.hint = if (route == "home") topic?.prompt ?: "Ask us anything…" else "Message"
+        field.hint = if (route == "home") SupportText.homeHint(topic?.prompt, persona?.name) else "Message"
     }
 
     private fun View.withMargins(h: Int): View = FrameLayout(context).also { holder ->
@@ -910,6 +1001,7 @@ class AppReferSupportView @JvmOverloads constructor(
                         if (route == "home" && (list != conversations || !homeLoaded || loadError != null)) {
                             conversations = list; homeLoaded = true; loadError = null; renderHomeContent()
                         }
+                        if (route == "home") personaChanged()
                     } else if (conversation != null) {
                         val t = api.thread(conversation, cursor)
                         if (route == "thread" && id == conversation) {
@@ -917,6 +1009,7 @@ class AppReferSupportView @JvmOverloads constructor(
                             val before = messages.size; val first = !threadLoaded || loadError != null
                             timeline.merge(t.messages, fromLoad = true); threadLoaded = true; loadError = null
                             if (first || messages.size != before) renderMessages()
+                            personaChanged()
                         }
                     }
                 } catch (e: CancellationException) { throw e }
@@ -1098,12 +1191,26 @@ internal class SupportAvatarView(
         color = Color.WHITE; textAlign = Paint.Align.CENTER
         typeface = if (Build.VERSION.SDK_INT >= 28) Typeface.create(Typeface.DEFAULT, 700, false) else Typeface.DEFAULT_BOLD
     }
+    private val photo = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    /** A portrait (the AI assistant's); the initial shows until it loads, or if it can't. */
+    var image: Bitmap? = null
+        set(value) { field = value; invalidate() }
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat(); val r = w / 2
         fill.shader = LinearGradient(0f, 0f, w, w, colors[0], colors[1], Shader.TileMode.CLAMP)
         canvas.drawCircle(r, r, r, fill)
+        val picture = image
+        if (picture != null && picture.width > 0 && picture.height > 0) {
+            // Centre-crop the portrait into the circle.
+            val scale = max(w / picture.width, w / picture.height)
+            photo.shader = BitmapShader(picture, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate((w - picture.width * scale) / 2, (w - picture.height * scale) / 2) })
+            }
+            canvas.drawCircle(r, r, r, photo)
+        }
         if (ring) { val sw = resources.displayMetrics.density * 2; stroke.strokeWidth = sw; canvas.drawCircle(r, r, r - sw / 2, stroke) }
+        if (picture != null) return
         if (glyph != null) {
             val s = (w * 0.44f).toInt(); val o = ((w - s) / 2).toInt()
             glyph.setBounds(o, o, o + s, o + s); glyph.draw(canvas)
