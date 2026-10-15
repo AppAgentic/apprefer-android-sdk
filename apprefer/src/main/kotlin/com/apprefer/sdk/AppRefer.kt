@@ -42,6 +42,59 @@ object AppRefer {
     // One global singleton-ish state, protected for concurrent access.
     @Volatile private var state: SdkState? = null
     private val initMutex = Mutex()
+    private val consentReporter = com.apprefer.sdk.internal.ConsentReporter()
+    private var pendingConsentSet = false
+    private var pendingConsent: String? = null
+
+    /** Persist the Android app's choice. Null restores legacy behaviour. May precede configure. */
+    @JvmStatic
+    fun setTrackingConsent(granted: Boolean?) {
+        synchronized(this) {
+            pendingConsentSet = true
+            pendingConsent = TrackingConsent.mapped(granted)
+            state?.storage?.setTrackingConsent(pendingConsent)
+        }
+        trackingConsentDidChange()
+    }
+
+    /** Retry a changed consent independently of first-open attribution. */
+    @JvmStatic
+    fun trackingConsentDidChange() {
+        scope.launch { safelyRun { state?.let { reportConsent(it) } } }
+    }
+
+    internal fun currentTrackingConsent(context: Context? = null): String? = synchronized(this) {
+        if (state != null) state!!.storage.getTrackingConsent()
+        else if (pendingConsentSet) pendingConsent
+        else context?.let { AppReferStorage(it).getTrackingConsent() }
+    }
+
+    private suspend fun reportConsent(s: SdkState) {
+        consentReporter.report(
+            current = { s.storage.getTrackingConsent() },
+            reported = { s.storage.getReportedConsent() },
+            send = { consent ->
+                val deviceId = s.deviceIdManager.getOrCreate()
+                if (deviceId == null) null else {
+                    val body = linkedMapOf<String, Any?>(
+                        "device_id" to deviceId, "tracking_consent" to consent,
+                        "device_info" to s.deviceInfo.collect(), "sdk_version" to APPREFER_SDK_VERSION,
+                    )
+                    s.storage.getUserId()?.let { body["customer_user_id"] = it }
+                    s.http.post("/api/track/configure", body, consent, true)
+                }
+            },
+            refresh = { response ->
+                @Suppress("UNCHECKED_CAST")
+                val attr = response["attribution"] as? Map<String, Any?>
+                val attribution = attr?.let { JsonCodec.parseAttribution(it) }
+                if (attribution != null) s.storage.setAttributionCache(JsonCodec.encodeAttribution(attribution))
+                else s.storage.clearAttributionCache()
+            },
+            save = { s.storage.setReportedConsent(it) },
+        )
+    }
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /** Internal bundle of everything wired up during `configure()`. */
@@ -65,7 +118,7 @@ object AppRefer {
      *
      * On first launch: sends device signals + Install Referrer to backend,
      * resolves attribution, caches locally, returns result.
-     * On subsequent launches: returns cached attribution (no network call).
+     * On subsequent launches: reports changed consent, then returns cached attribution.
      */
     suspend fun configure(
         context: Context,
@@ -82,6 +135,8 @@ object AppRefer {
 
         // Record first run date
         safelyRun { s.storage.getFirstRunDate() }
+
+        if (s.storage.isMatchRequestAttempted() || !s.storage.isSdkEnabled()) reportConsent(s)
 
         if (!s.storage.isSdkEnabled()) {
             s.logger.info("SDK disabled by kill switch")
@@ -200,6 +255,7 @@ object AppRefer {
             }
             if (!s.storage.isSdkEnabled()) return@safelyRun
 
+            if (!TrackingConsent.allowed(s.storage.getTrackingConsent())) return@safelyRun
             val hashed = LinkedHashMap<String, String>()
             if (email != null) safelyRun { hashed["em"] = Hashing.hashEmail(email) }
             if (phone != null) safelyRun { hashed["ph"] = Hashing.hashPhone(phone) }
@@ -337,7 +393,7 @@ object AppRefer {
         val appCtx = context.applicationContext
         val logger = Logger(debug = debug, logLevel = logLevel)
         val storage = AppReferStorage(appCtx)
-        val http = HttpClient(apiKey = apiKey, logger = logger)
+        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() })
         val deviceIdManager = DeviceIdManager(appCtx, storage, logger)
         val deviceInfo = DeviceInfo(appCtx, logger)
         val installReferrer = InstallReferrerCollector(appCtx, logger)
@@ -355,7 +411,19 @@ object AppRefer {
             appContext = appCtx,
         )
         com.apprefer.sdk.support.AppReferSupport.configure(appCtx)
-        state = s
+        synchronized(this) {
+            if (pendingConsentSet) storage.setTrackingConsent(pendingConsent)
+            state = s
+        }
+        (appCtx as? android.app.Application)?.registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: android.app.Activity) { trackingConsentDidChange() }
+            override fun onActivityCreated(activity: android.app.Activity, bundle: android.os.Bundle?) {}
+            override fun onActivityStarted(activity: android.app.Activity) {}
+            override fun onActivityPaused(activity: android.app.Activity) {}
+            override fun onActivityStopped(activity: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, bundle: android.os.Bundle) {}
+            override fun onActivityDestroyed(activity: android.app.Activity) {}
+        })
         s
     }
 
@@ -365,11 +433,12 @@ object AppRefer {
     }
 
     private suspend fun resolveAttribution(s: SdkState): Attribution? = coroutineScope {
+        val consent = s.storage.getTrackingConsent()
         // Fan out the slow calls in parallel. Matches iOS/Flutter behavior.
         val deviceIdJob = async { safely<String?>(null) { s.deviceIdManager.getOrCreate() } }
         val deviceInfoJob = async { safely(mapOf<String, Any?>("platform" to "android")) { s.deviceInfo.collect() } }
         val referrerJob = async { safely(null) { s.installReferrer.collect() } }
-        val gaidJob = async { safely(null) { GaidCollector.getGaid(s.appContext, s.logger) } }
+        val gaidJob = async { if (TrackingConsent.allowed(consent)) safely(null) { GaidCollector.getGaid(s.appContext, s.logger) } else null }
 
         val results = awaitAll(deviceIdJob, deviceInfoJob, referrerJob, gaidJob)
         val deviceId = results[0] as String? ?: run {
@@ -393,7 +462,8 @@ object AppRefer {
             put("sdk_version", APPREFER_SDK_VERSION)
             put("is_debug", s.debug)
             // Android-specific fields — match Flutter plugin body shape:
-            put("gaid", gaid)
+            if (TrackingConsent.allowed(consent)) put("gaid", gaid)
+            if (consent != null) put("tracking_consent", consent)
             put("install_referrer", referrer?.installReferrer)
             put("ar_click_id", arClickId)
             put("referrer_click_ts", referrer?.referrerClickTimestampSeconds)
@@ -409,7 +479,7 @@ object AppRefer {
         }
 
         s.logger.info("Sending configure request...")
-        val response = withContext(Dispatchers.IO) { s.http.post("/api/track/configure", body) }
+        val response = withContext(Dispatchers.IO) { s.http.post("/api/track/configure", body, consent, true) }
 
         if (response == null) {
             // Do NOT set matchRequestAttempted so next launch retries — matches Flutter
@@ -418,6 +488,7 @@ object AppRefer {
             return@coroutineScope null
         }
 
+        if (consent != null) s.storage.setReportedConsent(consent)
         val sdkEnabled = (response["sdkEnabled"] as? Boolean) ?: true
         s.storage.setSdkEnabled(sdkEnabled)
         if (!sdkEnabled) {

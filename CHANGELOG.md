@@ -1,3 +1,10 @@
+## 0.6.0
+
+- Split tracking and first-party requests by current consent, including billing; known consent never falls back across hosts. Support remains on apprefer.com.
+- Add public setTrackingConsent and trackingConsentDidChange, persisted Android choices, automatic activation checks and retryable consent configure reports after first-open matching.
+- Read iOS ATT without prompting; gate IDFA/GAID and drop advanced matching locally without consent.
+- iOS apps declare only trk.apprefer.com in NSPrivacyTrackingDomains and call trackingConsentDidChange() after their own ATT prompt. Android apps use setTrackingConsent(true/false), or null for legacy routing.
+
 ## [0.5.0] - 2026-10-15
 
 - AI personas: approved name and portrait, explicit AI tag, and a hand-over pill when a person is needed.

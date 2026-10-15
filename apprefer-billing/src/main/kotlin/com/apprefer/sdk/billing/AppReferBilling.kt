@@ -134,7 +134,7 @@ object AppReferBilling {
             val storage = BillingStorage.live(appContext)
             val play = LivePlayBillingGateway(appContext, logger)
             created = BillingEngine(
-                api = BillingApiClient.live { apiKey ?: AppReferInternal.apiKey() },
+                api = BillingApiClient.live(appContext) { apiKey ?: AppReferInternal.apiKey() },
                 storage = storage,
                 queue = PendingPurchaseQueue(java.io.File(storage.directory, "pending_purchases.json")),
                 rejected = RejectedPurchaseLog(java.io.File(storage.directory, "rejected_purchases.json")),

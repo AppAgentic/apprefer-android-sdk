@@ -1,5 +1,6 @@
 package com.apprefer.sdk.internal
 
+import com.apprefer.sdk.TrackingConsent
 import com.apprefer.sdk.APPREFER_SDK_VERSION
 import com.apprefer.sdk.AppReferConfig
 import kotlinx.coroutines.Dispatchers
@@ -25,17 +26,22 @@ internal class HttpClient(
     private val logger: Logger,
     private val primaryBaseUrl: String = AppReferConfig.TRACKING_URL,
     private val fallbackBaseUrl: String? = AppReferConfig.FALLBACK_URL,
+    private val consentProvider: () -> String? = { null },
+    private val transport: (suspend (String, String, ByteArray) -> Map<String, Any?>?)? = null,
 ) {
 
     /**
      * POST [body] to [path], return decoded JSON object or null on total failure.
      */
-    suspend fun post(path: String, body: Map<String, Any?>): Map<String, Any?>? = withContext(Dispatchers.IO) {
+    suspend fun post(path: String, body: Map<String, Any?>, consent: String? = null, consentSnapshot: Boolean = false): Map<String, Any?>? = withContext(Dispatchers.IO) {
+        val current = if (consentSnapshot) consent else consentProvider()
+        if (body["event_name"] == "_advanced_matching" && !TrackingConsent.allowed(current)) return@withContext null
+        val hosts = TrackingConsent.hosts(current, listOfNotNull(primaryBaseUrl, fallbackBaseUrl))
         val payload = JsonCodec.encode(body).toByteArray(StandardCharsets.UTF_8)
 
-        performPost(primaryBaseUrl, path, payload)?.let { return@withContext it }
+        performPost(hosts.first(), path, payload)?.let { return@withContext it }
 
-        val fb = fallbackBaseUrl
+        val fb = hosts.getOrNull(1)
         if (!fb.isNullOrBlank() && fb != primaryBaseUrl) {
             logger.info("Primary URL failed, retrying on fallback: $fb$path")
             performPost(fb, path, payload)?.let { return@withContext it }
@@ -46,6 +52,7 @@ internal class HttpClient(
     }
 
     private suspend fun performPost(baseUrl: String, path: String, body: ByteArray): Map<String, Any?>? {
+        transport?.let { return it(baseUrl, path, body) }
         val urlString = "$baseUrl$path"
         val url = try { URL(urlString) } catch (e: Exception) {
             logger.error("Invalid URL: $urlString", e); return null

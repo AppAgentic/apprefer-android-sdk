@@ -17,6 +17,18 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
     private val prefs: SharedPreferences = context.applicationContext
         .getSharedPreferences(AppReferConfig.PREFS_NAME, Context.MODE_PRIVATE)
 
+    fun getTrackingConsent(): String? = prefs.getString("apprefer_tracking_consent", null)
+    fun setTrackingConsent(value: String?) {
+        val editor = prefs.edit()
+        if (value == null) editor.remove("apprefer_tracking_consent")
+        else editor.putString("apprefer_tracking_consent", value)
+        check(editor.commit()) { "Could not persist tracking consent" }
+    }
+    fun getReportedConsent(): String? = prefs.getString("apprefer_reported_tracking_consent", null)
+    fun setReportedConsent(value: String) {
+        check(prefs.edit().putString("apprefer_reported_tracking_consent", value).commit())
+    }
+
     // region device_id
 
     /** Null when missing or unreadable; use [readDeviceId] to tell them apart. */
@@ -73,6 +85,8 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
     // endregion
 
     // region attribution_cache (JSON string)
+
+    fun clearAttributionCache() { prefs.edit().remove(KEY_ATTRIBUTION_CACHE).apply() }
 
     fun getAttributionCache(): String? =
         safely(null) { prefs.getString(KEY_ATTRIBUTION_CACHE, null) }
