@@ -116,6 +116,7 @@ internal class BillingApiClient(
     private val keyWaitAttempts: Int = 30,
     private val keyWaitDelayMs: Long = 100,
     private val now: () -> Long = System::currentTimeMillis,
+    private val consentProvider: () -> String? = { AppReferInternal.trackingConsent() },
 ) {
     val baseUrls: List<String> = baseUrls.distinct()
 
@@ -136,7 +137,7 @@ internal class BillingApiClient(
         val key = resolveApiKey() ?: throw AppReferBillingException.MissingApiKey()
         var lastError: AppReferBillingException = AppReferBillingException.Network("no endpoint")
 
-        for (baseUrl in baseUrls) {
+        for (baseUrl in com.apprefer.sdk.TrackingConsent.hosts(consentProvider(), baseUrls)) {
             val request = makeRequest(endpoint, baseUrl, key)
             val response = try {
                 transport.send(request)
@@ -195,10 +196,11 @@ internal class BillingApiClient(
             }
         }
 
-        fun live(apiKey: () -> String?) = BillingApiClient(
+        fun live(context: android.content.Context? = null, apiKey: () -> String?) = BillingApiClient(
             baseUrls = listOf(AppReferInternal.TRACKING_URL, AppReferInternal.FALLBACK_URL),
             apiKey = apiKey,
             transport = HttpUrlConnectionTransport(),
+            consentProvider = { AppReferInternal.trackingConsent(context) },
         )
 
         fun makeRequest(endpoint: BillingEndpoint, baseUrl: String, apiKey: String): BillingRequest {

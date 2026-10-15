@@ -23,6 +23,8 @@ object AppReferInternal {
     const val FALLBACK_URL: String = AppReferConfig.FALLBACK_URL
     const val SDK_VERSION: String = APPREFER_SDK_VERSION
 
+    fun trackingConsent(context: Context? = null): String? = AppRefer.currentTrackingConsent(context)
+
     /** The SDK key passed to [AppRefer.configure] in this process, or null before it runs. */
     fun apiKey(): String? = AppRefer.currentApiKey()
 

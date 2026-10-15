@@ -4,7 +4,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.5.0 — full attribution flow, event tracking, and Meta
+> **Status:** 0.6.0 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -29,7 +29,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.5.0")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.6.0")
 }
 ```
 
@@ -292,3 +292,47 @@ most 1600 px and 700 KB before direct storage uploads. Home refreshes every 15 s
 conversations check every 4 seconds and merge replies by ID. Failed messages remain available to
 retry. Network failures leave a new-message draft in place. Tokens use Android Keystore encryption
 and no-backup files. Dark mode follows the device; text follows system font scaling.
+
+## Tracking consent (0.6.0)
+
+The SDK never prompts for ATT. On iOS, it reads the current ATT status:
+authorized → `granted`, denied/restricted → `denied`, and notDetermined →
+`undetermined` (before iOS 14: `granted`). Call
+`trackingConsentDidChange()` immediately after your app's own ATT prompt.
+Configure and app activation also check for a changed decision, independently
+of the first-open attribution flag. A failed report retries on the next trigger;
+a successful report updates the cached attribution and saved reported consent.
+
+On Android, call `setTrackingConsent(true)` or `setTrackingConsent(false)`
+with your app's choice. The choice persists across launches. Until set (or after
+passing `null`), requests omit `tracking_consent` and retain legacy routing.
+
+Call the setter before or after configure. A choice made before the first
+configure is staged in memory and persisted when configure supplies a Context.
+
+```kotlin
+AppRefer.setTrackingConsent(false) // denied; use true for granted, null for legacy
+AppRefer.trackingConsentDidChange()
+```
+
+Every attribution, event, user-linking and billing request selects its host from
+the current consent: granted uses only `https://trk.apprefer.com`;
+denied/undetermined use only `https://apprefer.com`, with no cross-host
+fallback. Android legacy requests retain tracking-host primary and main-host
+fallback. Support always uses `https://apprefer.com`. IDFA is sent only when
+granted; GAID is sent only when granted or legacy. Advanced matching is dropped
+locally unless tracking is granted or legacy. First-party analytics, billing and
+support continue to work when tracking is denied.
+
+For iOS apps (including Flutter and React Native), declare **only**
+`trk.apprefer.com` in your app's `PrivacyInfo.xcprivacy` tracking-domain list:
+
+```xml
+<key>NSPrivacyTrackingDomains</key>
+<array>
+    <string>trk.apprefer.com</string>
+</array>
+```
+
+Do not add `apprefer.com` to `NSPrivacyTrackingDomains`; it serves the
+first-party path when ATT has not been granted.
