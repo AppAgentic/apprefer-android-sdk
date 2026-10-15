@@ -15,7 +15,7 @@ android {
         minSdk = 23
         targetSdk = 35
         versionCode = 1
-        versionName = "0.6.0"
+        versionName = "0.7.0"
     }
 
     // Exercise R8 + our consumer-rules.pro on every release build. If our

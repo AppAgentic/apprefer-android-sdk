@@ -4,7 +4,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.6.0 — full attribution flow, event tracking, and Meta
+> **Status:** 0.7.0 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -29,7 +29,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.6.0")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.7.0")
 }
 ```
 
@@ -336,3 +336,30 @@ For iOS apps (including Flutter and React Native), declare **only**
 
 Do not add `apprefer.com` to `NSPrivacyTrackingDomains`; it serves the
 first-party path when ATT has not been granted.
+
+## SKAdNetwork and AdAttributionKit (0.7.0+)
+
+Apple's own ad attribution works for every iOS install, including users who don't allow tracking: the phone ties the install to the ad and Apple sends the ad network an anonymous postback with your app's conversion value. Only the app can set that value, and Apple sends no postback until the app sets it at least once.
+
+AppRefer does this for you:
+
+- On first launch it registers the install (value 0, coarse `low`), as Apple recommends.
+- It then sets the value AppRefer computes from what it already knows: **10** (`medium`) once a free trial starts, **20 + whole dollars paid** (`high`, capped at 63) once the user pays, e.g. $9.99 → 30, $39.99 → 60. Values only go up and windows are never locked early.
+- It checks on launch, when the app becomes active, after trial or revenue events and after AppReferBilling purchases, for the 35 days Apple's postbacks cover. If you take payments elsewhere (e.g. RevenueCat), call `await AppRefer.updateConversionValue()` after a purchase to set it sooner.
+- It updates both AdAttributionKit (iOS 17.4+) and SKAdNetwork (iOS 15.4+), as Apple asks when your ad networks may use either.
+
+To receive copies of the winning postbacks in AppRefer, add to your app's Info.plist:
+
+```xml
+<key>NSAdvertisingAttributionReportEndpoint</key>
+<string>https://apprefer.com</string>
+<key>AdAttributionKit</key>
+<dict>
+    <key>AttributionCopyEndpoint</key>
+    <string>https://apprefer.com</string>
+</dict>
+```
+
+Also add the `SKAdNetworkItems` identifiers your ad networks publish.
+
+On Android, `AppRefer.updateConversionValue()` is a public no-op for API parity. The conversion-value feature above is iOS-only; no Apple conversion requests or postbacks run on Android. Add the Info.plist keys above to your iOS app only.
