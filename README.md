@@ -1,6 +1,6 @@
 # AppRefer Android SDK
 
-## 0.9.0: account switching, independent Support and reliable events
+## 0.9.1: account switching, independent Support and reliable events
 
 Support can start independently of attribution. Its configuration does not configure
 attribution, collect attribution device signals, initialize product analytics, or
@@ -18,6 +18,12 @@ attribution result, consent and conversion state are retained. Advanced-matching
 hashes are never persisted by this SDK. Billing is separate: also call
 AppReferBilling.logOut() when your app uses Billing, then identify its next user
 through Billing's existing login API.
+After reset, attribution sends nothing (no consent re-report, user id, advanced
+matching or event delivery; events tracked meanwhile are dropped, never sent later) and Support sends no device id until configure is
+called again, so the next account's Support session is never linked to the
+previous account's install. Support also omits the device id while collection is off.
+
+Migration: after reset(), call configure again for the next user; until then events, attribution and consent reports are paused.
 
 ```kotlin
 AppRefer.support.configure(context, apiKey = "pk_...") // Support only
@@ -68,7 +74,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.9.0 — full attribution flow, event tracking, and Meta
+> **Status:** 0.9.1 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -93,7 +99,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.0")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.1")
 }
 ```
 
@@ -448,3 +454,13 @@ Unknown placements fall back to current; a configured null placement suppresses 
 Offerings use a five-minute memory and disk cache. Foreground refreshes stale data; login/logout invalidates it and refreshes an already-used catalogue. Network/server failures return the last cached response of any age after resolving store products again. No cache means the SDK billing error is thrown; catch it and use your existing paywall product ids. Offerings never gate configuration or purchases. Concurrent callers share one request.
 
 Google Play `subscription:basePlan` selects that base plan; a bare subscription selects the period matching the package type, otherwise the first base plan. The package exposes the selected offer token. Storefront country uses ISO alpha-2 when available; no device locale is substituted. The install bucket stays stable after login/logout.
+
+### Collection control (0.9.1)
+
+```kotlin
+AppRefer.setCollectionEnabled(false, context)
+```
+
+Call this when collection consent is withdrawn. The choice persists across launches. Disabling cancels in-flight attribution, conversion-value, consent and product-event traffic, clears the durable event queue, and blocks activation/background retries. Configure returns cached attribution (or an unavailable/failed result if none exists) while disabled. Support and Billing continue independently. Call `setCollectionEnabled(true)` and then configure again to resume; enabling alone sends nothing. Calling it with `true` while collection is already on changes nothing (no pause, no queue clear). `configure(userId = ...)` still stores the user id while collection is off, so Support uses that account. It never throws; if the choice can't be saved, collection still stops for this session. Reset does not change this choice.
+
+Product events include `app_user_id` from the identity set via `setUserId` when tracked. The identity is saved in the queued payload, so retries and relaunches retain the original account even after a user switch. Without an identity the field is omitted. Internal events whose names start with `_` retain their existing payloads.

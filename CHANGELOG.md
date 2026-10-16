@@ -1,3 +1,14 @@
+## 0.9.1
+
+- Migration: after reset(), call configure again for the next user; until then events, attribution and consent reports are paused.
+- If setCollectionEnabled(false) runs before configure and the choice cannot be saved, the "off" is kept for the rest of the process, so the next configure does not resume collection and Support sends no device id.
+- Product events capture `app_user_id` at track time and persist it with the queued payload, preserving identity across retries, restarts, and account switches. Internal `_` events are unchanged.
+- Add persistent `setCollectionEnabled` control. Disabling cancels attribution, consent, conversion-value and event requests and clears queued events; Support and Billing remain available. Enable, then call configure to resume.
+- Support sends no device id after reset() or while collection is off. reset() also stops attribution (consent re-reports, user id, advanced matching, event sends) until configure is called again; events tracked meanwhile are dropped, never queued or sent later.
+- setCollectionEnabled(true) while collection is already on is a no-op: it no longer pauses collection or clears the saved event queue. Only a saved "off" or the server kill switch clears queued events.
+- configure(userId:) stores the user id (and refreshes Support's identity) even while collection is off, so Support uses the new account.
+- setCollectionEnabled never throws (no context or a failed save included); disabling stops and clears at once even if the choice can't be saved. The choice is saved before collection is paused, so no configure can start in between and send a request.
+
 ## 0.9.0 — 2026-10-16
 
 - Add async reset for account switching: cancel old work, revoke Support sessions and push registrations, clear account/profile/UI state and pending product events, retain install attribution and device id. Billing logout stays explicit.

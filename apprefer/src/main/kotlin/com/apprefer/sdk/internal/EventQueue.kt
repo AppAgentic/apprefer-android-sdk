@@ -14,15 +14,19 @@ internal class EventQueue(
     private val scope: CoroutineScope,
     private val now: () -> Long = { System.currentTimeMillis() },
     private var quarantine: (String) -> Unit = {},
+    /** True after reset() until configure: nothing is sent. */
+    private val held: () -> Boolean = { false },
+    /** When sending is not allowed, whether the queue is wiped (saved "off", kill switch) or kept (a pause). */
+    private var discard: () -> Boolean = { true },
 ) {
     private val lock = Any()
     private var generation = 0
     private var running = false
     private var retry: Job? = null
     fun replace(read: () -> String?, write: (String?) -> Unit, enabled: () -> Boolean,
-        send: suspend (Map<String, Any?>) -> Any?, quarantine: (String) -> Unit) = synchronized(lock) {
+        send: suspend (Map<String, Any?>) -> Any?, quarantine: (String) -> Unit, discard: () -> Boolean = { true }) = synchronized(lock) {
         generation++; running = false; retry?.cancel(); retry = null
-        this.read = read; this.write = write; this.enabled = enabled; this.send = send; this.quarantine = quarantine
+        this.read = read; this.write = write; this.enabled = enabled; this.send = send; this.quarantine = quarantine; this.discard = discard
     }
     private fun load(): MutableList<MutableMap<String, Any?>> {
         val raw = read() ?: return mutableListOf()
@@ -65,14 +69,15 @@ internal class EventQueue(
     private suspend fun drain(only: String?): Map<String, Int> {
         val epoch = synchronized(lock) {
             if (running) return emptyMap()
-            if (!enabled()) { write(null); return emptyMap() }
+            if (!enabled()) { if (discard()) write(null); return emptyMap() }
+            if (held()) return emptyMap()
             running = true; generation
         }
         val results = mutableMapOf<String, Int>()
         try {
             val entries = synchronized(lock) { load().also { save(it) } }
             for (entry in entries) {
-                if (synchronized(lock) { epoch != generation || !enabled() }) break
+                if (synchronized(lock) { epoch != generation || !enabled() || held() }) break
                 currentCoroutineContext().ensureActive()
                 if ((only != null && entry["id"] != only) || (entry["next"] as Number).toLong() > now()) continue
                 @Suppress("UNCHECKED_CAST")
