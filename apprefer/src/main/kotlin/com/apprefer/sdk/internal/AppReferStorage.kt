@@ -109,8 +109,16 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
 
     // region sdk_enabled (kill switch, default true)
 
+    @Volatile private var collectionPaused = false
+    fun pauseCollection() { collectionPaused = true }
+    fun resumeCollection() { collectionPaused = false }
+    fun isCollectionEnabled(): Boolean = !collectionPaused && safely(false) { prefs.getBoolean("apprefer_collection_enabled", true) }
+    fun setCollectionEnabled(enabled: Boolean) {
+        collectionPaused = true
+        check(prefs.edit().putBoolean("apprefer_collection_enabled", enabled).commit()) { "Collection setting could not be saved" }
+    }
     fun isSdkEnabled(): Boolean =
-        safely(true) { prefs.getBoolean(KEY_SDK_ENABLED, true) }
+        isCollectionEnabled() && safely(true) { prefs.getBoolean(KEY_SDK_ENABLED, true) }
 
     fun setSdkEnabled(value: Boolean) {
         if (!value) safely(Unit) { pendingEvents = null }

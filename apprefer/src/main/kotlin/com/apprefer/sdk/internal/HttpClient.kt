@@ -27,6 +27,7 @@ internal class HttpClient(
     private val primaryBaseUrl: String = AppReferConfig.TRACKING_URL,
     private val fallbackBaseUrl: String? = AppReferConfig.FALLBACK_URL,
     private val consentProvider: () -> String? = { null },
+    private val collectionAllowed: () -> Boolean = { true },
     private val transport: (suspend (String, String, ByteArray) -> Map<String, Any?>?)? = null,
 ) {
 
@@ -46,7 +47,7 @@ internal class HttpClient(
         try {
             connection = URL(host + "/api/track/event").openConnection() as HttpURLConnection
             eventConnections.add(connection)
-            if (epoch != eventGeneration) return@withContext EventResponse(null)
+            if (epoch != eventGeneration || !collectionAllowed()) return@withContext EventResponse(null)
             connection.requestMethod = "POST"; connection.doOutput = true
             connection.connectTimeout = TIMEOUT_MS; connection.readTimeout = TIMEOUT_MS
             connection.setRequestProperty("X-AppRefer-Key", apiKey)
@@ -64,6 +65,7 @@ internal class HttpClient(
      * POST [body] to [path], return decoded JSON object or null on total failure.
      */
     suspend fun post(path: String, body: Map<String, Any?>, consent: String? = null, consentSnapshot: Boolean = false): Map<String, Any?>? = withContext(Dispatchers.IO) {
+        if (!collectionAllowed()) return@withContext null
         val epoch = generation
         val current = if (consentSnapshot) consent else consentProvider()
         if (body["event_name"] == "_advanced_matching" && !TrackingConsent.allowed(current)) return@withContext null
@@ -72,7 +74,7 @@ internal class HttpClient(
 
         performPost(hosts.first(), path, payload)?.let { return@withContext it }
 
-        if (epoch != generation) return@withContext null
+        if (epoch != generation || !collectionAllowed()) return@withContext null
         val fb = hosts.getOrNull(1)
         if (!fb.isNullOrBlank() && fb != primaryBaseUrl) {
             logger.info("Primary URL failed, retrying on fallback: $fb$path")
@@ -84,7 +86,9 @@ internal class HttpClient(
     }
 
     private suspend fun performPost(baseUrl: String, path: String, body: ByteArray): Map<String, Any?>? {
-        transport?.let { return it(baseUrl, path, body) }
+        if (!collectionAllowed()) return null
+        val transportEpoch = generation
+        transport?.let { val response = it(baseUrl, path, body); return if (transportEpoch == generation && collectionAllowed()) response else null }
         val urlString = "$baseUrl$path"
         val url = try { URL(urlString) } catch (e: Exception) {
             logger.error("Invalid URL: $urlString", e); return null
@@ -98,8 +102,9 @@ internal class HttpClient(
                 delay(delayMs)
             }
 
-            if (epoch != generation) return null
-            val result = doPost(url, body, path, attempt)
+            if (epoch != generation || !collectionAllowed()) return null
+            val result = doPost(url, body, path, attempt, epoch)
+            if (epoch != generation || !collectionAllowed()) return null
             when (result.outcome) {
                 Outcome.SUCCESS -> return result.json
                 Outcome.CLIENT_ERROR -> return null // 4xx — don't retry or fall through
@@ -111,7 +116,7 @@ internal class HttpClient(
         return null
     }
 
-    private fun doPost(url: URL, body: ByteArray, path: String, attempt: Int): HttpResult {
+    private fun doPost(url: URL, body: ByteArray, path: String, attempt: Int, epoch: Int): HttpResult {
         var conn: HttpURLConnection? = null
         try {
             conn = (url.openConnection() as HttpURLConnection).apply {
@@ -129,6 +134,7 @@ internal class HttpClient(
             }
 
             connections.add(conn)
+            if (epoch != generation || !collectionAllowed()) return HttpResult(Outcome.CLIENT_ERROR, null)
             logger.debug("POST $url")
 
             conn.outputStream.use { it.write(body); it.flush() }

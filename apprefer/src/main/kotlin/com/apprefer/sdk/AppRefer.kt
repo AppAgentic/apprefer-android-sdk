@@ -162,6 +162,19 @@ object AppRefer {
         }
     }
 
+    /** Persistent collection control. Enabling resumes on the next configure. Support/Billing are unaffected. */
+    @JvmStatic
+    @JvmOverloads
+    suspend fun setCollectionEnabled(enabled: Boolean, context: Context? = AppReferContext.context) {
+        val storage = state?.storage ?: AppReferStorage(requireNotNull(context) { "Pass context before configure" })
+        synchronized(this) { generation++; storage.pauseCollection(); state?.http?.cancel() }
+        storage.setCollectionEnabled(enabled)
+        if (!enabled) {
+            scope.coroutineContext.cancelChildren()
+            clearPendingEvents(context)
+        }
+    }
+
     @JvmOverloads suspend fun clearPendingEvents(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
         safelyRun {
             state?.http?.cancelEvents()
@@ -197,6 +210,8 @@ object AppRefer {
         configurations.run(listOf(apiKey, userId, debug, logLevel, accountEpoch)) { safely<Attribution?>(null) {
         val s = ensureState(context, apiKey, debug, logLevel)
         if (accountEpoch != generation) return@safely null
+        s.storage.resumeCollection()
+        if (!s.storage.isCollectionEnabled()) return@safely cachedAttribution(s)
         scope.launch { safelyRun { s.events.flush() } }
 
         s.logger.info("AppReferSDK initialized v$APPREFER_SDK_VERSION")
@@ -261,10 +276,12 @@ object AppRefer {
         revenue: Double? = null, currency: String? = null,
     ): AppReferEventResult {
         val s = state ?: return AppReferEventResult.DROPPED
+        val userId = s.storage.getUserId() // captured before dispatcher hop
         val eventEpoch = s.events.generationSnapshot()
         return withContext(Dispatchers.IO) { safely(AppReferEventResult.DROPPED) {
         val deviceId = s.storage.getDeviceId() ?: return@safely AppReferEventResult.DROPPED
         val body = linkedMapOf<String, Any?>("device_id" to deviceId, "event_name" to eventName)
+        if (!eventName.startsWith("_")) userId?.let { body["app_user_id"] = it }
         properties?.let { body["properties"] = it }
         revenue?.let { body["revenue"] = it }
         currency?.let { body["currency"] = it }
@@ -451,7 +468,7 @@ object AppRefer {
         val appCtx = context.applicationContext
         val logger = Logger(debug = debug, logLevel = logLevel)
         val storage = AppReferStorage(appCtx)
-        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() })
+        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() }, collectionAllowed = { storage.isSdkEnabled() })
         val deviceIdManager = DeviceIdManager(appCtx, storage, logger)
         val deviceInfo = DeviceInfo(appCtx, logger)
         val installReferrer = InstallReferrerCollector(appCtx, logger)
