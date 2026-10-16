@@ -159,4 +159,48 @@
     <string name="apprefer_support_error_rate_limited">メッセージが多すぎます。しばらく待ってからもう一度お試しください。</string>
     <!-- support.notification.channel: Android notification channel name for support reply notifications (shown in system settings). -->
     <string name="apprefer_support_notification_channel">サポートからの返信</string>
+    <!-- support.help.title: Section label (shown in capitals) above the help articles on the help home, and the title of the help centre screen. -->
+    <string name="apprefer_support_help_title">ヘルプ記事</string>
+    <!-- support.help.search.placeholder: Placeholder in the help centre's search field. -->
+    <string name="apprefer_support_help_search_placeholder">ヘルプ記事を検索</string>
+    <!-- support.help.search.noResults: Shown when a help centre search finds nothing. {query} = what the customer typed. Use your language's quotation marks. -->
+    <string name="apprefer_support_help_search_no_results">「{query}」に一致する記事はありません</string>
+    <!-- support.help.search.noResultsHint: Line under the empty search result. -->
+    <string name="apprefer_support_help_search_no_results_hint">別の言葉で検索するか、メッセージでお問い合わせください。</string>
+    <!-- support.help.searching: Shown while a help centre search runs. -->
+    <string name="apprefer_support_help_searching">検索中…</string>
+    <!-- support.help.seeAll: Button next to the help articles section on the help home; opens every article. Very short. -->
+    <string name="apprefer_support_help_see_all">すべて表示</string>
+    <!-- support.help.loading: Shown while one help article loads. -->
+    <string name="apprefer_support_help_loading">記事を読み込み中…</string>
+    <!-- support.help.loadFailed: Shown when one help article can't be loaded (offline or removed). -->
+    <string name="apprefer_support_help_load_failed">この記事を読み込めませんでした。</string>
+    <!-- support.help.listFailed: Shown on the help centre screen when the article list can't be loaded and nothing is cached. -->
+    <string name="apprefer_support_help_list_failed">ヘルプ記事を読み込めませんでした。</string>
+    <!-- support.help.updated: Under an article's title. {date} = when it was last changed, as a date such as '16 Oct 2026' in the customer's language. -->
+    <string name="apprefer_support_help_updated">{date}に更新</string>
+    <!-- support.help.draft: Small badge on an unpublished article (only visible in test builds). -->
+    <string name="apprefer_support_help_draft">下書き</string>
+    <!-- support.help.otherCategory: Heading for articles without a category, shown after the categorised ones in the help centre. -->
+    <string name="apprefer_support_help_other_category">その他の記事</string>
+    <!-- support.help.stillNeedHelp: Title of the card at the end of an article and of the help centre, above the 'Message us' button. -->
+    <string name="apprefer_support_help_still_need_help">まだお困りですか？</string>
+    <!-- support.help.messageUs: Button that starts a conversation with the team (from an article or the help centre). Short. -->
+    <string name="apprefer_support_help_message_us">メッセージを送る</string>
+    <!-- support.help.prompt: Hint in the message field after the customer tapped 'Message us' on an article. -->
+    <string name="apprefer_support_help_prompt">ほかにお困りのことはありますか？</string>
+    <!-- support.help.openInBrowser: Button (and accessibility label) that opens the article's web page. -->
+    <string name="apprefer_support_help_open_in_browser">ブラウザで開く</string>
+    <!-- support.help.a11y.clearSearch: Accessibility label for the button that empties the search field. -->
+    <string name="apprefer_support_help_a11y_clear_search">検索をクリア</string>
+    <!-- support.help.a11y.article: Accessibility label for an article row. {title} = the article's title. -->
+    <string name="apprefer_support_help_a11y_article">記事: {title}</string>
+    <!-- support.status.sentNoticeEmail: Under the customer's last message when the app can't send notifications but replies are emailed. {time} = clock time, same wording as 'support.thread.sentNotice'. -->
+    <string name="apprefer_support_status_sent_notice_email">{time}に送信 · チームから返信があればメールでお知らせします</string>
+    <!-- support.status.sentNoticeEmailNoTime: Like 'support.status.sentNoticeEmail' when the time is unknown. -->
+    <string name="apprefer_support_status_sent_notice_email_no_time">送信済み · チームから返信があればメールでお知らせします</string>
+    <!-- support.status.sentNoticeInApp: Under the customer's last message when neither notifications nor email can reach them, so the reply only shows in the chat. {time} = clock time. -->
+    <string name="apprefer_support_status_sent_notice_in_app">{time}に送信 · チームからの返信はここに表示されます</string>
+    <!-- support.status.sentNoticeInAppNoTime: Like 'support.status.sentNoticeInApp' when the time is unknown. -->
+    <string name="apprefer_support_status_sent_notice_in_app_no_time">送信済み · チームからの返信はここに表示されます</string>
 </resources>

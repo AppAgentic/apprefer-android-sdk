@@ -64,7 +64,9 @@ class AppReferSupportActivity : Activity() {
         setTheme(if (night) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(state)
         AppReferSupport.resetListeners.add(resetListener)
-        chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"))
+        val destination = intent.getStringExtra("article")?.let { AppReferSupportDestination.Article(it) }
+            ?: if (intent.getBooleanExtra("helpCentre", false)) AppReferSupportDestination.HelpCentre else null
+        chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"), destination)
         chat.onClose = { finish() }
         chat.onPickImages = {
             val pick = if (Build.VERSION.SDK_INT >= 33) Intent("android.provider.action.PICK_IMAGES").apply {
@@ -131,12 +133,24 @@ class AppReferSupportActivity : Activity() {
 /** How long a portrait that failed to load waits before it is tried again. */
 private const val PORTRAIT_RETRY_MS = 30_000L
 
+/** The screen the help chat opens on. Back always leads to the help home. */
+sealed class AppReferSupportDestination {
+    object Home : AppReferSupportDestination()
+    /** Every help article, with search. */
+    object HelpCentre : AppReferSupportDestination()
+    /** One help article by slug (any translation's slug works). */
+    data class Article(val slug: String) : AppReferSupportDestination()
+    data class Conversation(val id: String) : AppReferSupportDestination()
+}
+
 /**
- * Native embeddable help chat: the help home (with its message field) and conversations.
- * Call pause/resume with the host lifecycle.
+ * Native embeddable help chat: the help home (with its message field and help articles), the help
+ * centre, articles and conversations. Call pause/resume with the host lifecycle.
  */
 class AppReferSupportView @JvmOverloads constructor(
     context: Context, conversationId: String? = null, composing: String? = null,
+    /** Where to open; overrides [conversationId] when set. */
+    destination: AppReferSupportDestination? = null,
 ) : FrameLayout(context) {
     var onClose: () -> Unit = {}
     var onPickImages: ((Int) -> Unit)? = null
@@ -153,8 +167,41 @@ class AppReferSupportView @JvmOverloads constructor(
     private var polling: Job? = null
     private var visible = false
 
-    private var route = if (conversationId != null) "thread" else "home"
-    private var id = conversationId
+    /** "home", "thread", "help" (help centre) or "article". */
+    private var route = when (destination) {
+        is AppReferSupportDestination.HelpCentre -> "help"
+        is AppReferSupportDestination.Article -> "article"
+        is AppReferSupportDestination.Conversation -> "thread"
+        is AppReferSupportDestination.Home -> "home"
+        null -> if (conversationId != null) "thread" else "home"
+    }
+    private var id = (destination as? AppReferSupportDestination.Conversation)?.id
+        ?: conversationId.takeIf { destination == null }
+
+    // Help centre: the home section's articles, the help centre screen and the article reader.
+    private var articles = emptyList<AppReferHelpArticle>()
+    private var articlesJob: Job? = null
+    private var helpAll = emptyList<AppReferHelpArticle>()
+    private var helpLoaded = false
+    private var helpFailed = false
+    private var helpQuery = ""
+    /** null while the search field is empty. */
+    private var helpResults: List<AppReferHelpArticle>? = null
+    private var helpSearching = false
+    private var helpSearchJob: Job? = null
+    private var helpFocusSearch = false
+    private var helpContent: LinearLayout? = null
+    private var articleSlug: String? = (destination as? AppReferSupportDestination.Article)?.slug
+    private var articleTitle = ""
+    /** Where Back goes from the article: "home" or "help". */
+    private var articleBack = "home"
+    private var articleDetail: AppReferHelpArticleDetail? = null
+    private var articleBlocks = emptyList<SupportMarkdownBlock>()
+    private var articleFailed = false
+    private var articleContent: LinearLayout? = null
+    private var headerTrailing: FrameLayout? = null
+    /** How the reply will reach the customer: notification, email or only in the chat. */
+    private var notice = SupportReplyNotice.PUSH
     private var subject = SupportStrings.text("support.conversation.defaultSubject")
     private val timeline = SupportTimeline { date(it) }
     private val cursor get() = timeline.cursor
@@ -185,6 +232,8 @@ class AppReferSupportView @JvmOverloads constructor(
         images.clear(); draft = ""; homeStash = null; id = null; topic = null
         draftFile?.delete(); draftFile = null
         starting = false; sendError = null; loadError = null; route = "home"
+        articleSlug = null; articleDetail = null; articleBlocks = emptyList(); helpQuery = ""; helpResults = null; helpSearching = false
+        notice = SupportReplyNotice.PUSH
         homeClientMessageId = UUID.randomUUID().toString()
         shownPersona = null; headerKey = null; shownQuickReplies = null; renderedCount = -1
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -327,8 +376,14 @@ class AppReferSupportView @JvmOverloads constructor(
         // Arabic and Hebrew lay the chat out right to left (needs android:supportsRtl in the app).
         layoutDirection = if (rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         removeAllViews(); hero = null; header = null; headerLabels = null; headerAvatar = null; headerKey = null; presenceHolder = null; shownQuickReplies = null; renderedCount = -1; lastStatusDark = null
+        helpContent = null; articleContent = null; headerTrailing = null
         shownPersona = persona
-        if (route == "home") buildHome() else buildThread()
+        when (route) {
+            "home" -> buildHome()
+            "help" -> buildHelp()
+            "article" -> buildArticle()
+            else -> buildThread()
+        }
         applyInsets(insetL, insetT, insetR, insetB)
         updateChrome()
     }
@@ -445,7 +500,9 @@ class AppReferSupportView @JvmOverloads constructor(
         val sections = SupportHomeSections(conversations)
         fun add(v: View) = body.addView(v, lp(top = if (body.childCount > 0) dp(24) else 0))
         sections.current?.let { add(continueCard(it)) }
-        if (AppReferSupport.topics.isNotEmpty()) add(quickHelp(sections.current != null))
+        // Hidden entirely when the app has no published articles.
+        if (articles.isNotEmpty()) add(helpSection(prominent = sections.current == null))
+        if (AppReferSupport.topics.isNotEmpty()) add(quickHelp(sections.current != null || articles.isNotEmpty()))
         if (sections.others.isNotEmpty()) add(pastConversations(sections.others))
         if (!homeLoaded && conversations.isEmpty()) add(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.accent) }.let {
             FrameLayout(context).apply { addView(it, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER)) }
@@ -543,6 +600,16 @@ class AppReferSupportView @JvmOverloads constructor(
             }
         }
         renderMessages(); renderAccessories(); updateSend()
+        loadNotice()
+    }
+
+    /** How the team's reply will reach the customer (status from AppRefer, cached by the server's rules). */
+    private fun loadNotice() {
+        scope.launch {
+            val status = try { api.help.status() } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            val next = SupportReplyNotice.choose(status, api.hasPushToken, AppReferSupport.customerEmail != null)
+            if (next != notice) { notice = next; if (route == "thread") renderMessages() }
+        }
     }
 
     private fun buildHeader(): View {
@@ -625,9 +692,7 @@ class AppReferSupportView @JvmOverloads constructor(
         waiting.forEach { body.addView(pendingBubble(it), lp(top = dp(6))) }
         val last = messages.lastOrNull()
         if (threadLoaded && waiting.isEmpty() && last?.from == "customer") {
-            val at = clock(last.createdAt)
-            val notice = if (at.isEmpty()) s("support.thread.sentNoticeNoTime") else s("support.thread.sentNotice", "time" to at)
-            body.addView(text(notice, 11.5f, c.muted, 500).apply {
+            body.addView(text(notice.text(clock(last.createdAt)), 11.5f, c.muted, 500).apply {
                 gravity = Gravity.END; setPaddingRelative(0, 0, dp(4), 0)
             }, lp(top = dp(5)))
         }
@@ -767,6 +832,434 @@ class AppReferSupportView @JvmOverloads constructor(
             setPadding(0, dp(4), 0, dp(4)); setOnClickListener { deliver(pend) }; contentDescription = s("support.a11y.retryMessage")
         } else text(s("support.thread.sending"), 11.5f, c.muted, 500).apply { contentDescription = s("support.a11y.sendingMessage") }, lp(-2, top = dp(5)))
         return box
+    }
+
+    // MARK: - Help centre
+
+    /** The home's article list: memory cache first (five minutes); offline keeps what was shown, never an error. */
+    private fun refreshArticles() {
+        if (articlesJob?.isActive == true) return
+        articlesJob = scope.launch {
+            val language = SupportStrings.language
+            if (articles.isEmpty()) api.help.cachedList(language)?.takeIf { it.isNotEmpty() }?.let { cached ->
+                articles = cached; if (route == "home") renderHomeContent()
+            }
+            val fresh = try { api.help.list(null, language) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            if (fresh != null && fresh != articles) { articles = fresh; if (route == "home") renderHomeContent() }
+        }
+    }
+
+    /** "Help articles" on the help home: a search entry and the first three articles. */
+    private fun helpSection(prominent: Boolean): View {
+        val card = column().apply { setPadding(dp(16), dp(16), dp(16), dp(10)); background = rounded(c.card, 26) }
+        if (prominent) shadow(card, 12, .22f) else shadow(card, 3, .07f)
+        val top = row()
+        top.addView(label(s("support.help.title")), lp(0, weight = 1f))
+        if (articles.size > 3) top.addView(row().apply {
+            setPaddingRelative(dp(8), dp(4), 0, dp(4))
+            addView(text(s("support.help.seeAll"), 13.5f, p.accent, 600, 1), lp(-2))
+            addView(icon(R.drawable.apprefer_support_chevron, p.accent, 12), lp(dp(12), dp(12), start = dp(3)))
+            pressable(s("support.help.seeAll")) { openHelp(search = false) }
+        }, lp(-2))
+        card.addView(top, lp())
+        val search = row().apply {
+            setPaddingRelative(dp(14), 0, dp(14), 0); background = rounded(c.background, 14)
+            addView(icon(R.drawable.apprefer_support_search, c.muted, 17), lp(dp(17), dp(17)))
+            addView(text(s("support.help.search.placeholder"), 15.5f, c.muted, lines = 1), lp(0, weight = 1f, start = dp(9)))
+            pressable(s("support.help.search.placeholder")) { openHelp(search = true) }
+        }
+        card.addView(search, lp(h = dp(44), top = dp(12)))
+        val top3 = articles.take(3)
+        top3.forEachIndexed { i, article ->
+            if (i > 0) card.addView(View(context).apply { setBackgroundColor(c.divider) }, lp(h = max(1, dp(.5f)), start = dp(48)))
+            card.addView(articleRow(article, summaryLines = 1, horizontal = 0), lp(top = if (i == 0) dp(4) else 0))
+        }
+        return card
+    }
+
+    /** One article in a list: a document tile, the title and its summary. */
+    private fun articleRow(article: AppReferHelpArticle, summaryLines: Int, horizontal: Int): View {
+        val line = row().apply { setPaddingRelative(dp(horizontal), dp(10), dp(horizontal), dp(10)); background = ripple() }
+        line.addView(FrameLayout(context).apply {
+            background = rounded(supportAlpha(p.accent, .12f), 11); addView(icon(R.drawable.apprefer_support_article, p.accent, 17))
+        }, lp(dp(36), dp(36)))
+        val labels = column()
+        labels.addView(text(article.title, 15f, c.ink, 600, 2))
+        if (article.isDraft) labels.addView(draftBadge(), lp(-2, top = dp(3)))
+        if (article.summary.isNotEmpty()) labels.addView(text(article.summary, 13.5f, c.muted, lines = summaryLines), lp(top = dp(2)))
+        line.addView(labels, lp(0, weight = 1f, start = dp(12)))
+        line.addView(icon(R.drawable.apprefer_support_chevron, supportAlpha(c.muted, .7f), 12), lp(dp(12), dp(12), start = dp(6)))
+        line.isClickable = true; line.isFocusable = true
+        line.contentDescription = s("support.help.a11y.article", "title" to article.title) + if (article.summary.isNotEmpty()) ". ${article.summary}" else ""
+        line.setOnClickListener { openArticle(article) }
+        return line
+    }
+
+    private fun draftBadge() = text(s("support.help.draft").uppercase(SupportStrings.locale), 9.5f, 0xFFE07B00.toInt(), 800).apply {
+        letterSpacing = 0.04f; setPadding(dp(6), dp(2), dp(6), dp(2)); background = rounded(supportAlpha(0xFFFF9500.toInt(), .14f), 6)
+    }
+
+    /** The floating bar at the top of the help screens (same as a conversation's). */
+    private fun screenHeader(title: String): View {
+        val bar = row().apply { setPadding(dp(10), 0, dp(10), 0); background = rounded(c.card, 32) }
+        shadow(bar, 8, .14f)
+        bar.addView(circleButton(R.drawable.apprefer_support_back, s("support.a11y.back"), 42, 18, p.accent, oval(supportAlpha(c.ink, .05f))) { goBack() })
+        bar.addView(text(title, 17f, c.ink, 700, 1).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp(0, weight = 1f, start = dp(10)))
+        headerTrailing = FrameLayout(context).also { bar.addView(it, lp(-2, dp(42))) }
+        return bar
+    }
+
+    /** Scroll, top band and header shared by the help centre and the article. */
+    private fun buildHelpFrame(title: String) {
+        scroll = SupportScrollView(context)
+        body = column().apply { setPadding(dp(16), dp(86), dp(16), dp(32)) }
+        scroll.addView(body, FrameLayout.LayoutParams(-1, -2))
+        addView(scroll, LayoutParams(-1, -1))
+        scrim = View(context).apply { setBackgroundColor(supportAlpha(backgroundColor, .96f)) }
+        addView(scrim, LayoutParams(-1, 0, Gravity.TOP))
+        header = screenHeader(title).also { addView(it, LayoutParams(-1, dp(64), Gravity.TOP).apply { setMargins(dp(12), dp(10), dp(12), 0) }) }
+    }
+
+    /** "Still need help?" with the team's reply time and a "Message us" button. */
+    private fun stillNeedHelpCard(subject: String?): View {
+        val card = column().apply { setPadding(dp(18), dp(18), dp(18), dp(18)); background = rounded(c.card, 26) }
+        shadow(card, 3, .07f)
+        val persona = persona
+        val top = row()
+        val first = AppReferSupport.teamNames.firstOrNull()
+        top.addView(if (persona != null) avatar(persona.name, 44, agentColors, imageUrl = persona.avatarUrl)
+            else avatar(first, 44, agentColors, if (first == null) R.drawable.apprefer_support_bubble else null))
+        val labels = column()
+        labels.addView(text(s("support.help.stillNeedHelp"), 17f, c.ink, 700).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true })
+        val subtitle = if (persona != null) s("support.presence.persona", "persona" to persona.name, "time" to AppReferSupport.replyTime)
+            else s("support.presence.team", "time" to AppReferSupport.replyTime)
+        labels.addView(text(subtitle, 13.5f, c.muted, lines = 2), lp(top = dp(2)))
+        top.addView(labels, lp(0, weight = 1f, start = dp(12)))
+        card.addView(top, lp())
+        val button = row().apply {
+            gravity = Gravity.CENTER; background = gradient(corners(25, 25, 25, 25))
+            addView(icon(R.drawable.apprefer_support_bubble, p.onAccent, 16), lp(dp(16), dp(16)))
+            addView(text(s("support.help.messageUs"), 16f, p.onAccent, 600, 1), lp(-2, start = dp(8)))
+            pressable(s("support.help.messageUs")) { messageUs(subject) }
+        }
+        shadow(button, 6, .3f)
+        card.addView(button, lp(h = dp(50), top = dp(14)))
+        return card
+    }
+
+    private fun spinnerRow(message: String?): View = row().apply {
+        gravity = Gravity.CENTER; setPadding(0, dp(24), 0, dp(24))
+        addView(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.accent) }, lp(dp(24), dp(24)))
+        message?.let { addView(text(it, 14f, c.muted), lp(-2, start = dp(10))) }
+    }
+
+    /** A centred message with an icon tile and, optionally, a Try again button. */
+    private fun helpMessage(iconRes: Int, title: String, hint: String?, retry: (() -> Unit)?): View {
+        val box = column().apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(12), dp(22), dp(12), dp(22)) }
+        box.addView(FrameLayout(context).apply { background = oval(supportAlpha(p.accent, .12f)); addView(icon(iconRes, p.accent, 22)) }, lp(dp(56), dp(56)))
+        box.addView(text(title, 16f, c.ink, 600).apply { gravity = Gravity.CENTER }, lp(-2, top = dp(10)))
+        hint?.let { box.addView(text(it, 14f, c.muted).apply { gravity = Gravity.CENTER }, lp(-2, top = dp(6))) }
+        retry?.let { action ->
+            box.addView(text(s("support.action.tryAgain"), 15f, p.accent, 600).apply {
+                setPadding(dp(16), dp(10), dp(16), dp(10)); background = rounded(c.card, 99, supportAlpha(p.accent, .18f))
+                pressable(s("support.action.tryAgain"), action)
+            }, lp(-2, top = dp(12)))
+        }
+        return box
+    }
+
+    private fun openHelp(search: Boolean) {
+        if (starting) return
+        helpFocusSearch = search
+        navigate("help")
+    }
+
+    private fun openArticle(article: AppReferHelpArticle) {
+        if (starting) return
+        articleBack = if (route == "help") "help" else "home"
+        articleSlug = article.slug; articleTitle = article.title
+        articleDetail = null; articleBlocks = emptyList(); articleFailed = false
+        navigate("article")
+    }
+
+    /** Back to the home's message field; from an article its title becomes the conversation subject. */
+    private fun messageUs(subject: String?) {
+        topic = subject?.takeIf { it.isNotBlank() }?.let {
+            AppReferSupportTopic(it, "", R.drawable.apprefer_support_article, p.accent, s("support.help.prompt"))
+        }
+        navigate("home")
+        focusField()
+    }
+
+    // The help centre screen: every article grouped by category, and search.
+
+    private fun buildHelp() {
+        buildHelpFrame(s("support.help.title"))
+        val input = EditText(context).apply {
+            setText(helpQuery); hint = s("support.help.search.placeholder"); setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(c.ink); setHintTextColor(supportAlpha(c.muted, .75f)); background = null; setSingleLine(true)
+            setPadding(dp(8), 0, dp(4), 0); textLocale = SupportStrings.locale
+            inputType = InputType.TYPE_CLASS_TEXT; imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            highlightColor = supportAlpha(p.accent, .3f)
+            setOnEditorActionListener { _, action, _ -> if (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) { hideKeyboard(); true } else false }
+        }
+        val clear = circleButton(R.drawable.apprefer_support_close, s("support.help.a11y.clearSearch"), 36, 14, c.muted, ColorDrawable(Color.TRANSPARENT)) { input.setText("") }
+        clear.visibility = if (helpQuery.isEmpty()) View.GONE else View.VISIBLE
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val value = s?.toString().orEmpty()
+                if (value == helpQuery) return
+                clear.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+                searchHelp(value)
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        val field = row().apply { setPaddingRelative(dp(14), 0, dp(6), 0); background = rounded(c.card, 18) }
+        shadow(field, 3, .07f)
+        field.addView(icon(R.drawable.apprefer_support_search, c.muted, 18), lp(dp(18), dp(18)))
+        field.addView(input, lp(0, h = dp(50), weight = 1f))
+        field.addView(clear, lp(dp(36), dp(36)))
+        body.addView(field, lp(h = dp(50)))
+        helpContent = column().also { body.addView(it, lp(top = dp(22))) }
+        renderHelpContent()
+        loadHelp()
+        if (helpFocusSearch) {
+            helpFocusSearch = false
+            input.post {
+                input.requestFocus(); input.setSelection(input.text.length)
+                (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+    }
+
+    private fun loadHelp() {
+        scope.launch {
+            val language = SupportStrings.language
+            if (helpAll.isEmpty()) api.help.cachedList(language)?.let { helpAll = it; renderHelpContent() }
+            try { helpAll = api.help.list(null, language); helpFailed = false }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { helpFailed = helpAll.isEmpty() }
+            helpLoaded = true
+            if (route == "help") renderHelpContent()
+        }
+    }
+
+    /** Filters what's on screen at once, then asks the server (which also searches bodies) 300 ms after the last keystroke. */
+    private fun searchHelp(text: String) {
+        helpQuery = text
+        helpSearchJob?.cancel()
+        val q = SupportHelpClient.normalizedQuery(text)
+        if (q == null) { helpResults = null; helpSearching = false; renderHelpContent(); return }
+        helpResults = SupportHelpLogic.localMatches(helpAll, q); helpSearching = true
+        renderHelpContent()
+        val language = SupportStrings.language
+        helpSearchJob = scope.launch {
+            delay(300)
+            val found = try { api.help.list(q, language) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            if (route != "help" || helpQuery != text) return@launch
+            found?.let { helpResults = it }
+            helpSearching = false
+            renderHelpContent()
+        }
+    }
+
+    private fun renderHelpContent() {
+        val box = helpContent ?: return
+        if (route != "help") return
+        box.removeAllViews()
+        fun add(v: View) = box.addView(v, lp(top = if (box.childCount > 0) dp(22) else 0))
+        val results = helpResults
+        when {
+            results != null -> when {
+                results.isNotEmpty() -> add(articleList(results))
+                helpSearching -> add(spinnerRow(s("support.help.searching")))
+                else -> add(helpMessage(R.drawable.apprefer_support_search, s("support.help.search.noResults", "query" to (SupportHelpClient.normalizedQuery(helpQuery) ?: "")), s("support.help.search.noResultsHint"), null))
+            }
+            helpAll.isEmpty() -> when {
+                helpLoaded && helpFailed -> add(helpMessage(R.drawable.apprefer_support_article, s("support.help.listFailed"), null) {
+                    helpLoaded = false; helpFailed = false; renderHelpContent(); loadHelp()
+                })
+                !helpLoaded -> add(spinnerRow(null))
+            }
+            else -> SupportHelpLogic.groups(helpAll).forEach { (title, list) ->
+                add(column().apply {
+                    title?.let { addView(label(it).apply { setPaddingRelative(dp(6), 0, 0, 0) }, lp()) }
+                    addView(articleList(list), lp(top = if (title != null) dp(10) else 0))
+                })
+            }
+        }
+        if (helpLoaded || helpAll.isNotEmpty()) add(stillNeedHelpCard(null))
+    }
+
+    private fun articleList(list: List<AppReferHelpArticle>): View {
+        val card = column().apply { setPadding(0, dp(4), 0, dp(4)); background = rounded(c.card, 22); clipToOutline = true }
+        shadow(card, 3, .07f)
+        list.forEachIndexed { i, article ->
+            if (i > 0) card.addView(View(context).apply { setBackgroundColor(c.divider) }, lp(h = max(1, dp(.5f)), start = dp(62)))
+            card.addView(articleRow(article, summaryLines = 2, horizontal = 14))
+        }
+        return card
+    }
+
+    // The article reader.
+
+    private fun buildArticle() {
+        buildHelpFrame(s("support.help.title"))
+        articleContent = column().also { body.addView(it, lp()) }
+        renderArticle()
+        if (articleDetail == null) loadArticle()
+    }
+
+    private fun loadArticle() {
+        val slug = articleSlug ?: return
+        articleFailed = false
+        scope.launch {
+            try {
+                val detail = api.help.article(slug, SupportStrings.language)
+                val blocks = withContext(Dispatchers.Default) { SupportMarkdown.blocks(detail.body) }
+                if (articleSlug == slug) { articleDetail = detail; articleBlocks = blocks }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { if (articleSlug == slug) articleFailed = articleDetail == null }
+            if (route == "article" && articleSlug == slug) renderArticle()
+        }
+    }
+
+    private fun renderArticle() {
+        val box = articleContent ?: return
+        box.removeAllViews()
+        val detail = articleDetail
+        val title = detail?.title ?: articleTitle
+        detail?.category?.let { box.addView(text(it.uppercase(SupportStrings.locale), 12f, p.accent, 700).apply { letterSpacing = 0.05f }, lp(-2)) }
+        if (title.isNotEmpty()) box.addView(text(title, 28f, c.ink, 800).apply {
+            letterSpacing = -0.02f; if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+        }, lp(top = if (detail?.category != null) dp(8) else 0))
+        if (detail != null) {
+            val meta = row()
+            detail.article.updatedAtMillis?.let { ms ->
+                val day = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM, SupportStrings.locale).format(Date(ms))
+                meta.addView(text(s("support.help.updated", "date" to day), 13f, c.muted, 500), lp(-2, end = dp(8)))
+            }
+            if (detail.isDraft) meta.addView(draftBadge(), lp(-2))
+            if (meta.childCount > 0) box.addView(meta, lp(top = dp(8)))
+        }
+        val content: View = when {
+            detail != null -> markdownView(articleBlocks).apply { setPadding(dp(20), dp(20), dp(20), dp(20)); background = rounded(c.card, 26) }.also { shadow(it, 3, .07f) }
+            articleFailed -> helpMessage(R.drawable.apprefer_support_article, s("support.help.loadFailed"), null) { loadArticle(); renderArticle() }.apply { background = rounded(c.card, 26) }
+            else -> spinnerRow(s("support.help.loading"))
+        }
+        box.addView(content, lp(top = dp(20)))
+        box.addView(stillNeedHelpCard(title.takeIf { it.isNotEmpty() }), lp(top = dp(24)))
+        // Open in browser, once the article is known to have a web page.
+        headerTrailing?.apply {
+            removeAllViews()
+            detail?.article?.webUrl?.let { url ->
+                addView(circleButton(R.drawable.apprefer_support_open, s("support.help.openInBrowser"), 42, 18, c.ink, oval(supportAlpha(c.ink, .05f))) { openExternal(url) },
+                    FrameLayout.LayoutParams(dp(42), dp(42)))
+            }
+        }
+    }
+
+    /** Opens an http(s) or mailto link outside the app; anything else is ignored. */
+    private fun openExternal(url: String) {
+        val safe = SupportMarkdown.safeUrl(url) ?: return
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(safe)).apply { if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        try { context.startActivity(intent) } catch (_: Exception) {}
+    }
+
+    // MARK: - Markdown
+
+    /** Renders parsed article blocks. Links open in the browser; nothing in an article can run code. */
+    private fun markdownView(blocks: List<SupportMarkdownBlock>): LinearLayout {
+        val box = column()
+        var previous: SupportMarkdownBlock? = null
+        for (block in blocks) {
+            val gap = when {
+                previous == null -> 0
+                previous is SupportMarkdownBlock.ListItem && block is SupportMarkdownBlock.ListItem -> dp(7)
+                previous is SupportMarkdownBlock.Heading -> dp(8)
+                block is SupportMarkdownBlock.Heading -> dp(22)
+                else -> dp(14)
+            }
+            box.addView(blockView(block), lp(top = gap))
+            previous = block
+        }
+        return box
+    }
+
+    private fun richText(value: SupportRichText, size: Float, color: Int = c.ink, weight: Int = 400): TextView {
+        val spanned = android.text.SpannableStringBuilder(value.text)
+        for (span in value.spans) {
+            if (span.start < 0 || span.end > value.text.length || span.start >= span.end) continue
+            val styles: List<Any> = when (span.style) {
+                SupportInlineStyle.BOLD -> listOf(android.text.style.StyleSpan(Typeface.BOLD))
+                SupportInlineStyle.ITALIC -> listOf(android.text.style.StyleSpan(Typeface.ITALIC))
+                SupportInlineStyle.STRIKE -> listOf(android.text.style.StrikethroughSpan())
+                SupportInlineStyle.CODE -> listOf(android.text.style.TypefaceSpan("monospace"), android.text.style.BackgroundColorSpan(supportAlpha(c.ink, .07f)))
+                SupportInlineStyle.LINK -> span.url?.let { url -> listOf(object : android.text.style.ClickableSpan() {
+                    override fun onClick(widget: View) { openExternal(url) }
+                    override fun updateDrawState(ds: android.text.TextPaint) { ds.color = p.accent; ds.isUnderlineText = true }
+                }) } ?: emptyList()
+            }
+            styles.forEach { spanned.setSpan(it, span.start, span.end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+        }
+        return text("", size, color, weight).apply {
+            text = spanned; setLineSpacing(dpf(3), 1f)
+            if (value.links.isNotEmpty()) { movementMethod = android.text.method.LinkMovementMethod.getInstance(); highlightColor = supportAlpha(p.accent, .2f) }
+            else setTextIsSelectable(true)
+        }
+    }
+
+    private fun blockView(block: SupportMarkdownBlock): View = when (block) {
+        is SupportMarkdownBlock.Heading -> richText(block.text, when (block.level) { 1 -> 23f; 2 -> 20f; 3 -> 17f; else -> 15.5f }, weight = if (block.level <= 2) 700 else 600).apply {
+            if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+        }
+        is SupportMarkdownBlock.Paragraph -> richText(block.text, 16f)
+        is SupportMarkdownBlock.ListItem -> row().apply {
+            gravity = Gravity.TOP
+            setPaddingRelative(dp(20) * block.depth, 0, 0, 0)
+            val marker: View = block.number?.let { n ->
+                text("$n.", 15f, p.accent, 600).apply { gravity = Gravity.END; minWidth = dp(20); textDirection = View.TEXT_DIRECTION_LTR }
+            } ?: View(context).apply { background = oval(supportAlpha(p.accent, if (block.depth == 0) 1f else .5f)) }
+            if (block.number != null) addView(marker, lp(-2, top = dp(1)))
+            else addView(marker, lp(dp(6), dp(6), top = dp(9), start = dp(2)))
+            addView(richText(block.text, 16f), lp(0, weight = 1f, start = dp(10)))
+        }
+        is SupportMarkdownBlock.Quote -> row().apply {
+            gravity = Gravity.TOP
+            addView(View(context).apply { background = rounded(supportAlpha(p.accent, .6f), 2) }, lp(dp(4), -1))
+            addView(richText(block.text, 15.5f, c.muted).apply { setTypeface(typeface, Typeface.ITALIC) }, lp(0, weight = 1f, start = dp(12)))
+        }
+        is SupportMarkdownBlock.Code -> HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false; layoutDirection = View.LAYOUT_DIRECTION_LTR
+            background = rounded(supportAlpha(c.ink, .05f), 14)
+            addView(TextView(context).apply {
+                text = block.code; typeface = Typeface.MONOSPACE; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f); setTextColor(c.ink)
+                setPadding(dp(14), dp(14), dp(14), dp(14)); setTextIsSelectable(true); textDirection = View.TEXT_DIRECTION_LTR
+            })
+        }
+        is SupportMarkdownBlock.Rule -> View(context).apply { setBackgroundColor(c.divider) }.let { rule ->
+            FrameLayout(context).apply { setPadding(0, dp(4), 0, dp(4)); addView(rule, FrameLayout.LayoutParams(-1, max(1, dp(1)))) }
+        }
+        is SupportMarkdownBlock.Image -> ImageView(context).apply {
+            adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER; maxHeight = dp(360)
+            contentDescription = block.alt.ifEmpty { s("support.a11y.screenshot") }
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) { outline.setRoundRect(0, 0, view.width, view.height, dpf(14)) }
+            }
+            clipToOutline = true
+            val picture = this
+            SupportImages.cached(block.url)?.let { setImageBitmap(it) } ?: run {
+                minimumHeight = dp(160); setBackgroundColor(supportAlpha(c.ink, .05f))
+                scope.launch {
+                    try {
+                        picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(block.url) })
+                        picture.minimumHeight = 0; picture.background = null
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { picture.visibility = View.GONE }
+                }
+            }
+        }
     }
 
     // MARK: - Composer
@@ -1022,6 +1515,9 @@ class AppReferSupportView @JvmOverloads constructor(
             hideKeyboard()
             val stash = homeStash; homeStash = null
             draft = stash?.draft ?: ""; images.clear(); stash?.let { images.addAll(it.images) }; topic = stash?.topic; sendError = stash?.error
+        } else if (route != next) {
+            // Help screens have no field of their own: the home's draft stays where it is.
+            hideKeyboard()
         }
         route = next; loadError = null; render(); saveDraft()
         if (visible) startPolling()
@@ -1029,8 +1525,12 @@ class AppReferSupportView @JvmOverloads constructor(
 
     fun goBack(): Boolean {
         if (starting) return true
-        if (route == "home") return false
-        navigate("home"); return true
+        when (route) {
+            "home" -> return false
+            "article" -> navigate(articleBack)
+            else -> navigate("home")
+        }
+        return true
     }
 
     fun addImages(uris: List<Uri>) {
@@ -1055,13 +1555,14 @@ class AppReferSupportView @JvmOverloads constructor(
                 val screen = route; val conversation = id
                 try {
                     if (screen == "home") {
+                        refreshArticles()
                         val list = api.conversations()
                         // Re-render only on change, so a poll never resets a press or the scroll.
                         if (route == "home" && (list != conversations || !homeLoaded || loadError != null)) {
                             conversations = list; homeLoaded = true; loadError = null; renderHomeContent()
                         }
                         if (route == "home") personaChanged()
-                    } else if (conversation != null) {
+                    } else if (screen == "thread" && conversation != null) {
                         val t = api.thread(conversation, cursor)
                         if (route == "thread" && id == conversation) {
                             subject = t.conversation.subject
@@ -1073,8 +1574,10 @@ class AppReferSupportView @JvmOverloads constructor(
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) {
-                    loadError = SupportStrings.errorText(e, if (route == "thread") "support.thread.loadFailed" else "support.error.loadFailed")
-                    if (route == "home") { homeLoaded = true; renderHomeContent() } else if (messages.isEmpty()) renderMessages()
+                    if (route == "home" || route == "thread") {
+                        loadError = SupportStrings.errorText(e, if (route == "thread") "support.thread.loadFailed" else "support.error.loadFailed")
+                        if (route == "home") { homeLoaded = true; renderHomeContent() } else if (messages.isEmpty()) renderMessages()
+                    }
                 }
                 delay(if (route == "thread") 4_000 else 15_000)
             }
@@ -1090,6 +1593,7 @@ class AppReferSupportView @JvmOverloads constructor(
         if (::scrim.isInitialized) scrim.layoutParams = (scrim.layoutParams as LayoutParams).apply { height = top }
         header?.let { it.layoutParams = (it.layoutParams as LayoutParams).apply { topMargin = dp(10) + top } }
         if (route == "thread" && ::body.isInitialized) body.setPadding(dp(14), dp(86) + top, dp(14), body.paddingBottom)
+        if ((route == "help" || route == "article") && ::body.isInitialized) body.setPadding(dp(16), dp(86) + top, dp(16), dp(32))
         updateChrome()
     }
 
@@ -1142,7 +1646,8 @@ class AppReferSupportView @JvmOverloads constructor(
         val stream = atomic.startWrite()
         try {
             val out = java.io.DataOutputStream(stream)
-            out.writeUTF(route); out.writeUTF(id ?: ""); out.writeUTF(subject)
+            // The first field stays "home" or "thread" (what older saves hold); help screens are added at the end.
+            out.writeUTF(if (route == "thread") "thread" else "home"); out.writeUTF(id ?: ""); out.writeUTF(subject)
             val text = draft.toByteArray(Charsets.UTF_8); out.writeInt(text.size); out.write(text)
             out.writeInt(images.size); images.forEach { out.writeInt(it.size); out.write(it) }
             out.writeInt(pending.size)
@@ -1155,6 +1660,9 @@ class AppReferSupportView @JvmOverloads constructor(
                 out.writeInt(stash.images.size); stash.images.forEach { out.writeInt(it.size); out.write(it) }
                 out.writeUTF(stash.topic?.id ?: "")
             }
+            // 0.10.0: the help screen on show, so a rotation keeps the article or the help centre.
+            out.writeUTF(if (route == "help" || route == "article") route else "")
+            out.writeUTF(articleSlug ?: ""); out.writeUTF(articleTitle.take(500)); out.writeUTF(articleBack); out.writeUTF(helpQuery.take(200))
             out.flush(); atomic.finishWrite(stream)
         } catch (e: Exception) { atomic.failWrite(stream); throw e }
         file.name
@@ -1201,6 +1709,14 @@ class AppReferSupportView @JvmOverloads constructor(
                     val stashImages = List(stashCount) { val length = input.readInt(); require(length in 1..700_000); ByteArray(length).also { input.readFully(it) } }
                     val stashTopic = savedTopic(input.readUTF())
                     if (route == "thread") homeStash = HomeStash(stashText, stashImages, stashTopic, null)
+                }
+                if (input.available() > 0) {
+                    val screen = input.readUTF(); val slug = input.readUTF(); val title = input.readUTF(); val back = input.readUTF()
+                    helpQuery = input.readUTF().take(200)
+                    if (screen == "help") route = "help"
+                    else if (screen == "article" && slug.isNotEmpty()) {
+                        route = "article"; articleSlug = slug; articleTitle = title; articleBack = if (back == "help") "help" else "home"
+                    }
                 }
             }
             draftFile = file; render()

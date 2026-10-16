@@ -10,7 +10,7 @@ plugins {
 
 // Keep this in lockstep with `Version.kt` — plan §13 requires all four SDKs
 // (Flutter / iOS / RN / Android) to ship the same version.
-private val sdkVersion = "0.9.3"
+private val sdkVersion = "0.10.0"
 
 android {
     namespace = "com.apprefer.sdk"

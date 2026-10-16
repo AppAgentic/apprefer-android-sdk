@@ -158,11 +158,52 @@ object AppReferSupport {
     /** Opens the help home with the message field focused and optionally pre-filled. */
     @JvmOverloads fun compose(prefill: String = "") { app?.let { launch(it, null, prefill) } }
     @JvmOverloads fun compose(context: Context, prefill: String = "") { launch(context, null, prefill) }
-    private fun launch(context: Context, id: String?, draft: String?) {
+    /**
+     * Opens the help chat on one help article (e.g. from a "How does this work?" link). Back leads
+     * to the help home; "Message us" starts a conversation about the article.
+     */
+    fun openArticle(slug: String) { app?.let { openArticle(it, slug) } }
+    fun openArticle(context: Context, slug: String) { launch(context, null, null, article = slug) }
+    /** Opens the help chat on the help centre: every article, with search. */
+    fun openHelpCentre() { app?.let { openHelpCentre(it) } }
+    fun openHelpCentre(context: Context) { launch(context, null, null, helpCentre = true) }
+    private fun launch(context: Context, id: String?, draft: String?, article: String? = null, helpCentre: Boolean = false) {
         val intent = Intent(context, AppReferSupportActivity::class.java).putExtra("conversationId", id).putExtra("draft", draft)
+            .putExtra("article", article).putExtra("helpCentre", helpCentre)
         if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
+
+    // MARK: Help centre and status
+
+    /**
+     * The app's published help articles in the chat's language ([language], else the app's
+     * language), best first; with [query], search results (titles, summaries and bodies, up to 20).
+     * Test SDK keys (`pk_test_`) also get drafts (`isDraft`). Lists are kept in memory for five
+     * minutes; if a request fails, the last list for the same query is returned, and only without
+     * one is the error thrown.
+     */
+    @JvmOverloads suspend fun articles(query: String? = null): List<AppReferHelpArticle> =
+        api(app ?: error("Configure AppRefer first")).help.list(query, SupportStrings.language)
+
+    /**
+     * One help article with its markdown body, in the chat's language. Throws an
+     * [AppReferSupportException] whose `isNotFound` is true (HTTP 404) when the article doesn't
+     * exist or isn't published.
+     */
+    suspend fun article(slug: String): AppReferHelpArticleDetail =
+        api(app ?: error("Configure AppRefer first")).help.article(slug, SupportStrings.language)
+
+    /**
+     * What Support can do for this app: whether reply notifications work on Android
+     * (`pushReady`), whether customers can answer by email (`emailReplies`) and how many help
+     * articles are published. Register push tokens only when `pushReady` is true. Cached as long
+     * as the server allows (5 minutes once everything is verified, else 30 s).
+     */
+    suspend fun status(): AppReferSupportStatus = api(app ?: error("Configure AppRefer first")).help.status()
+
+    /** The customer's email from identify(), for the "we'll email you" line. */
+    internal val customerEmail: String? get() = email
     suspend fun registerPushToken(token: String) { val c = app ?: error("Configure AppRefer first"); api(c).register(token) }
     suspend fun removePushToken(token: String) { val c = app ?: error("Configure AppRefer first"); api(c).remove(token) }
     fun handleNotification(data: Map<String, String>): Boolean {

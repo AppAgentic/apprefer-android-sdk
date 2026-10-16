@@ -12,13 +12,17 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-internal data class SupportResponse(val status: Int, val body: String)
+internal data class SupportResponse(val status: Int, val body: String, val headers: Map<String, String> = emptyMap()) {
+    /** A response header, ignoring case. */
+    fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+}
 internal fun interface SupportTransport {
     fun request(method: String, url: String, headers: Map<String, String>, bytes: ByteArray?): SupportResponse
     fun cancel() {}
 }
 internal object SupportNetwork : SupportTransport {
-    private val connections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    // Not ConcurrentHashMap.newKeySet(): that is API 24+, and the SDK supports API 21.
+    private val connections: MutableSet<HttpURLConnection> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<HttpURLConnection, Boolean>())
     override fun cancel() { connections.forEach { it.disconnect() }; connections.clear() }
     override fun request(method: String, url: String, headers: Map<String, String>, bytes: ByteArray?): SupportResponse {
         require(URL(url).protocol == "https") { "Support requires HTTPS" }
@@ -30,7 +34,8 @@ internal object SupportNetwork : SupportTransport {
             headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
             if (bytes != null) { c.doOutput = true; c.setFixedLengthStreamingMode(bytes.size); c.outputStream.use { it.write(bytes) } }
             val status = c.responseCode
-            return SupportResponse(status, (if (status in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "")
+            val responseHeaders = c.headerFields.orEmpty().mapNotNull { (k, v) -> if (k == null || v.isNullOrEmpty()) null else k to v.joinToString(", ") }.toMap()
+            return SupportResponse(status, (if (status in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "", responseHeaders)
         } finally { connections.remove(c); c.disconnect() }
     }
 }
@@ -60,6 +65,8 @@ internal interface SupportStore {
  * chat shows its own text in the customer's language instead.
  */
 class AppReferSupportException(val status: Int, message: String) : Exception(message) {
+    /** The help article doesn't exist or isn't published (HTTP 404). */
+    val isNotFound: Boolean get() = status == 404
     /** What kind of failure, so the chat can explain it in the customer's language. */
     internal enum class Reason { SERVER, UPLOAD, UNAVAILABLE }
     internal var reason: Reason = Reason.SERVER
@@ -77,6 +84,10 @@ internal class SupportAPI(
     private val identityCleared: () -> Boolean = { false },
 ) {
     private val mutex = Mutex()
+    /** Help centre and status: SDK key only, no session (SupportHelp.kt). */
+    val help = SupportHelpClient(key, transport, base)
+    /** Whether this install has registered for reply notifications. */
+    val hasPushToken: Boolean get() = store.pushToken != null
     @Volatile private var generation = 0
     private val accountLock = Any()
     private val deferredRevocations = mutableListOf<Map<String, Any?>>()

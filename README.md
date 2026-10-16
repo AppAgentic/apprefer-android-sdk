@@ -1,6 +1,15 @@
 # AppRefer Android SDK
 
-## 0.10.0 (unreleased): the help chat speaks 35 languages
+## 0.10.0 (unreleased): help centre in the chat; the help chat speaks 35 languages
+
+**Help centre.** When your app has published help articles in AppRefer, the help home
+shows a "Help articles" card (search plus the top articles), with a help centre screen
+(every article by category, search) and an article reader. "Still need help? Message
+us" starts a conversation about the article. Nothing changes for apps without
+articles. Read them in code too: `AppRefer.support.articles(query)`, `article(slug)`,
+and `AppRefer.support.status()` to decide whether to register push tokens. See
+[Help centre and status](#help-centre-and-status-0100). Also fixes a crash risk on
+Android 5–6: the SDK no longer uses API 24+ collection methods.
 
 **AppRefer Support is localized.** Every label, placeholder, error and accessibility
 label in the help chat ships in 35 languages and follows the language your app is
@@ -405,8 +414,8 @@ AppRefer.support.topics = listOf(
     AppReferSupportTopic("Report a bug", "Screenshots welcome", R.drawable.ic_bug, Color.RED, "What went wrong?"),
 )
 
-// From a coroutine, after obtaining an FCM token:
-AppRefer.support.registerPushToken(token)
+// From a coroutine, after obtaining an FCM token, once AppRefer has verified your service account:
+if (runCatching { AppRefer.support.status() }.getOrNull()?.pushReady == true) AppRefer.support.registerPushToken(token)
 val unread = AppRefer.support.unreadCount()
 AppRefer.support.removePushToken(token)       // when unregistering this device
 
@@ -462,6 +471,32 @@ Overriding a string resource also works the Android way: define `apprefer_suppor
 Two Android details: with an App Bundle, Google Play installs only the device's languages, so a forced language the device doesn't list (or an in-app choice on Android 12 and older) may be missing and shows English; disable language splits (`bundle { language { enableSplit = false } }`) if you force languages. If your build keeps only some languages (`localeFilters` / `resConfigs`), the chat's other translations are removed too and those languages show English.
 
 Every key, its English text, a note for translators and all translations are in [`Localization/support-strings.json`](Localization/support-strings.json), the table all four AppRefer SDKs share; `scripts/generate-support-strings.py` regenerates the resources from it. Messages your team writes and the AI assistant's answers and hand-over line come from AppRefer, not from this table.
+
+### Help centre and status (0.10.0)
+
+Publish help articles in AppRefer (dashboard, API or MCP) and they appear in the chat with no code: a "Help articles" card on the help home (search and the first three; "See all" with more), a help centre screen (articles by category, search that filters as you type and then asks the server, which also searches article bodies) and a reader. The reader renders markdown (headings, lists, bold and italic, code, quotes, links and https images) with a small built-in parser and Android spans; HTML is never run and only http(s) and mailto links are kept, opened in the browser or mail app. "Still need help? Message us" goes back to the message field with the article's title as the conversation subject. Apps without published articles see no help section at all. Articles come in the chat's language (the best translation the server has); lists are kept in memory for five minutes, and offline the chat shows what it had, never an error screen. Test keys (`pk_test_`) also show drafts, marked "Draft". The screen on show survives rotation.
+
+```kotlin
+// Open straight on the help centre or one article (any translation's slug works)
+AppRefer.support.openHelpCentre()
+AppRefer.support.openArticle("restore-purchases")
+AppReferSupportView(context, destination = AppReferSupportDestination.Article("restore-purchases")) // or HelpCentre / Conversation(id) / Home
+
+// Your own help screens (suspend functions)
+val articles = AppRefer.support.articles()              // List<AppReferHelpArticle>: slug, title, summary, category, url, updatedAt, isDraft
+val results = AppRefer.support.articles("refund")       // server search (titles, summaries, bodies), up to 20
+try {
+    val article = AppRefer.support.article("refunds")   // AppReferHelpArticleDetail: + body (markdown)
+} catch (e: AppReferSupportException) { if (e.isNotFound) { /* removed or unpublished */ } }
+
+// Is Support ready?
+val status = AppRefer.support.status()
+status.pushReady            // FCM configured and Google accepted the service account
+status.emailReplies         // customers can answer reply emails
+status.helpCentreArticles   // published articles
+```
+
+`status()` follows the server's caching (5 minutes once every configured channel is verified, else 30 seconds), so calling it on every launch is cheap. Register push tokens only when `pushReady` is true. The line under a customer's last message follows the same status: "we'll notify you" when push is ready and the app registered, "we'll email you" when replies are emailed and the customer gave an email in `identify`, otherwise "the team's reply will appear here".
 
 ## Tracking consent (0.6.0)
 

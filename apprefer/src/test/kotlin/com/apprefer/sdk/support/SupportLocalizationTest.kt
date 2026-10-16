@@ -37,7 +37,8 @@ class SupportLocalizationTest {
             assertTrue("$language: values folder is missing", folder != null && File(folder, "apprefer_support_strings.xml").isFile)
         }
         val keys = shared.getJSONObject("keys").keys().asSequence().toList()
-        assertEquals(78, keys.size)
+        // 78 chat keys + 22 help centre / status keys (0.10.0).
+        assertEquals(100, keys.size)
         assertEquals("every key has a resource", keys.toSet(), SupportStringIds.text.keys + SupportStringIds.plurals.keys)
         assertEquals(keys.toSet(), english.strings.keys + english.plurals.keys)
         for (key in listOf("support.home.subtitle", "support.ai.tag", "support.error.offline", "support.notification.channel")) {

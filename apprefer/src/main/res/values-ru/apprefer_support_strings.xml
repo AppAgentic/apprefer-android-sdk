@@ -162,4 +162,48 @@
     <string name="apprefer_support_error_rate_limited">Слишком много сообщений. Подождите немного и попробуйте снова.</string>
     <!-- support.notification.channel: Android notification channel name for support reply notifications (shown in system settings). -->
     <string name="apprefer_support_notification_channel">Ответы поддержки</string>
+    <!-- support.help.title: Section label (shown in capitals) above the help articles on the help home, and the title of the help centre screen. -->
+    <string name="apprefer_support_help_title">Справочные статьи</string>
+    <!-- support.help.search.placeholder: Placeholder in the help centre's search field. -->
+    <string name="apprefer_support_help_search_placeholder">Поиск по справке</string>
+    <!-- support.help.search.noResults: Shown when a help centre search finds nothing. {query} = what the customer typed. Use your language's quotation marks. -->
+    <string name="apprefer_support_help_search_no_results">По запросу «{query}» ничего не найдено</string>
+    <!-- support.help.search.noResultsHint: Line under the empty search result. -->
+    <string name="apprefer_support_help_search_no_results_hint">Попробуйте другие слова или напишите нам — мы поможем.</string>
+    <!-- support.help.searching: Shown while a help centre search runs. -->
+    <string name="apprefer_support_help_searching">Поиск…</string>
+    <!-- support.help.seeAll: Button next to the help articles section on the help home; opens every article. Very short. -->
+    <string name="apprefer_support_help_see_all">Показать все</string>
+    <!-- support.help.loading: Shown while one help article loads. -->
+    <string name="apprefer_support_help_loading">Загрузка статьи…</string>
+    <!-- support.help.loadFailed: Shown when one help article can't be loaded (offline or removed). -->
+    <string name="apprefer_support_help_load_failed">Не удалось загрузить статью.</string>
+    <!-- support.help.listFailed: Shown on the help centre screen when the article list can't be loaded and nothing is cached. -->
+    <string name="apprefer_support_help_list_failed">Не удалось загрузить справочные статьи.</string>
+    <!-- support.help.updated: Under an article's title. {date} = when it was last changed, as a date such as '16 Oct 2026' in the customer's language. -->
+    <string name="apprefer_support_help_updated">Обновлено {date}</string>
+    <!-- support.help.draft: Small badge on an unpublished article (only visible in test builds). -->
+    <string name="apprefer_support_help_draft">Черновик</string>
+    <!-- support.help.otherCategory: Heading for articles without a category, shown after the categorised ones in the help centre. -->
+    <string name="apprefer_support_help_other_category">Другие статьи</string>
+    <!-- support.help.stillNeedHelp: Title of the card at the end of an article and of the help centre, above the 'Message us' button. -->
+    <string name="apprefer_support_help_still_need_help">Всё ещё нужна помощь?</string>
+    <!-- support.help.messageUs: Button that starts a conversation with the team (from an article or the help centre). Short. -->
+    <string name="apprefer_support_help_message_us">Написать нам</string>
+    <!-- support.help.prompt: Hint in the message field after the customer tapped 'Message us' on an article. -->
+    <string name="apprefer_support_help_prompt">С чем ещё нужна помощь?</string>
+    <!-- support.help.openInBrowser: Button (and accessibility label) that opens the article's web page. -->
+    <string name="apprefer_support_help_open_in_browser">Открыть в браузере</string>
+    <!-- support.help.a11y.clearSearch: Accessibility label for the button that empties the search field. -->
+    <string name="apprefer_support_help_a11y_clear_search">Очистить поиск</string>
+    <!-- support.help.a11y.article: Accessibility label for an article row. {title} = the article's title. -->
+    <string name="apprefer_support_help_a11y_article">Статья: {title}</string>
+    <!-- support.status.sentNoticeEmail: Under the customer's last message when the app can't send notifications but replies are emailed. {time} = clock time, same wording as 'support.thread.sentNotice'. -->
+    <string name="apprefer_support_status_sent_notice_email">Отправлено в {time} · пришлём письмо, когда команда ответит</string>
+    <!-- support.status.sentNoticeEmailNoTime: Like 'support.status.sentNoticeEmail' when the time is unknown. -->
+    <string name="apprefer_support_status_sent_notice_email_no_time">Отправлено · пришлём письмо, когда команда ответит</string>
+    <!-- support.status.sentNoticeInApp: Under the customer's last message when neither notifications nor email can reach them, so the reply only shows in the chat. {time} = clock time. -->
+    <string name="apprefer_support_status_sent_notice_in_app">Отправлено в {time} · ответ команды появится здесь</string>
+    <!-- support.status.sentNoticeInAppNoTime: Like 'support.status.sentNoticeInApp' when the time is unknown. -->
+    <string name="apprefer_support_status_sent_notice_in_app_no_time">Отправлено · ответ команды появится здесь</string>
 </resources>
