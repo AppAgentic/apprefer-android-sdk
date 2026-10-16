@@ -5,6 +5,7 @@
          if they declare a Play Data Safety non-personalized-ads posture. -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
     <application>
+        <provider android:name="com.apprefer.sdk.AppReferInitializer" android:authorities="${applicationId}.apprefer-init" android:exported="false" android:initOrder="100" />
         <activity android:name="com.apprefer.sdk.support.AppReferSupportActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>

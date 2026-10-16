@@ -1,6 +1,9 @@
 package com.apprefer.sdk.support
 
 import com.apprefer.sdk.internal.JsonCodec
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,7 +25,7 @@ internal object SupportNetwork : SupportTransport {
         val c = URL(url).openConnection() as HttpURLConnection
         connections.add(c)
         try {
-            c.requestMethod = method; c.connectTimeout = 20_000; c.readTimeout = 60_000
+            c.requestMethod = method; c.connectTimeout = if (method == "DELETE") 5_000 else 20_000; c.readTimeout = if (method == "DELETE") 5_000 else 60_000
             c.instanceFollowRedirects = false
             headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
             if (bytes != null) { c.doOutput = true; c.setFixedLengthStreamingMode(bytes.size); c.outputStream.use { it.write(bytes) } }
@@ -31,7 +34,14 @@ internal object SupportNetwork : SupportTransport {
         } finally { connections.remove(c); c.disconnect() }
     }
 }
+private object SupportStoreDefaults { val revocations = java.util.Collections.synchronizedMap(java.util.WeakHashMap<SupportStore, String>()) }
 internal interface SupportStore {
+    var pendingRevocations: String?
+        get() = SupportStoreDefaults.revocations[this]
+        set(value) { if (value == null) SupportStoreDefaults.revocations.remove(this) else SupportStoreDefaults.revocations[this] = value }
+    var lastKey: String?
+        get() = null
+        set(_) {}
     var token: String?
     var profile: String?
     var pushToken: String?
@@ -49,26 +59,55 @@ internal class SupportAPI(
 ) {
     private val mutex = Mutex()
     @Volatile private var generation = 0
+    private val accountLock = Any()
+    private val deferredRevocations = mutableListOf<Map<String, Any?>>()
+    val actionGeneration: Int get() = generation
+    private val revokeScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     suspend fun reset() = withContext(Dispatchers.IO) {
-        generation++
-        transport.cancel()
-        mutex.withLock {
-            val old = store.token
-            val push = store.pushToken
+        synchronized(accountLock) {
+            generation++
+            val old = store.token; val push = store.pushToken; val oldKey = key() ?: store.lastKey
             store.token = null; store.profile = null; store.pushToken = null; persona = null
-            if (old != null && key() != null) {
-                if (push != null) runCatching { raw("DELETE", "$root/push-token", mapOf("token" to push), old) }
-                runCatching { raw("DELETE", "$root/session", null, old) }
+            if (old != null) {
+                deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push))
+                runCatching {
+                    val items = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
+                    store.pendingRevocations = JsonCodec.encode(mapOf("items" to (items + deferredRevocations).distinctBy { it["token"] }))
+                }
             }
         }
+        transport.cancel()
+        // Revocation never holds the session mutex or delays local logout / B's session.
+        revokeScope.launch { runCatching { revokePending() } }
         Unit
     }
+    fun resumeRevocations() { revokeScope.launch { runCatching { revokePending() } } }
+    private val revocationMutex = Mutex()
+    private suspend fun revokePending() = revocationMutex.withLock {
+        val pending = synchronized(accountLock) { (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] } }
+        for (item in pending) {
+            val apiKey = item["key"] as? String ?: key() ?: continue
+            val token = item["token"] as? String ?: continue
+            for (path in listOfNotNull(if (item["push"] != null) "/push-token" else null, "/session")) {
+                runCatching {
+                    val headers = mapOf("X-AppRefer-Key" to apiKey, "X-AppRefer-Support-Session" to token, "Content-Type" to "application/json")
+                    transport.request("DELETE", base + root + path, headers, if (path == "/push-token") JsonCodec.encode(mapOf("token" to item["push"])).toByteArray() else null)
+                }
+            }
+            synchronized(accountLock) {
+                deferredRevocations.removeAll { it["token"] == token }
+                val current = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
+                store.pendingRevocations = JsonCodec.encode(mapOf("items" to current.filter { it["token"] != token }))
+            }
+        }
+    }
     private val root = "/api/support/v1"
-    private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?): Map<String, Any?> {
+    private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?, epoch: Int = generation): Map<String, Any?> {
+        check(epoch == generation) { "Support reset" }
         val headers = mutableMapOf("X-AppRefer-Key" to (key() ?: error("Configure AppRefer first")))
         token?.let { headers["X-AppRefer-Support-Session"] = it }
         val bytes = body?.let { headers["Content-Type"] = "application/json"; JsonCodec.encode(it).toByteArray(Charsets.UTF_8) }
-        val epoch = generation
+        check(epoch == generation) { "Support reset" }
         val r = transport.request(method, base + path, headers, bytes)
         check(epoch == generation) { "Support reset" }
         val obj = JsonCodec.decodeObject(r.body)
@@ -76,29 +115,35 @@ internal class SupportAPI(
         return obj
     }
     private fun session(): String {
+        val epoch = generation
+        store.lastKey = key() ?: store.lastKey
         val p = identity().toSortedMap(); val fingerprint = JsonCodec.encode(p)
         val old = store.token
         if (old != null) {
-            if (store.profile != fingerprint) { val replacement = raw("POST", "$root/session", p, old)["session"] as? String ?: error("Missing support session"); store.token = replacement; store.profile = fingerprint }
+            if (store.profile != fingerprint) { val replacement = raw("POST", "$root/session", p, old, epoch)["session"] as? String ?: error("Missing support session"); synchronized(accountLock) { check(epoch == generation) { "Support reset" }; store.token = replacement; store.profile = fingerprint } }
             return requireNotNull(store.token)
         }
-        val token = raw("POST", "$root/session", p, null)["session"] as? String ?: error("Missing support session")
-        store.token = token; store.profile = fingerprint
+        val token = raw("POST", "$root/session", p, null, epoch)["session"] as? String ?: error("Missing support session")
+        synchronized(accountLock) { check(epoch == generation) { "Support reset" }; store.token = token; store.profile = fingerprint }
         return token
     }
-    private suspend fun call(method: String, path: String, body: Map<String, Any?>? = null): Map<String, Any?> = withContext(Dispatchers.IO) {
-        val epoch = generation
+    private suspend fun call(method: String, path: String, body: Map<String, Any?>? = null, epoch: Int = generation): Map<String, Any?> = withContext(Dispatchers.IO) {
+        currentCoroutineContext().ensureActive()
+        check(epoch == generation) { "Support reset" }
+        revokeScope.launch { runCatching { revokePending() } }
         mutex.withLock {
+            check(epoch == generation) { "Support reset" }
+            currentCoroutineContext().ensureActive()
             try {
                 val bearer = session()
                 check(epoch == generation) { "Support reset" }
-                raw(method, root + path, body, bearer)
+                raw(method, root + path, body, bearer, epoch)
             }
             catch (e: AppReferSupportException) {
                 check(epoch == generation) { "Support reset" }
                 if (e.status != 401 || !e.message.orEmpty().contains("support session", true)) throw e
                 store.token = null; store.profile = null
-                raw(method, root + path, body, session())
+                raw(method, root + path, body, session(), epoch)
             }
         }
     }
@@ -112,23 +157,28 @@ internal class SupportAPI(
     @Volatile var persona: AppReferSupportPersona? = null
         private set
     suspend fun conversations(): List<AppReferSupportConversation> {
+        val epoch = generation
         val list = call("GET", "/conversations")
-        persona = AppReferSupportPersona.from(list)
+        synchronized(accountLock) { check(epoch == generation); persona = AppReferSupportPersona.from(list) }
         return list.objects("conversations").map { AppReferSupportConversation(it) }
     }
     suspend fun thread(id: String, after: String? = null): SupportThread =
         SupportThread(call("GET", "/conversations/${escape(id)}" + (after?.let { "?after=${escape(it)}" } ?: ""))).also { persona = it.persona }
-    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null): SupportThread =
+    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null, generation: Int = this.generation): SupportThread =
         SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
-            (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap())))
-    suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString()): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId)).obj("message"))
-    suspend fun register(token: String) { call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")); store.pushToken = token }
-    suspend fun remove(token: String) { call("DELETE", "/push-token", mapOf("token" to token)); store.pushToken = null }
-    suspend fun upload(bytes: ByteArray): String {
-        val slot = call("POST", "/attachments", mapOf("contentType" to "image/jpeg", "size" to bytes.size, "name" to "screenshot.jpg"))
+            (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap()), generation))
+    suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), generation: Int = this.generation): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId), generation).obj("message"))
+    suspend fun register(token: String) { val epoch = generation; call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")); synchronized(accountLock) { check(epoch == generation); store.pushToken = token } }
+    suspend fun remove(token: String) { val epoch = generation; call("DELETE", "/push-token", mapOf("token" to token)); synchronized(accountLock) { check(epoch == generation); store.pushToken = null } }
+    suspend fun upload(bytes: ByteArray, generation: Int = this.generation): String {
+        check(generation == this.generation) { "Support reset" }
+        val slot = call("POST", "/attachments", mapOf("contentType" to "image/jpeg", "size" to bytes.size, "name" to "screenshot.jpg"), generation)
         return withContext(Dispatchers.IO) {
+            currentCoroutineContext().ensureActive()
+            check(generation == this@SupportAPI.generation) { "Support reset" }
             val headers = slot.obj("headers").mapValues { it.value.toString() }
             val response = transport.request("PUT", slot["uploadUrl"] as String, headers, bytes)
+            check(generation == this@SupportAPI.generation) { "Support reset" }
             if (response.status !in 200..299) throw AppReferSupportException(response.status, "The screenshot didn't upload")
             slot["attachmentId"] as String
         }

@@ -34,23 +34,28 @@ object AppReferSupport {
     private var client: SupportAPI? = null
     @Volatile private var supportKey: String? = null
     internal val resetListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
-    fun configure(context: Context, apiKey: String) { supportKey = apiKey; configure(context) }
-    internal fun setUserId(userId: String) { app?.let { AppReferStorage(it).setUserId(userId) } }
-    suspend fun reset() {
+    fun configure(context: Context, apiKey: String) { supportKey = apiKey; configure(context); resumeRevocations() }
+    internal fun resumeRevocations() { app?.let { c -> scope.launch { runCatching { api(c).resumeRevocations() } } } }
+    internal fun setUserId(userId: String) { (app ?: com.apprefer.sdk.AppReferContext.context)?.let { AppReferStorage(it).setUserId(userId) } }
+    @Volatile internal var accountGeneration = 0
+    suspend fun reset(context: Context? = com.apprefer.sdk.AppReferContext.context) = withContext(Dispatchers.IO) {
         scope.coroutineContext.cancelChildren()
         name = null; email = null
-        if (app == null) return
-        withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
-        app?.let { c ->
+        val c = app ?: context
+        if (c != null) {
+            configure(c)
             AppReferStorage(c).clearUser()
-            c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() }
+            runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
             api(c).reset()
         }
+        accountGeneration++
+        withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Synchronized internal fun configure(context: Context) {
         if (app != null) return
         app = context.applicationContext
+        com.apprefer.sdk.AppReferContext.context = app
         if (Build.VERSION.SDK_INT >= 26) {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
                 NotificationChannel("apprefer_support", "Support replies", NotificationManager.IMPORTANCE_DEFAULT))

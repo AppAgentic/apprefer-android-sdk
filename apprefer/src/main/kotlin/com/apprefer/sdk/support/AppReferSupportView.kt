@@ -184,8 +184,16 @@ class AppReferSupportView @JvmOverloads constructor(
         timeline.reset(); conversations = emptyList(); pending.clear()
         images.clear(); draft = ""; homeStash = null; id = null; topic = null
         draftFile?.delete(); draftFile = null
-        removeAllViews()
+        starting = false; sendError = null; loadError = null; route = "home"
+        homeClientMessageId = UUID.randomUUID().toString()
+        shownPersona = null; headerKey = null; shownQuickReplies = null; renderedCount = -1
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        removeAllViews(); render()
+        accountReset = false
+        if (isAttachedToWindow) resume()
     }
+
+    private val accountLifecycle = SupportAccountLifecycle({ AppReferSupport.accountGeneration }, AppReferSupport.resetListeners, resetListener)
 
     private var insetL = 0; private var insetT = 0; private var insetR = 0; private var insetB = 0
     private lateinit var scroll: SupportScrollView
@@ -212,7 +220,7 @@ class AppReferSupportView @JvmOverloads constructor(
     private var lastStatusDark: Boolean? = null
     private val thumbs = WeakHashMap<ByteArray, Bitmap>()
 
-    init { setBackgroundColor(backgroundColor); render(); AppReferSupport.resetListeners.add(resetListener) }
+    init { setBackgroundColor(backgroundColor); render() }
 
     // MARK: - Building blocks
 
@@ -916,12 +924,13 @@ class AppReferSupportView @JvmOverloads constructor(
         if (text.isEmpty() && images.isEmpty()) return
         starting = true; sendError = null
         updateSend(); renderAccessories(); saveDraft()
+        val epoch = api.actionGeneration
         val sentDraft = draft; val shots = images.toList(); val about = topic?.title; val clientId = homeClientMessageId
         scope.launch {
             try {
                 // Every attempt uses fresh upload slots but keeps the same send identity.
-                val ids = shots.map { api.upload(it) }
-                val t = api.start(text, ids, clientId, about)
+                val ids = shots.map { api.upload(it, epoch) }
+                val t = api.start(text, ids, clientId, about, epoch)
                 starting = false
                 // Clear only what was sent: anything typed or picked meanwhile stays as the next home draft.
                 if (draft == sentDraft) draft = ""
@@ -957,13 +966,14 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun deliver(message: SupportPending) {
+        val epoch = api.actionGeneration
         val conversation = message.conversationId ?: return
         message.failed = false
         saveDraft(); renderMessages()
         scope.launch {
             try {
-                val ids = message.images.map { api.upload(it) }
-                val m = api.send(conversation, message.text, ids, message.clientMessageId)
+                val ids = message.images.map { api.upload(it, epoch) }
+                val m = api.send(conversation, message.text, ids, message.clientMessageId, epoch)
                 pending.remove(message)
                 if (route == "thread" && id == conversation) timeline.merge(listOf(m))
             } catch (e: CancellationException) { message.failed = true; throw e }
@@ -1167,11 +1177,12 @@ class AppReferSupportView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        accountLifecycle.attach()
         if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         resume()
         if (focusOnOpen && route == "home") { focusOnOpen = false; focusField() }
     }
-    override fun onDetachedFromWindow() { AppReferSupport.resetListeners.remove(resetListener); pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { accountLifecycle.detach(); pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
 
     // MARK: - Dates
 

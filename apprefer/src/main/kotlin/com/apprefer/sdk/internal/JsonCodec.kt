@@ -62,6 +62,7 @@ internal object JsonCodec {
         } ?: System.currentTimeMillis()
 
         Attribution(
+            trackingDecisionPending = obj["trackingDecisionPending"] == true,
             network = network,
             campaign = obj["campaign"] as? String,
             matchType = matchType,
@@ -83,6 +84,7 @@ internal object JsonCodec {
     /** Serialize an [Attribution] to a snake_case JSON string (for SharedPreferences cache). */
     fun encodeAttribution(a: Attribution): String = safely("{}") {
         val map = mapOf(
+            "trackingDecisionPending" to a.trackingDecisionPending,
             "network" to a.network,
             "campaign" to a.campaign,
             "match_type" to a.matchType,

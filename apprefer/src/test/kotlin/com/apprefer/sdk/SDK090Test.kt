@@ -80,15 +80,16 @@ class SDK090Test {
         assertEquals(1, api.conversations().size)
         api.reset(); assertNull(store.token); assertNull(store.profile)
         user = "B"; assertTrue(api.conversations().isEmpty())
-        assertEquals(listOf("s1", "s1", "s2"), tokens)
+        withTimeout(1000) { while (tokens.size < 3) delay(1) }
+        assertEquals(2, tokens.count { it == "s1" }); assertEquals(1, tokens.count { it == "s2" })
         assertTrue(paths.all { it.contains("/api/support/v1/") })
         assertEquals("s2", store.token)
         api.reset()
     }
-    @Test fun typedOrganicRequiresServerConfirmationAndFailureWins() {
+    @Test fun typedOrganicRequiresServerConfirmationAndConfirmedCacheWins() {
         assertEquals(AppReferAttributionResult.Organic, AppReferAttributionResult.resolve(null, true, false))
         assertTrue(AppReferAttributionResult.resolve(null, false, false) is AppReferAttributionResult.Failed)
-        assertTrue(AppReferAttributionResult.resolve(null, true, true) is AppReferAttributionResult.Failed)
+        assertEquals(AppReferAttributionResult.Organic, AppReferAttributionResult.resolve(null, true, true))
     }
     @Test fun supportOnlyDoesNotInitializeAttributionOrCollectDeviceSignals() {
         val requestedPrefs = mutableListOf<String>()

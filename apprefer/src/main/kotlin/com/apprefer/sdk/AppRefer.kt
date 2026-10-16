@@ -48,6 +48,7 @@ object AppRefer {
     // One global singleton-ish state, protected for concurrent access.
     @Volatile private var state: SdkState? = null
     private val initMutex = Mutex()
+    private var eventQueue: EventQueue? = null
     @Volatile private var generation = 0
     @Volatile private var configureFailed = false
     private val consentReporter = com.apprefer.sdk.internal.ConsentReporter()
@@ -140,19 +141,28 @@ object AppRefer {
         val installReferrer: InstallReferrerCollector,
         val appContext: Context,
     ) {
-        val events = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it },
-            { storage.isSdkEnabled() }, { http.event(it) }, scope)
+        lateinit var events: EventQueue
     }
 
-    suspend fun reset() {
-        generation++
-        scope.coroutineContext.cancelChildren()
-        state?.let { it.http.cancel(); it.events.clear(); it.storage.clearUser() }
-        support.reset()
+    @JvmOverloads suspend fun reset(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
+        safelyRun {
+            synchronized(this@AppRefer) { generation++ }
+            scope.coroutineContext.cancelChildren()
+            state?.http?.cancel()
+            eventQueue?.clear()
+            val c = context ?: state?.appContext
+            c?.let { AppReferStorage(it).apply { clearUser(); safelyRun { pendingEvents = null }; clearEventQuarantine() } }
+            support.reset(c)
+        }
     }
 
-    suspend fun clearPendingEvents() {
-        state?.let { it.http.cancel(); it.events.clear() }
+    @JvmOverloads suspend fun clearPendingEvents(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
+        safelyRun {
+            state?.http?.cancelEvents()
+            if (eventQueue != null) eventQueue?.clear()
+            else (context ?: state?.appContext)?.let { AppReferStorage(it).pendingEvents = null }
+            (context ?: state?.appContext)?.let { AppReferStorage(it).clearEventQuarantine() }
+        }
     }
 
     suspend fun configureResult(context: Context, apiKey: String, userId: String? = null,
@@ -177,12 +187,14 @@ object AppRefer {
         debug: Boolean = false,
         logLevel: Int = 1,
     ): Attribution? = safely<Attribution?>(null) {
+        val accountEpoch = generation
         val s = ensureState(context, apiKey, debug, logLevel)
+        if (accountEpoch != generation) return@safely null
         scope.launch { safelyRun { s.events.flush() } }
 
         s.logger.info("AppReferSDK initialized v$APPREFER_SDK_VERSION")
 
-        if (userId != null) safelyRun { s.storage.setUserId(userId); support.identityChanged() }
+        if (userId != null) synchronized(this) { if (accountEpoch == generation) safelyRun { s.storage.setUserId(userId); support.identityChanged() } }
 
         // Record first run date
         safelyRun { s.storage.getFirstRunDate() }
@@ -199,6 +211,7 @@ object AppRefer {
             return@safely cachedAttribution(s)
         }
 
+        if (accountEpoch != generation) return@safely null
         return@safely resolveAttribution(s)
     }
 
@@ -239,14 +252,17 @@ object AppRefer {
     suspend fun trackEventResult(
         eventName: String, properties: Map<String, Any?>? = null,
         revenue: Double? = null, currency: String? = null,
-    ): AppReferEventResult = safely(AppReferEventResult.DROPPED) {
-        val s = state ?: return@safely AppReferEventResult.DROPPED
+    ): AppReferEventResult {
+        val s = state ?: return AppReferEventResult.DROPPED
+        val eventEpoch = s.events.generationSnapshot()
+        return withContext(Dispatchers.IO) { safely(AppReferEventResult.DROPPED) {
         val deviceId = s.storage.getDeviceId() ?: return@safely AppReferEventResult.DROPPED
         val body = linkedMapOf<String, Any?>("device_id" to deviceId, "event_name" to eventName)
         properties?.let { body["properties"] = it }
         revenue?.let { body["revenue"] = it }
         currency?.let { body["currency"] = it }
-        s.events.enqueue(body)
+        s.events.enqueue(body, eventEpoch)
+    } }
     }
 
     @JvmStatic
@@ -448,7 +464,16 @@ object AppRefer {
         com.apprefer.sdk.support.AppReferSupport.configure(appCtx)
         synchronized(this) {
             if (pendingConsentSet) storage.setTrackingConsent(pendingConsent)
+            AppReferContext.context = context.applicationContext
+            val read = { s.storage.pendingEvents }
+            val write: (String?) -> Unit = { s.storage.pendingEvents = it }
+            val enabled = { s.storage.isSdkEnabled() }
+            val send: suspend (Map<String, Any?>) -> Any? = s.http::eventResponse
+            if (eventQueue == null) eventQueue = EventQueue(read, write, enabled, send, scope, quarantine = s.storage::quarantineEvents)
+            else { state?.http?.cancelEvents(); eventQueue!!.replace(read, write, enabled, send, s.storage::quarantineEvents) }
+            s.events = eventQueue!!
             state = s
+            support.resumeRevocations()
         }
         (appCtx as? android.app.Application)?.registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: android.app.Activity) {

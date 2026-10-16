@@ -31,26 +31,33 @@ internal class HttpClient(
 ) {
 
     private val connections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    private val eventConnections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    @Volatile private var eventGeneration = 0
+    fun cancelEvents() { eventGeneration++; eventConnections.forEach { it.disconnect() }; eventConnections.clear() }
     @Volatile private var generation = 0
-    fun cancel() { generation++; connections.forEach { it.disconnect() }; connections.clear() }
+    fun cancel() { generation++; cancelEvents(); connections.forEach { it.disconnect() }; connections.clear() }
 
-    suspend fun event(body: Map<String, Any?>): Int? = withContext(Dispatchers.IO) {
-        val epoch = generation
+    suspend fun event(body: Map<String, Any?>): Int? = eventResponse(body).status
+
+    suspend fun eventResponse(body: Map<String, Any?>): EventResponse = withContext(Dispatchers.IO) {
+        val epoch = eventGeneration
         val host = TrackingConsent.hosts(consentProvider(), listOfNotNull(primaryBaseUrl, fallbackBaseUrl)).first()
         var connection: HttpURLConnection? = null
         try {
             connection = URL(host + "/api/track/event").openConnection() as HttpURLConnection
-            connections.add(connection)
-            if (epoch != generation) return@withContext null
+            eventConnections.add(connection)
+            if (epoch != eventGeneration) return@withContext EventResponse(null)
             connection.requestMethod = "POST"; connection.doOutput = true
             connection.connectTimeout = TIMEOUT_MS; connection.readTimeout = TIMEOUT_MS
             connection.setRequestProperty("X-AppRefer-Key", apiKey)
             connection.setRequestProperty("X-SDK-Version", APPREFER_SDK_VERSION)
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(JsonCodec.encode(body).toByteArray(StandardCharsets.UTF_8)) }
-            connection.responseCode
-        } catch (_: IOException) { null }
-        finally { connection?.let { connections.remove(it); it.disconnect() } }
+            val status = connection.responseCode
+            val header = connection.getHeaderField("Retry-After")
+            EventResponse(if (epoch == eventGeneration) status else null, retryAfter(header))
+        } catch (_: IOException) { EventResponse(null) }
+        finally { connection?.let { eventConnections.remove(it); it.disconnect() } }
     }
 
     /**
@@ -163,6 +170,10 @@ internal class HttpClient(
     private data class HttpResult(val outcome: Outcome, val json: Map<String, Any?>?)
 
     companion object {
+        internal fun retryAfter(header: String?, now: Long = System.currentTimeMillis()): Long {
+            header?.toDoubleOrNull()?.takeIf { it.isFinite() }?.let { return maxOf(0L, (it * 1000).toLong()) }
+            return runCatching { maxOf(0L, java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", java.util.Locale.US).parse(header ?: "")!!.time - now) }.getOrDefault(0L)
+        }
         private const val MAX_RETRIES = 3
         private const val TIMEOUT_MS = 10_000
     }
