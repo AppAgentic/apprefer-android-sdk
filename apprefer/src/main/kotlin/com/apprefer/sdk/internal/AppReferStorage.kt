@@ -29,7 +29,21 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
         safely(Unit) { prefs.edit().putString("apprefer_reported_tracking_consent", value).commit() }
     }
 
-    fun clearUser() { safely(Unit) { prefs.edit().remove(KEY_USER_ID).commit() } }
+    fun clearUser() { safely(Unit) { prefs.edit().remove(KEY_USER_ID).remove(KEY_SUPPORT_IDENTITY_CLEARED).commit() } }
+
+    /**
+     * Set by `AppRefer.support.clearIdentity()`: Support sends no app user id until the user id
+     * changes or reset() runs.
+     */
+    var supportIdentityCleared: Boolean
+        get() = safely(false) { prefs.getBoolean(KEY_SUPPORT_IDENTITY_CLEARED, false) }
+        set(value) {
+            safely(Unit) {
+                val editor = prefs.edit()
+                if (value) editor.putBoolean(KEY_SUPPORT_IDENTITY_CLEARED, true) else editor.remove(KEY_SUPPORT_IDENTITY_CLEARED)
+                editor.commit()
+            }
+        }
     fun clearEventQuarantine() { safely(Unit) { prefs.edit().remove("apprefer_pending_events_corrupt").commit() } }
     fun quarantineEvents(raw: String) { if (!prefs.edit().putString("apprefer_pending_events_corrupt", raw).commit()) throw java.io.IOException("Queue quarantine failed") }
     var pendingEvents: String?
@@ -151,7 +165,11 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
     fun getUserId(): String? = safely(null) { prefs.getString(KEY_USER_ID, null) }
 
     fun setUserId(value: String) {
-        safely(Unit) { prefs.edit().putString(KEY_USER_ID, value).apply() }
+        safely(Unit) {
+            // A different account ends a Support identity clear; the same id keeps it.
+            if (prefs.getString(KEY_USER_ID, null) != value) prefs.edit().remove(KEY_SUPPORT_IDENTITY_CLEARED).commit()
+            prefs.edit().putString(KEY_USER_ID, value).apply()
+        }
     }
 
     // endregion
@@ -175,5 +193,6 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
         private const val KEY_SDK_ENABLED = "sdk_enabled"
         private const val KEY_LAST_CONFIG_FETCH = "last_config_fetch"
         private const val KEY_USER_ID = "user_id"
+        private const val KEY_SUPPORT_IDENTITY_CLEARED = "apprefer_support_identity_cleared"
     }
 }

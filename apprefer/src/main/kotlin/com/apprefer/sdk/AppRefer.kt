@@ -59,6 +59,11 @@ object AppRefer {
     @Volatile internal var stoppedByReset = false
     /** "Off" was chosen in this process but couldn't be saved: the next configure must not resume. */
     @Volatile internal var collectionOffUnsaved = false
+    /**
+     * Advances on every reset() and nothing else, so AppRefer Billing can tell which account
+     * its user belongs to (the install link goes only to the Billing user set after the last reset).
+     */
+    @Volatile internal var accountEpoch = 0
     private val consentReporter = com.apprefer.sdk.internal.ConsentReporter()
     private var pendingConsentSet = false
     private var pendingConsent: String? = null
@@ -155,7 +160,7 @@ object AppRefer {
 
     @JvmOverloads suspend fun reset(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
         safelyRun {
-            synchronized(this@AppRefer) { generation++; stoppedByReset = true }
+            synchronized(this@AppRefer) { generation++; accountEpoch++; stoppedByReset = true }
             scope.coroutineContext.cancelChildren()
             state?.http?.cancel()
             val c = context ?: state?.appContext
@@ -482,13 +487,19 @@ object AppRefer {
     internal fun currentApiKey(): String? = state?.apiKey
 
     /**
-     * The install device id Support may send: only after configure in this process, never after
+     * The install device id Support and AppRefer Billing may send: only after configure in this process, never after
      * reset() (until configure runs again) or while collection is off. Support-only apps never
      * configure attribution, so they never send it.
      */
     internal fun supportDeviceId(): String? = safely<String?>(null) {
         val s = state ?: return@safely null
-        if (stoppedByReset || collectionOffUnsaved || !s.storage.isCollectionEnabled()) null else s.storage.getDeviceId()
+        if (installLinkAllowed()) s.storage.getDeviceId() else null
+    }
+
+    /** Support and AppRefer Billing may link requests to this install (see [supportDeviceId]). */
+    internal fun installLinkAllowed(): Boolean = safely(false) {
+        val s = state ?: return@safely false
+        !stoppedByReset && !collectionOffUnsaved && s.storage.isCollectionEnabled()
     }
 
     private suspend fun ensureState(

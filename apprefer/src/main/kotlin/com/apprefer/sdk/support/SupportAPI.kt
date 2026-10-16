@@ -34,11 +34,18 @@ internal object SupportNetwork : SupportTransport {
         } finally { connections.remove(c); c.disconnect() }
     }
 }
-private object SupportStoreDefaults { val revocations = java.util.Collections.synchronizedMap(java.util.WeakHashMap<SupportStore, String>()) }
+private object SupportStoreDefaults {
+    val revocations = java.util.Collections.synchronizedMap(java.util.WeakHashMap<SupportStore, String>())
+    val cleared: MutableSet<SupportStore> = java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(java.util.WeakHashMap<SupportStore, Boolean>()))
+}
 internal interface SupportStore {
     var pendingRevocations: String?
         get() = SupportStoreDefaults.revocations[this]
         set(value) { if (value == null) SupportStoreDefaults.revocations.remove(this) else SupportStoreDefaults.revocations[this] = value }
+    /** The stored token was minted (or adopted) while the Support identity was cleared. */
+    var clearedSession: Boolean
+        get() = this in SupportStoreDefaults.cleared
+        set(value) { if (value) SupportStoreDefaults.cleared.add(this) else SupportStoreDefaults.cleared.remove(this) }
     var lastKey: String?
         get() = null
         set(_) {}
@@ -56,6 +63,8 @@ internal class SupportAPI(
     private val context: () -> Map<String, Any?>,
     private val transport: SupportTransport = SupportNetwork,
     private val base: String = "https://apprefer.com",
+    /** True while `clearIdentity()` is in force (the persisted `supportIdentityCleared` flag). */
+    private val identityCleared: () -> Boolean = { false },
 ) {
     private val mutex = Mutex()
     @Volatile private var generation = 0
@@ -64,55 +73,122 @@ internal class SupportAPI(
     val actionGeneration: Int get() = generation
     private val revokeScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     suspend fun reset() = withContext(Dispatchers.IO) {
-        synchronized(accountLock) {
-            generation++
-            val old = store.token; val push = store.pushToken; val oldKey = key() ?: store.lastKey
-            store.token = null; store.profile = null; store.pushToken = null; persona = null
-            if (old != null) {
-                deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push, "createdAt" to System.currentTimeMillis(), "attempts" to 0))
-                runCatching {
-                    val items = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
-                    store.pendingRevocations = JsonCodec.encode(mapOf("items" to (items + deferredRevocations).distinctBy { it["token"] }))
-                }
-            }
-        }
+        retireSession(keepPushToken = false)
         transport.cancel()
         // Revocation never holds the session mutex or delays local logout / B's session.
-        revokeScope.launch { runCatching { revokePending() } }
+        resumeRevocations()
         Unit
+    }
+    /**
+     * Consent withdrawn: revokes the session through the durable revocation list and starts a
+     * new anonymous one (the profile carries no app user id or device id), keeping no link to
+     * the old one. A registered push token moves to the new session only once the old one is
+     * revoked. Old conversations stay in the team inbox but are no longer shown in the app.
+     */
+    suspend fun clearIdentity() = withContext(Dispatchers.IO) {
+        val unmoved = retireForClearedIdentity()
+        if (key() != null) runCatching { syncIdentity(); if (unmoved != null) postPushToken(unmoved) }
+        Unit
+    }
+    /**
+     * The local half of [clearIdentity]: forgets the session and queues its revocation, with the
+     * push token kept and flagged to move. Returns the push token when there was no session to
+     * revoke (nothing to wait for, so the caller registers it on the new session directly).
+     */
+    internal fun retireForClearedIdentity(): String? {
+        val hadSession = store.token != null
+        val push = retireSession(keepPushToken = true, move = true)
+        transport.cancel()
+        resumeRevocations()
+        return push.takeUnless { hadSession }
+    }
+    /**
+     * Forgets the session locally and queues its revocation; returns its push token. [advance]
+     * moves the action generation on (cancelling in-flight UI calls); [move] flags the push token
+     * to be registered on the current session once the revocation succeeds.
+     */
+    private fun retireSession(keepPushToken: Boolean, move: Boolean = false, advance: Boolean = true): String? = synchronized(accountLock) {
+        if (advance) generation++
+        val old = store.token; val push = store.pushToken; val oldKey = key() ?: store.lastKey
+        store.token = null; store.profile = null; store.clearedSession = false
+        if (advance) persona = null
+        if (!keepPushToken) store.pushToken = null
+        if (old != null) {
+            deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push, "move" to (move && push != null), "createdAt" to System.currentTimeMillis(), "attempts" to 0))
+            runCatching {
+                val items = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
+                store.pendingRevocations = JsonCodec.encode(mapOf("items" to (items + deferredRevocations).distinctBy { it["token"] }))
+            }
+        }
+        push
+    }
+    /**
+     * A session minted while the identity was cleared is never given an app user id: once a
+     * different user id ends the clear (without reset), it is retired and a fresh one minted.
+     * The action generation is not advanced, so in-flight calls carry on with the new session.
+     */
+    private fun retireClearedSessionIfNeeded() {
+        val retire = synchronized(accountLock) { store.token != null && store.clearedSession && !identityCleared() }
+        if (!retire) return
+        retireSession(keepPushToken = true, move = true, advance = false)
+        resumeRevocations()
     }
     fun resumeRevocations() { revokeScope.launch { runCatching { revokePending() } } }
     private val revocationMutex = Mutex()
     internal suspend fun revokePending() {
         // Do not queue foreground/configure passes behind slow network requests.
         if (!revocationMutex.tryLock()) return
-        try {
-            val pending = synchronized(accountLock) { (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] } }
-            for (original in pending) {
-                val token = original["token"] as? String ?: continue
-                val created = (original["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                var attempts = (original["attempts"] as? Number)?.toInt() ?: 0
-                var remove = System.currentTimeMillis() - created > 400L * 86_400_000 || attempts >= 20
-                val apiKey = original["key"] as? String ?: key()
-                if (!remove && apiKey != null) {
-                    remove = runCatching {
-                        val response = transport.request("DELETE", base + root + "/session", mapOf("X-AppRefer-Key" to apiKey, "X-AppRefer-Support-Session" to token), null)
-                        response.status in 200..299 || response.status in listOf(401, 403, 404)
-                    }.getOrDefault(false)
-                    if (!remove) { attempts++; remove = attempts >= 20 }
-                }
-                synchronized(accountLock) {
-                    val current = (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] }
-                    val updated = current.mapNotNull { item ->
-                        if (item["token"] != token) item else if (remove) null else item + mapOf("createdAt" to created, "attempts" to attempts)
-                    }
-                    val encoded = JsonCodec.encode(mapOf("items" to updated))
-                    if (store.pendingRevocations != encoded) store.pendingRevocations = encoded
-                    deferredRevocations.removeAll { it["token"] == token }
-                }
-            }
-        } finally { revocationMutex.unlock() }
+        try { revokeAll() } finally { revocationMutex.unlock() }
     }
+    /** Waits for a running pass, then runs one (tests). */
+    internal suspend fun drainRevocations() { revocationMutex.withLock { revokeAll() } }
+    /** One attempt per entry; sessions retired while the pass runs are picked up before it ends. */
+    private suspend fun revokeAll() {
+        val attempted = HashSet<String>()
+        while (true) {
+            val pending = synchronized(accountLock) { pendingItems() }.filter { (it["token"] as? String)?.let { t -> t !in attempted } == true }
+            if (pending.isEmpty()) return
+            pending.forEach { attempted.add(it["token"] as String) }
+            revokeOnce(pending)
+        }
+    }
+    private fun pendingItems() = (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] }
+    private suspend fun revokeOnce(pending: List<Map<String, Any?>>) {
+        for (original in pending) {
+            val token = original["token"] as? String ?: continue
+            val created = (original["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
+            var attempts = (original["attempts"] as? Number)?.toInt() ?: 0
+            var remove = System.currentTimeMillis() - created > 400L * 86_400_000 || attempts >= 20
+            var revoked = false
+            val apiKey = original["key"] as? String ?: key()
+            if (!remove && apiKey != null) {
+                revoked = runCatching {
+                    val response = transport.request("DELETE", base + root + "/session", mapOf("X-AppRefer-Key" to apiKey, "X-AppRefer-Support-Session" to token), null)
+                    response.status in 200..299 || response.status in listOf(401, 403, 404)
+                }.getOrDefault(false)
+                remove = revoked
+                if (!remove) { attempts++; remove = attempts >= 20 }
+            }
+            val move = synchronized(accountLock) {
+                val updated = pendingItems().mapNotNull { item ->
+                    if (item["token"] != token) item else if (remove) null else item + mapOf("createdAt" to created, "attempts" to attempts)
+                }
+                val encoded = JsonCodec.encode(mapOf("items" to updated))
+                if (store.pendingRevocations != encoded) store.pendingRevocations = encoded
+                deferredRevocations.removeAll { it["token"] == token }
+                // Only after a real revocation (never a drop for age or attempts), only while the
+                // token is still this device's (a reset since then cleared it) and once no other
+                // old session waiting for revocation still holds it.
+                val push = original["push"] as? String
+                push.takeIf { revoked && original["move"] == true && it != null && store.pushToken == it &&
+                    updated.none { other -> other["move"] == true && other["push"] == it } }
+            }
+            // Failure is swallowed: the app's next registerPushToken fixes it.
+            if (move != null) runCatching { postPushToken(move) }
+        }
+    }
+    /** True while an old session waiting for revocation still holds [token] for a later move. */
+    private fun awaitingMove(token: String) = synchronized(accountLock) { pendingItems().any { it["move"] == true && it["push"] == token } }
     private val root = "/api/support/v1"
     private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?, epoch: Int = generation): Map<String, Any?> {
         check(epoch == generation) { "Support reset" }
@@ -126,17 +202,22 @@ internal class SupportAPI(
         if (r.status !in 200..299) throw AppReferSupportException(r.status, obj["error"] as? String ?: obj["message"] as? String ?: "Something went wrong (${r.status})")
         return obj
     }
+    private fun dropToken() = synchronized(accountLock) { store.token = null; store.profile = null; store.clearedSession = false }
     private fun session(): String {
+        retireClearedSessionIfNeeded()
         val epoch = generation
         store.lastKey = key() ?: store.lastKey
+        val cleared = identityCleared()
         val p = identity().toSortedMap(); val fingerprint = JsonCodec.encode(p)
         val old = store.token
         if (old != null) {
-            if (store.profile != fingerprint) { val replacement = raw("POST", "$root/session", p, old, epoch)["session"] as? String ?: error("Missing support session"); synchronized(accountLock) { check(epoch == generation) { "Support reset" }; store.token = replacement; store.profile = fingerprint } }
+            if (store.profile != fingerprint) { val replacement = raw("POST", "$root/session", p, old, epoch)["session"] as? String ?: error("Missing support session"); synchronized(accountLock) { check(epoch == generation) { "Support reset" }; store.token = replacement; store.profile = fingerprint; store.clearedSession = cleared } }
             return requireNotNull(store.token)
         }
         val token = raw("POST", "$root/session", p, null, epoch)["session"] as? String ?: error("Missing support session")
-        synchronized(accountLock) { check(epoch == generation) { "Support reset" }; store.token = token; store.profile = fingerprint }
+        synchronized(accountLock) { check(epoch == generation) { "Support reset" }; store.token = token; store.profile = fingerprint; store.clearedSession = cleared }
+        // The key works now: old sessions queued without one (or still waiting) are revoked.
+        if (synchronized(accountLock) { pendingItems().isNotEmpty() }) resumeRevocations()
         return token
     }
     private suspend fun call(method: String, path: String, body: Map<String, Any?>? = null, epoch: Int = generation): Map<String, Any?> = withContext(Dispatchers.IO) {
@@ -153,7 +234,7 @@ internal class SupportAPI(
             catch (e: AppReferSupportException) {
                 check(epoch == generation) { "Support reset" }
                 if (e.status != 401 || !e.message.orEmpty().contains("support session", true)) throw e
-                store.token = null; store.profile = null
+                dropToken()
                 raw(method, root + path, body, session(), epoch)
             }
         }
@@ -161,7 +242,7 @@ internal class SupportAPI(
     suspend fun syncIdentity() = withContext(Dispatchers.IO) { mutex.withLock {
         try { session() } catch (e: AppReferSupportException) {
             if (e.status != 401 || !e.message.orEmpty().contains("support session", true)) throw e
-            store.token = null; store.profile = null; session()
+            dropToken(); session()
         }
     }; Unit }
     /** The app's AI assistant, from the latest list or conversation read (null when the app has none). */
@@ -179,7 +260,15 @@ internal class SupportAPI(
         SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
             (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap()), generation))
     suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), generation: Int = this.generation): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId), generation).obj("message"))
-    suspend fun register(token: String) { val epoch = generation; call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")); synchronized(accountLock) { check(epoch == generation); store.pushToken = token } }
+    /**
+     * Registers the push token on the current session. While an old session that still holds
+     * this token waits for revocation, it is only saved: it moves once that revocation succeeds.
+     */
+    suspend fun register(token: String) {
+        if (awaitingMove(token)) { synchronized(accountLock) { store.pushToken = token }; resumeRevocations(); return }
+        postPushToken(token)
+    }
+    private suspend fun postPushToken(token: String) { val epoch = generation; call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")); synchronized(accountLock) { check(epoch == generation); store.pushToken = token } }
     suspend fun remove(token: String) { val epoch = generation; call("DELETE", "/push-token", mapOf("token" to token)); synchronized(accountLock) { check(epoch == generation); store.pushToken = null } }
     suspend fun upload(bytes: ByteArray, generation: Int = this.generation): String {
         check(generation == this.generation) { "Support reset" }

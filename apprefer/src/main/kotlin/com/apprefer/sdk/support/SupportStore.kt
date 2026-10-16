@@ -88,4 +88,7 @@ internal class SecureSupportStore(private val context: Context, fileName: String
     override var profile: String?
         get() = prefs.getString("profile", null)
         set(value) { prefs.edit().putString("profile", value).apply() }
+    override var clearedSession: Boolean
+        get() = prefs.getBoolean("apprefer_support_session_cleared", false)
+        set(value) { prefs.edit().apply { if (value) putBoolean("apprefer_support_session_cleared", true) else remove("apprefer_support_session_cleared") }.commit() }
 }

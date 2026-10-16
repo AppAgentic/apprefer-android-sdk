@@ -145,7 +145,12 @@ object AppReferBilling {
                     consumableProductIds = consumableProductIds,
                 ),
                 appUserId = appUserId,
-                appreferId = { AppReferInternal.deviceId(appContext) },
+                // Same gate as Support: no device id while collection is off, or after
+                // reset() until configure runs again.
+                appreferId = { AppReferInternal.linkableDeviceId() },
+                linkAllowed = { AppReferInternal.installLinkAllowed() },
+                // The device id goes only to the Billing user set after the last reset().
+                accountEpoch = { AppReferInternal.accountEpoch() },
                 logger = logger,
                 dispatcher = Dispatchers.IO.limitedParallelism(1),
                 scope = scope,
@@ -223,6 +228,8 @@ object AppReferBilling {
     /**
      * Customer attributes, sent with the next AppRefer call. Supported keys: `$email`,
      * `$displayName`, `$phoneNumber`, `$gpsAdId`, `$fbAnonId`, `$deviceVersion`, `$ip`.
+     * The device keys are dropped, not sent, while collection is off or after
+     * `AppRefer.reset()` until configure runs again.
      */
     @JvmStatic
     fun setAttributes(attributes: Map<String, String>) {

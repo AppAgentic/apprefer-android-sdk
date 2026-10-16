@@ -170,6 +170,12 @@ internal class Harness(
     val server: FakeServer = FakeServer(play),
     /** Virtual delay before each server answer, so concurrent calls can interleave. */
     transportDelayMs: Long = 0,
+    /** The attribution gate: null while the device id must not be sent. */
+    appreferId: () -> String? = { "device-1" },
+    /** `AppReferInternal.installLinkAllowed()`; defaults to the [appreferId] gate being open. */
+    linkAllowed: (() -> Boolean)? = null,
+    /** `AppReferInternal.accountEpoch()`: advances on every `AppRefer.reset()`. */
+    accountEpoch: () -> Int = { 0 },
 ) {
     var now = NOW
     val published = mutableListOf<AppReferCustomerInfo>()
@@ -191,11 +197,13 @@ internal class Harness(
         play = play,
         options = options,
         appUserId = appUserId,
-        appreferId = { "device-1" },
+        appreferId = appreferId,
         logger = BillingLogger(),
         dispatcher = StandardTestDispatcher(scope.testScheduler),
         scope = scope,
         now = { now },
         onChange = { published += it },
+        linkAllowed = linkAllowed ?: { appreferId() != null },
+        accountEpoch = accountEpoch,
     )
 }

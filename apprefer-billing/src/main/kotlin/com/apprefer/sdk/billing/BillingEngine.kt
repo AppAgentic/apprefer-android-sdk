@@ -31,6 +31,10 @@ internal class BillingEngine(
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis,
     private val onChange: (AppReferCustomerInfo) -> Unit = {},
+    /** True while the install may be linked (`AppReferInternal.installLinkAllowed()`); sent as identify's `link`. */
+    private val linkAllowed: () -> Boolean = { com.apprefer.sdk.AppReferInternal.installLinkAllowed() },
+    /** Advances on every `AppRefer.reset()` (`AppReferInternal.accountEpoch()`). */
+    private val accountEpoch: () -> Int = { com.apprefer.sdk.AppReferInternal.accountEpoch() },
 ) {
     data class Options(
         val productEntitlements: Map<String, List<String>> = emptyMap(),
@@ -112,6 +116,39 @@ internal class BillingEngine(
     /** Users registered before the attribution device id existed; registered again once it does. */
     private val registeredWithoutDeviceId = HashSet<String>()
 
+    /** The reset epoch the current Billing user was set in (engine creation, then every logIn/logOut). */
+    private var identityEpoch = accountEpoch()
+
+    /** The reset epoch [linkableDeviceId] last saw. */
+    private var seenEpoch = identityEpoch
+
+    /**
+     * The install device id for a request made for [owner], or null. Sent only when [owner] is
+     * the current Billing user, that user was set after the last `AppRefer.reset()` (logIn/logOut
+     * since), and the attribution gate is open. After a reset, nobody registered before it is
+     * re-linked: the next account has to be set with logIn/logOut first.
+     */
+    private fun linkableDeviceId(owner: String?): String? {
+        val epoch = accountEpoch()
+        if (epoch != seenEpoch) {
+            seenEpoch = epoch
+            registeredWithoutDeviceId.clear()
+        }
+        if (owner == null || identityEpoch != epoch || owner != activeUser()) return null
+        return appreferId()
+    }
+
+    /** logIn/logOut set the Billing user for the current reset epoch. */
+    private fun identitySet() {
+        val epoch = accountEpoch()
+        if (identityEpoch == epoch) return
+        identityEpoch = epoch
+        seenEpoch = epoch
+        // Registered under the previous account: registered again, linked only if allowed now.
+        registeredUsers.clear()
+        registeredWithoutDeviceId.clear()
+    }
+
     /** Purchase tokens AppRefer accepted this launch (Play's cache can lag on `isAcknowledged`). */
     private val acceptedTokens = HashSet<String>()
 
@@ -189,7 +226,7 @@ internal class BillingEngine(
             if (storage.intentsLostAtMillis != null) return@withContext
             val result = play.queryPurchases()
             if (!result.isOk || activeUser() != user) return@withContext
-            val deviceId = appreferId()
+            val deviceId = linkableDeviceId(user)
             var durable = true
             var imported = false
             for (purchase in result.purchases) {
@@ -269,11 +306,12 @@ internal class BillingEngine(
     private suspend fun fetchFromServer(user: String, drain: Boolean = true): AppReferCustomerInfo {
         flushPendingIdentifies()
         val attributes = storage.pendingAttributes
-        val deviceId = appreferId()
+        val deviceId = linkableDeviceId(user)
+        val sent = sendable(attributes, linked = deviceId != null)
         val needsRegister = user !in registeredUsers || attributes.isNotEmpty() ||
             storage.accountToken(user) == null || (user in registeredWithoutDeviceId && deviceId != null)
         val response = api.send(
-            if (needsRegister) BillingEndpoint.CreateCustomer(user, deviceId, attributes)
+            if (needsRegister) BillingEndpoint.CreateCustomer(user, deviceId, sent)
             else BillingEndpoint.GetCustomer(user),
         )
         if (needsRegister) {
@@ -590,10 +628,10 @@ internal class BillingEngine(
         }
 
         val attributes = if (owner == activeUser()) storage.pendingAttributes else emptyMap()
-        val deviceId = appreferId()
+        val deviceId = linkableDeviceId(owner)
         try {
             val response = api.send(
-                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, attributes, restore, intent?.presentedOfferingContext, intent?.bucketId),
+                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, sendable(attributes, deviceId != null), restore, intent?.presentedOfferingContext, intent?.bucketId),
             )
             if (attributes.isNotEmpty()) storage.clearSentAttributes(attributes)
             resetBackoff()
@@ -703,7 +741,7 @@ internal class BillingEngine(
                 productType = entry.productType,
                 orderId = null,
                 appUserId = entry.appUserId,
-                appreferId = entry.appreferId,
+                appreferId = linkableDeviceId(entry.appUserId),
                 accountToken = null,
                 reason = reason,
                 rejectedAtMillis = now(),
@@ -844,7 +882,7 @@ internal class BillingEngine(
 
         val user = activeUser() ?: return@withContext lockedFallback()
         flushPendingIdentifies()
-        val deviceId = appreferId()
+        val deviceId = linkableDeviceId(user)
         var last: BillingCustomerResponse? = null
         var error: AppReferBillingException? = null
         var paused = false
@@ -911,8 +949,10 @@ internal class BillingEngine(
             for (entry in queue.entries) {
                 try {
                     val response = api.send(
+                        // Never the stored id: only what may be linked now, for the current
+                        // Billing user (older entries from a previous account get none).
                         BillingEndpoint.Purchase(
-                            entry.appUserId, entry.appreferId, entry.purchaseToken, entry.productId, entry.productType,
+                            entry.appUserId, linkableDeviceId(entry.appUserId), entry.purchaseToken, entry.productId, entry.productType,
                             emptyMap(), entry.restore, entry.presentedOfferingContext, entry.bucketId,
                         ),
                     )
@@ -1002,6 +1042,7 @@ internal class BillingEngine(
             lastServerFetch = null
         invalidateOfferings()
         }
+        identitySet()
         val info = customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
         scope.launch(dispatcher) { migrationSync(appUserId) }
         info
@@ -1014,6 +1055,7 @@ internal class BillingEngine(
             storage.resetAnonymousId()
             storage.loggedInAppUserId = null
         }
+        identitySet()
         lastServerFetch = null
         invalidateOfferings()
         customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
@@ -1059,7 +1101,8 @@ internal class BillingEngine(
             val entry = pending.firstOrNull { it !in attempted } ?: return
             attempted.add(entry)
             try {
-                api.send(BillingEndpoint.Identify(entry.first, entry.second))
+                // link: false while the install may not be linked, so the server copies no attribution.
+                api.send(BillingEndpoint.Identify(entry.first, entry.second, link = linkAllowed()))
                 storage.removePendingIdentify(entry)
             } catch (e: AppReferBillingException) {
                 if (e.isRetryable) {
@@ -1074,6 +1117,13 @@ internal class BillingEngine(
     // endregion
 
     companion object {
+        /** Attribution and device signals among the customer attributes. */
+        internal val DEVICE_ATTRIBUTE_KEYS = setOf("\$gpsAdId", "\$fbAnonId", "\$deviceVersion", "\$ip", "\$idfa", "\$idfv", "\$attConsentStatus")
+
+        /** While the install may not be linked, device signals are dropped, never sent later. */
+        internal fun sendable(attributes: Map<String, String>, linked: Boolean): Map<String, String> =
+            if (linked) attributes else attributes.filterKeys { it !in DEVICE_ATTRIBUTE_KEYS }
+
         const val MIN_BACKOFF_MS = 30_000L
         const val MAX_BACKOFF_MS = 3600_000L
 

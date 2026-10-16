@@ -50,7 +50,8 @@ internal sealed class BillingEndpoint {
             "Purchase(appUserId=$appUserId, productId=$productId, productType=$productType, restore=$restore)"
     }
 
-    data class Identify(val anonymousId: String, val appUserId: String) : BillingEndpoint()
+    /** [link] false: merge the purchases without copying the anonymous customer's install link. */
+    data class Identify(val anonymousId: String, val appUserId: String, val link: Boolean = true) : BillingEndpoint()
 }
 
 internal data class BillingRequest(
@@ -205,7 +206,8 @@ internal class BillingApiClient(
             baseUrls = listOf(AppReferInternal.TRACKING_URL, AppReferInternal.FALLBACK_URL),
             apiKey = apiKey,
             transport = HttpUrlConnectionTransport(),
-            consentProvider = { AppReferInternal.trackingConsent(context) },
+            // With collection off or after reset, never the tracking host.
+            consentProvider = { if (AppReferInternal.installLinkAllowed()) AppReferInternal.trackingConsent(context) else "denied" },
         )
 
         fun makeRequest(endpoint: BillingEndpoint, baseUrl: String, apiKey: String): BillingRequest {
@@ -250,6 +252,7 @@ internal class BillingApiClient(
                     body = JSONObject()
                         .put("anonymousId", endpoint.anonymousId)
                         .put("appUserId", endpoint.appUserId)
+                        .put("link", endpoint.link)
                 }
             }
 

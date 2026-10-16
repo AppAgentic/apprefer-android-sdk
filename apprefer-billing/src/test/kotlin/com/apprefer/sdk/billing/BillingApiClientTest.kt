@@ -21,7 +21,7 @@ class BillingApiClientTest {
         assertEquals("POST", r.method)
         assertEquals("$base/api/billing/v1/customers", r.url)
         assertEquals("pk_live_x", r.headers["X-AppRefer-Key"])
-        assertEquals("0.9.1", r.headers["X-SDK-Version"])
+        assertEquals("0.9.2", r.headers["X-SDK-Version"])
         assertEquals("application/json", r.headers["Content-Type"])
         val body = JSONObject(r.body!!)
         assertEquals("user_1", body.getString("appUserId"))
@@ -69,6 +69,9 @@ class BillingApiClientTest {
         val body = JSONObject(r.body!!)
         assertEquals("\$ARAnon:x", body.getString("anonymousId"))
         assertEquals("user_1", body.getString("appUserId"))
+        assertTrue("0.9.2: link defaults to true", body.getBoolean("link"))
+        val closed = JSONObject(BillingApiClient.makeRequest(BillingEndpoint.Identify("\$ARAnon:x", "user_1", link = false), base, "k").body!!)
+        assertFalse(closed.getBoolean("link"))
     }
 
     private fun client(key: () -> String? = { "k" }, handler: (BillingRequest) -> BillingHttpResponse) =

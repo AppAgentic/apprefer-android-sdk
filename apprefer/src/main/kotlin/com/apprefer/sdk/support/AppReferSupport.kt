@@ -41,6 +41,7 @@ object AppReferSupport {
     suspend fun reset(context: Context? = com.apprefer.sdk.AppReferContext.context) = withContext(Dispatchers.IO) {
         scope.coroutineContext.cancelChildren()
         name = null; email = null
+        pendingClearIdentity = false
         val c = app ?: context
         if (c != null) {
             AppReferStorage(c).clearUser()
@@ -49,6 +50,46 @@ object AppReferSupport {
         }
         accountGeneration++
         withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
+    }
+    /**
+     * Removes the account from Support without a full reset, e.g. when the user withdraws consent:
+     * forgets the name, email and app user id, revokes the current Support session and starts a
+     * new anonymous one. Conversations from the old session stay in your team inbox but are no
+     * longer shown in the app. The app user id is not sent to Support again until it changes
+     * (another account signs in) or `AppRefer.reset()` runs; the device id is not sent either.
+     * A different user id stored later gets a fresh session (the cleared one is revoked). A
+     * registered push token moves to the new session once the old one is revoked. Attribution,
+     * Billing and the stored user id are untouched. Called before AppRefer has a Context, it is
+     * applied as soon as one is available (configure or the first Support use).
+     */
+    suspend fun clearIdentity(context: Context? = com.apprefer.sdk.AppReferContext.context) = withContext(Dispatchers.IO) {
+        scope.coroutineContext.cancelChildren()
+        name = null; email = null
+        val c = app ?: context
+        if (c != null) {
+            pendingClearIdentity = false
+            AppReferStorage(c).supportIdentityCleared = true
+            runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
+        } else {
+            // Never a silent no-op: applied (flag saved, session retired) as soon as a context appears.
+            pendingClearIdentity = true
+            android.util.Log.w("AppRefer", "support.clearIdentity() ran before AppRefer had a Context; it is applied on the next configure or Support use")
+        }
+        accountGeneration++
+        if (resetListeners.isNotEmpty()) withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
+        if (c != null) api(c, initialize = false).clearIdentity()
+    }
+    /** clearIdentity() ran with no Context in this process; applied by [applyPendingClear]. */
+    @Volatile internal var pendingClearIdentity = false
+    /** Applies a context-less clearIdentity(): saves the flag and retires the session synchronously. */
+    private fun applyPendingClear(c: Context) {
+        synchronized(this) { if (!pendingClearIdentity) return; pendingClearIdentity = false }
+        AppReferStorage(c).supportIdentityCleared = true
+        runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
+        accountGeneration++
+        val unmoved = api(c, initialize = false).retireForClearedIdentity()
+        // No old session to wait for: the token goes straight onto the fresh anonymous session.
+        if (unmoved != null) scope.launch { runCatching { api(c, initialize = false).register(unmoved) } }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Synchronized internal fun configure(context: Context) {
@@ -59,18 +100,28 @@ object AppReferSupport {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
                 NotificationChannel("apprefer_support", "Support replies", NotificationManager.IMPORTANCE_DEFAULT))
         }
+        if (pendingClearIdentity) applyPendingClear(app!!)
     }
     internal fun api(context: Context, initialize: Boolean = true): SupportAPI {
         if (initialize) configure(context)
-        return synchronized(this) {
+        val api = synchronized(this) {
             client ?: SupportAPI({ supportKey ?: AppRefer.currentApiKey() }, SecureSupportStore(context), { profile(context) },
-                { deviceContext(context) }).also { client = it }
+                { deviceContext(context) }, identityCleared = { AppReferStorage(context).supportIdentityCleared }).also { client = it }
         }
+        if (pendingClearIdentity) applyPendingClear(context)
+        return api
     }
-    /** The session profile. The device id is left out after reset(), with collection off and in Support-only apps. */
+    /**
+     * The session profile. The device id is left out after reset(), with collection off and in
+     * Support-only apps; the app user id and the device id after clearIdentity() until the user
+     * id changes (the device id would link the anonymous session back to the account).
+     */
     internal fun profile(context: Context): Map<String, Any?> {
         val storage = AppReferStorage(context)
-        return linkedMapOf<String, Any?>("appUserId" to storage.getUserId(), "deviceId" to AppRefer.supportDeviceId(), "name" to name, "email" to email).filterValues { it != null }
+        val cleared = storage.supportIdentityCleared
+        val userId = if (cleared) null else storage.getUserId()
+        val deviceId = if (cleared) null else AppRefer.supportDeviceId()
+        return linkedMapOf<String, Any?>("appUserId" to userId, "deviceId" to deviceId, "name" to name, "email" to email).filterValues { it != null }
     }
     fun identify(name: String? = null, email: String? = null) {
         this.name = name?.trim()?.takeIf { it.isNotEmpty() }; this.email = email?.trim()?.takeIf { it.isNotEmpty() }
