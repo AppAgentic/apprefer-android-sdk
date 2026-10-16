@@ -158,6 +158,20 @@ class SDK093Test {
         } finally { f.close(); BillingResetMarker.resetForTests() }
     }
 
+    @Test fun theLogOutExemptionIsUsedOnceThenTheSameAnonymousUserIsMarked() = runBlocking {
+        BillingResetMarker.resetForTests()
+        val f = SDK091Test.Fixture()
+        try {
+            f.data["apprefer_billing_anonymous_id"] = "\$ARAnon:fresh"
+            AppReferInternal.billingIdentitySet("\$ARAnon:fresh") { f.data.remove("apprefer_billing_reset_user") }
+            AppRefer.reset(f.context)
+            assertNull("first reset after logOut: exempt", f.data["apprefer_billing_reset_user"])
+            // Still the same anonymous user, no logIn/logOut since: the second reset marks them.
+            AppRefer.reset(f.context)
+            assertEquals("\$ARAnon:fresh", f.data["apprefer_billing_reset_user"])
+        } finally { f.close(); BillingResetMarker.resetForTests() }
+    }
+
     @Test fun aMarkerWriteFromAResetThatStartedBeforeALogInIsDropped() {
         BillingResetMarker.resetForTests()
         val data = mutableMapOf<String, String>("apprefer_billing_app_user_id" to "user_sparkly")

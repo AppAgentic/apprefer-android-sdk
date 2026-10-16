@@ -11,8 +11,9 @@ import android.content.Context
  * Billing has never stored a user on this install.
  *
  * Two exceptions, both about Billing's logIn/logOut in this process ([identitySet]):
- * - the fresh anonymous id a logOut() minted is never marked (apps often sign out of Billing
- *   before, or without awaiting, reset()), until a logIn or another logOut replaces it;
+ * - the fresh anonymous id a logOut() minted is not marked by the next reset() (apps often sign
+ *   out of Billing before, or without awaiting, reset()); the exemption is then used up, and a
+ *   logIn or another logOut replaces it;
  * - a reset() whose write would land after a logIn/logOut that ran since the reset started is
  *   dropped, so a late write never outlives them.
  */
@@ -55,8 +56,9 @@ internal object BillingResetMarker {
         val user = read(KEY_APP_USER_ID)?.takeIf { it.isNotEmpty() }
             ?: read(KEY_ANONYMOUS_ID)?.takeIf { it.isNotEmpty() }
             ?: return@synchronized false
-        // Signed out of Billing first: the new anonymous user is not the previous account.
-        if (user == loggedOutAnonymousId) return@synchronized false
+        // Signed out of Billing first: the new anonymous user is not the previous account. The
+        // exemption is used once: a second reset() while that user is still current marks them.
+        if (user == loggedOutAnonymousId) { loggedOutAnonymousId = null; return@synchronized false }
         write(KEY_RESET_USER, user)
     }
 
