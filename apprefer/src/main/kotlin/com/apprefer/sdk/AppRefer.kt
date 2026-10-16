@@ -57,6 +57,8 @@ object AppRefer {
      * matching) and Support sends no device id until configure runs again for the next account.
      */
     @Volatile internal var stoppedByReset = false
+    /** "Off" was chosen in this process but couldn't be saved: the next configure must not resume. */
+    @Volatile internal var collectionOffUnsaved = false
     private val consentReporter = com.apprefer.sdk.internal.ConsentReporter()
     private var pendingConsentSet = false
     private var pendingConsent: String? = null
@@ -173,12 +175,13 @@ object AppRefer {
     suspend fun setCollectionEnabled(enabled: Boolean, context: Context? = AppReferContext.context) = safelyRun {
         val storage = state?.storage ?: context?.let { AppReferStorage(it) }
         // Already on: a consent tool reporting "granted" on every launch changes nothing.
-        if (enabled && storage?.isCollectionEnabled() != false) return@safelyRun
+        if (enabled && !collectionOffUnsaved && storage?.isCollectionEnabled() != false) return@safelyRun
         // Saved and paused in one step, so a configure can't start in between and read the old value.
         val saved = synchronized(this) {
             val saved = storage?.setCollectionEnabled(enabled) ?: false
             generation++
             if (!enabled) { storage?.pauseCollection(); state?.http?.cancel() }
+            collectionOffUnsaved = !enabled && !saved
             saved
         }
         if (!saved) android.util.Log.w("AppRefer", "Collection setting could not be saved; applied for this session")
@@ -229,8 +232,8 @@ object AppRefer {
         if (userId != null) synchronized(this) { if (accountEpoch == generation) safelyRun { s.storage.setUserId(userId); support.identityChanged() } }
         val collecting = synchronized(this) {
             if (accountEpoch != generation) return@safely null
-            s.storage.resumeCollection()
-            s.storage.isCollectionEnabled()
+            if (collectionOffUnsaved) { s.storage.pauseCollection(); false }
+            else { s.storage.resumeCollection(); s.storage.isCollectionEnabled() }
         }
         if (!collecting) return@safely cachedAttribution(s)
         scope.launch { safelyRun { s.events.flush() } }
@@ -485,7 +488,7 @@ object AppRefer {
      */
     internal fun supportDeviceId(): String? = safely<String?>(null) {
         val s = state ?: return@safely null
-        if (stoppedByReset || !s.storage.isCollectionEnabled()) null else s.storage.getDeviceId()
+        if (stoppedByReset || collectionOffUnsaved || !s.storage.isCollectionEnabled()) null else s.storage.getDeviceId()
     }
 
     private suspend fun ensureState(

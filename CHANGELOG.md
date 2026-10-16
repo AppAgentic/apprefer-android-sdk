@@ -1,5 +1,7 @@
 ## 0.9.1
 
+- Migration: after reset(), call configure again for the next user; until then events, attribution and consent reports are paused.
+- If setCollectionEnabled(false) runs before configure and the choice cannot be saved, the "off" is kept for the rest of the process, so the next configure does not resume collection and Support sends no device id.
 - Product events capture `app_user_id` at track time and persist it with the queued payload, preserving identity across retries, restarts, and account switches. Internal `_` events are unchanged.
 - Add persistent `setCollectionEnabled` control. Disabling cancels attribution, consent, conversion-value and event requests and clears queued events; Support and Billing remain available. Enable, then call configure to resume.
 - Support sends no device id after reset() or while collection is off. reset() also stops attribution (consent re-reports, user id, advanced matching, event sends) until configure is called again; events tracked meanwhile are dropped, never queued or sent later.

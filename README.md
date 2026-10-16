@@ -23,6 +23,8 @@ matching or event delivery; events tracked meanwhile are dropped, never sent lat
 called again, so the next account's Support session is never linked to the
 previous account's install. Support also omits the device id while collection is off.
 
+Migration: after reset(), call configure again for the next user; until then events, attribution and consent reports are paused.
+
 ```kotlin
 AppRefer.support.configure(context, apiKey = "pk_...") // Support only
 AppRefer.setUserId("account-A") // suspending

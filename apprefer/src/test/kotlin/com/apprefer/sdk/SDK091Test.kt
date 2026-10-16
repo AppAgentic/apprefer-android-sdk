@@ -63,7 +63,7 @@ class SDK091Test {
             stateField.set(AppRefer, state); queueField.set(AppRefer, queue); AppReferContext.context = context
             AppRefer.stoppedByReset = false // configured, as after configure()
         }
-        suspend fun close() { queue.clear(); scope.cancel(); AppRefer.stoppedByReset = false; stateField.set(AppRefer, oldState); queueField.set(AppRefer, oldQueue); AppReferContext.context = oldContext; directory.deleteRecursively() }
+        suspend fun close() { queue.clear(); scope.cancel(); AppRefer.stoppedByReset = false; AppRefer.collectionOffUnsaved = false; stateField.set(AppRefer, oldState); queueField.set(AppRefer, oldQueue); AppReferContext.context = oldContext; directory.deleteRecursively() }
     }
     @Test fun publicEventIdentityPersistsThroughSwitchRestartAndRetry() = runBlocking {
         val f = Fixture()
@@ -308,6 +308,35 @@ class SDK091Test {
             disabling.join(); configuring.await()
             assertTrue(f.paths.isEmpty())
             assertFalse(f.storage.isCollectionEnabled())
+        } finally { f.close() }
+    }
+
+    // endregion
+
+    // region final check
+
+    @Test fun offThatCouldNotBeSavedBeforeConfigureKeepsTheNextConfigurePaused() = runBlocking {
+        val f = Fixture()
+        val stateField = AppRefer::class.java.getDeclaredField("state").apply { isAccessible = true }
+        try {
+            val state = stateField.get(AppRefer); stateField.set(AppRefer, null) // before configure
+            f.commit = { false }
+            AppRefer.setCollectionEnabled(false, f.context)
+            f.data.remove("apprefer_collection_enabled") // the failed write left "on" saved
+            assertTrue(AppReferStorage(f.context).isCollectionEnabled())
+            stateField.set(AppRefer, state)
+            f.storage.setMatchRequestAttempted(false) // configure would send a first-open request
+            AppRefer.configure(f.context, "pk_test")
+            assertFalse(f.storage.isCollectionEnabled())
+            assertTrue(f.paths.isEmpty())
+            assertEquals(AppReferEventResult.DROPPED, AppRefer.trackEventResult("blocked"))
+            assertNull(AppRefer.supportDeviceId())
+            // Turning it back on (now saved) and configuring resumes.
+            f.commit = { true }
+            AppRefer.setCollectionEnabled(true)
+            AppRefer.configure(f.context, "pk_test")
+            assertTrue(f.paths.isNotEmpty())
+            assertEquals("device", AppRefer.supportDeviceId())
         } finally { f.close() }
     }
 
