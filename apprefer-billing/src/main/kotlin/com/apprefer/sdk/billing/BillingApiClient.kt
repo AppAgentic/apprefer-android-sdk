@@ -19,6 +19,7 @@ internal object ProductTypes {
 }
 
 internal sealed class BillingEndpoint {
+    data class Offerings(val body: JSONObject) : BillingEndpoint()
     data class CreateCustomer(
         val appUserId: String,
         val appreferId: String?,
@@ -41,6 +42,8 @@ internal sealed class BillingEndpoint {
          * listener never set it.
          */
         val restore: Boolean = false,
+        val presentedOfferingContext: PresentedOfferingContext? = null,
+        val bucketId: String? = null,
     ) : BillingEndpoint() {
         // The purchase token is a secret: keep it out of logs.
         override fun toString() =
@@ -81,7 +84,7 @@ internal class HttpUrlConnectionTransport(private val timeoutMs: Int = 15_000) :
                 useCaches = false
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
-                request.headers.forEach { (k, v) -> setRequestProperty(k, v) }
+                for ((k, v) in request.headers) setRequestProperty(k, v)
             }
             val body = request.body?.toByteArray(StandardCharsets.UTF_8)
             if (body != null) {
@@ -133,7 +136,9 @@ internal class BillingApiClient(
     }
 
     /** Sends the request. 5xx and network errors fail over to the next host; 4xx are final. */
-    suspend fun send(endpoint: BillingEndpoint): BillingCustomerResponse {
+    suspend fun send(endpoint: BillingEndpoint): BillingCustomerResponse = CustomerInfoJson.parseResponse(sendRaw(endpoint))
+
+    suspend fun sendRaw(endpoint: BillingEndpoint): String {
         val key = resolveApiKey() ?: throw AppReferBillingException.MissingApiKey()
         var lastError: AppReferBillingException = AppReferBillingException.Network("no endpoint")
 
@@ -155,7 +160,7 @@ internal class BillingApiClient(
                     // recorded; treat it like today's 503 so the retry copy is kept.
                     throw AppReferBillingException.Server(503, "Purchase verified but not recorded yet", DEFAULT_RETRY_AFTER_MS)
                 }
-                return CustomerInfoJson.parseResponse(response.body)
+                return response.body
             }
             val message = try {
                 JSONObject(response.body).opt("error") as? String
@@ -210,6 +215,10 @@ internal class BillingApiClient(
             val body: JSONObject?
 
             when (endpoint) {
+                is BillingEndpoint.Offerings -> {
+                    path = "/api/billing/v1/offerings"
+                    body = endpoint.body
+                }
                 is BillingEndpoint.CreateCustomer -> {
                     path = "/api/billing/v1/customers"
                     body = JSONObject().put("appUserId", endpoint.appUserId)
@@ -233,6 +242,8 @@ internal class BillingApiClient(
                     endpoint.appreferId?.let { body.put("appreferId", it) }
                     if (endpoint.attributes.isNotEmpty()) body.put("attributes", JSONObject(endpoint.attributes))
                     if (endpoint.restore) body.put("restore", true)
+                    endpoint.presentedOfferingContext?.let { body.put("presentedOfferingContext", it.json()) }
+                    endpoint.bucketId?.let { body.put("bucketId", it) }
                 }
                 is BillingEndpoint.Identify -> {
                     path = "/api/billing/v1/identify"

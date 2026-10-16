@@ -259,6 +259,11 @@ object AppReferBilling {
 
     // endregion
 
+    suspend fun offerings(fetchPolicy: FetchPolicy = FetchPolicy.CACHED_OR_FETCHED): AppReferOfferings = requireEngine().offerings(fetchPolicy)
+
+    suspend fun purchase(activity: Activity, pkg: AppReferPackage): PurchaseResult =
+        purchase(activity, pkg.storeProduct, offerToken = pkg.offerToken, presentedOfferingContext = pkg.presentedOfferingContext)
+
     // region Products and purchases
 
     /** Play products (subscriptions and one-time products) in the order requested. */
@@ -290,6 +295,7 @@ object AppReferBilling {
         offerToken: String? = null,
         oldProductId: String? = null,
         replacementMode: Int = SubscriptionProductReplacementParams.ReplacementMode.WITH_TIME_PRORATION,
+        presentedOfferingContext: PresentedOfferingContext? = null,
     ): PurchaseResult {
         val engine = requireEngine()
         val play = gateway ?: throw AppReferBillingException.NotConfigured()
@@ -305,7 +311,7 @@ object AppReferBilling {
             play.queryPurchases().purchases.firstOrNull { it.isSubscription == true && old in it.productIds }?.purchaseToken
         }
 
-        val outcome = engine.purchase(product.productId, productType) launch@{ accountToken ->
+        val outcome = engine.purchase(product.productId, productType, presentedOfferingContext) launch@{ accountToken ->
             val productParams = BillingFlowParams.ProductDetailsParams.newBuilder().setProductDetails(product)
             if (isSubscription) {
                 val token = offerToken ?: defaultOfferToken(product)

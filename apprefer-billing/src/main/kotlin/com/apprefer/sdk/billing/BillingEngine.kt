@@ -48,6 +48,56 @@ internal class BillingEngine(
         val customerInfo: AppReferCustomerInfo,
     )
 
+    private val offeringsCache = HashMap<String, Pair<Long, String>>()
+    private var offeringRequest: Deferred<Result<AppReferOfferings>>? = null
+    private var offeringGeneration = 0
+    private var offeringsInvalidated = false
+    suspend fun offerings(policy: AppReferBilling.FetchPolicy = AppReferBilling.FetchPolicy.CACHED_OR_FETCHED): AppReferOfferings = withContext(dispatcher) {
+        val running = offeringRequest
+        if (running != null) return@withContext running.await().getOrThrow()
+        val generation = offeringGeneration
+        val task = scope.async(dispatcher) { runCatching {
+            val user = activeUser() ?: throw AppReferBillingException.Storage("identity unreadable")
+            val bucket = storage.offeringsBucketId()
+            var cached = offeringsCache[user] ?: storage.cachedOfferings(user)?.let {
+                try { val o = org.json.JSONObject(it); o.getLong("atMs") to o.getString("response") } catch (_: Exception) { null }
+            }
+            if (offeringsInvalidated || policy == AppReferBilling.FetchPolicy.FETCH_CURRENT || cached == null || now() - cached!!.first >= 300000) {
+                try {
+                    val body = org.json.JSONObject().put("appUserId", user).put("bucketId", bucket).put("platform", "android")
+                    play.storefrontCountry()?.let { body.put("country", it) }
+                    play.appVersion()?.let { body.put("appVersion", it) }
+                    cached?.let {
+                        val context = org.json.JSONObject(it.second).optJSONObject("context")
+                        if (context?.opt("experimentId") is String && context.opt("variantId") is String) {
+                            body.put("known", org.json.JSONObject().put("experimentId", context.getString("experimentId")).put("variantId", context.getString("variantId")))
+                        }
+                    }
+                    val raw = api.sendRaw(BillingEndpoint.Offerings(body))
+                    OfferingsJson.validate(raw)
+                    cached = now() to raw
+                    if (generation == offeringGeneration) {
+                        offeringsInvalidated = false
+                        storage.saveOfferings(user, org.json.JSONObject().put("atMs", cached!!.first).put("response", raw).toString())
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (cached == null) throw (e as? AppReferBillingException ?: AppReferBillingException.Network(e.javaClass.simpleName))
+                }
+            }
+            if (generation == offeringGeneration) offeringsCache[user] = cached!!
+            OfferingsJson.resolve(cached!!.second) { play.queryProductDetails(it) }
+        } }
+        offeringRequest = task
+        try { task.await().getOrThrow() } catch (e: BillingStorageException) { throw AppReferBillingException.Storage(e.message ?: "storage unavailable") } finally { if (generation == offeringGeneration) offeringRequest = null }
+    }
+    private fun invalidateOfferings() {
+        offeringGeneration++
+        offeringsInvalidated = true
+        offeringRequest = null
+        for (key in offeringsCache.keys.toList()) offeringsCache[key] = 0L to offeringsCache.getValue(key).second
+        if (offeringsCache.isNotEmpty()) scope.launch { try { offerings(AppReferBilling.FetchPolicy.FETCH_CURRENT) } catch (_: Exception) {} }
+    }
     private var lastPublished: AppReferCustomerInfo? = null
     private var lastServerFetch: Pair<String, Long>? = null
 
@@ -176,6 +226,7 @@ internal class BillingEngine(
 
     /** App came to the foreground. */
     suspend fun onForeground() = withContext(dispatcher) {
+        if (offeringsCache.isNotEmpty() || activeUser()?.let { storage.cachedOfferings(it) } != null) scope.launch { try { offerings() } catch (_: Exception) {} }
         syncPurchases()
         customerInfo(AppReferBilling.FetchPolicy.CACHED_OR_FETCHED)
         if (migrationStarted) migrationSync()
@@ -320,6 +371,7 @@ internal class BillingEngine(
     suspend fun purchase(
         productId: String,
         productType: String,
+        presentedOfferingContext: PresentedOfferingContext? = null,
         launch: suspend (accountToken: String?) -> Pair<Int, String?>,
     ): PurchaseOutcome = withContext(dispatcher) {
         if (purchaseWaiter != null) throw AppReferBillingException.PurchaseInProgress()
@@ -328,7 +380,7 @@ internal class BillingEngine(
         try {
             val user = activeUser() ?: throw AppReferBillingException.Storage("identity unreadable; purchase not started")
             val token = accountTokenFor(user)
-            val intent = PurchaseIntent(productId, user, token, now())
+            val intent = PurchaseIntent(productId, user, token, now(), presentedOfferingContext, if (presentedOfferingContext != null) storage.offeringsBucketId() else null)
             if (!storage.addPurchaseIntent(intent)) {
                 throw AppReferBillingException.Storage("could not save who started the purchase; purchase not started")
             }
@@ -534,7 +586,7 @@ internal class BillingEngine(
         val deviceId = appreferId()
         try {
             val response = api.send(
-                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, attributes, restore),
+                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, attributes, restore, intent?.presentedOfferingContext, intent?.bucketId),
             )
             if (attributes.isNotEmpty()) storage.clearSentAttributes(attributes)
             resetBackoff()
@@ -545,7 +597,7 @@ internal class BillingEngine(
             return info
         } catch (e: AppReferBillingException) {
             // Until a copy is on disk Play keeps the purchase open, and the intent is still needed.
-            if (uploadFailed(purchase, productType, owner, deviceId, restore, e, supportNote)) dropIntent(intent)
+            if (uploadFailed(purchase, productType, owner, deviceId, restore, e, supportNote, intent)) dropIntent(intent)
             return afterUploadFailure(e)
         }
     }
@@ -584,6 +636,7 @@ internal class BillingEngine(
         restore: Boolean,
         e: AppReferBillingException,
         supportNote: String? = null,
+        intent: PurchaseIntent? = null,
     ): Boolean {
         val name = purchase.orderId ?: purchase.productId
         if (!e.isRetryable) {
@@ -595,7 +648,7 @@ internal class BillingEngine(
             return secured
         }
         pauseIfAsked(e)
-        return queueForRetry(purchase, productType, owner, deviceId, restore, countAttempt = countsAttempt(e), reason = e.message)
+        return queueForRetry(purchase, productType, owner, deviceId, restore, countAttempt = countsAttempt(e), reason = e.message, intent = intent)
     }
 
     /**
@@ -665,10 +718,11 @@ internal class BillingEngine(
         restore: Boolean,
         countAttempt: Boolean,
         reason: String?,
+        intent: PurchaseIntent? = null,
     ): Boolean {
         val name = purchase.orderId ?: purchase.productId
         queue.enqueue(
-            PendingPurchase(purchase.purchaseToken, purchase.productId, productType, owner, deviceId, now(), 0, restore),
+            PendingPurchase(purchase.purchaseToken, purchase.productId, productType, owner, deviceId, now(), 0, restore, presentedOfferingContext = intent?.presentedOfferingContext, bucketId = intent?.bucketId),
             countAttempt = countAttempt,
         )
         if (queue.isDurable(purchase.purchaseToken)) {
@@ -852,7 +906,7 @@ internal class BillingEngine(
                     val response = api.send(
                         BillingEndpoint.Purchase(
                             entry.appUserId, entry.appreferId, entry.purchaseToken, entry.productId, entry.productType,
-                            emptyMap(), entry.restore,
+                            emptyMap(), entry.restore, entry.presentedOfferingContext, entry.bucketId,
                         ),
                     )
                     resetBackoff()
@@ -939,6 +993,7 @@ internal class BillingEngine(
                 storage.loggedInAppUserId = appUserId
             }
             lastServerFetch = null
+        invalidateOfferings()
         }
         val info = customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
         scope.launch(dispatcher) { migrationSync(appUserId) }
@@ -953,6 +1008,7 @@ internal class BillingEngine(
             storage.loggedInAppUserId = null
         }
         lastServerFetch = null
+        invalidateOfferings()
         customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
     }
 

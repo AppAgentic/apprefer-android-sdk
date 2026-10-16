@@ -19,6 +19,8 @@ internal data class PurchaseIntent(
     val appUserId: String,
     val accountToken: String?,
     val startedAtMillis: Long,
+    val presentedOfferingContext: PresentedOfferingContext? = null,
+    val bucketId: String? = null,
 )
 
 /** Small key-value store, so storage logic is testable without SharedPreferences. */
@@ -351,6 +353,15 @@ internal class BillingStorage(
         return next.size == list.size || writeIntents(next)
     }
 
+    @Synchronized fun offeringsBucketId(): String {
+        store.getString("offerings_bucket")?.let { return it }
+        val id = anonymousId()
+        if (!store.putString("offerings_bucket", id)) throw BillingStorageException("Could not persist offerings bucket")
+        return id
+    }
+    fun cachedOfferings(user: String): String? = try { store.getString("offerings:" + user) } catch (_: Exception) { null }
+    fun saveOfferings(user: String, raw: String) { store.putString("offerings:" + user, raw, durable = false) }
+
     private fun writeIntents(list: List<PurchaseIntent>): Boolean {
         val arr = JSONArray()
         for (i in list) {
@@ -359,7 +370,9 @@ internal class BillingStorage(
                     .put("productId", i.productId)
                     .put("appUserId", i.appUserId)
                     .put("accountToken", i.accountToken ?: JSONObject.NULL)
-                    .put("startedAtMs", i.startedAtMillis),
+                    .put("startedAtMs", i.startedAtMillis)
+                    .put("presentedOfferingContext", i.presentedOfferingContext?.json())
+                    .put("bucketId", i.bucketId),
             )
         }
         return store.putString(KEY_PURCHASE_INTENTS, if (list.isEmpty()) null else arr.toString())
@@ -369,7 +382,7 @@ internal class BillingStorage(
         val productId = o.opt("productId") as? String ?: return null
         val appUserId = o.opt("appUserId") as? String ?: return null
         val startedAt = (o.opt("startedAtMs") as? Number)?.toLong() ?: return null
-        return PurchaseIntent(productId, appUserId, o.opt("accountToken") as? String, startedAt)
+        return PurchaseIntent(productId, appUserId, o.opt("accountToken") as? String, startedAt, o.optJSONObject("presentedOfferingContext")?.let(PresentedOfferingContext::parse), o.opt("bucketId") as? String)
     }
 
     // endregion

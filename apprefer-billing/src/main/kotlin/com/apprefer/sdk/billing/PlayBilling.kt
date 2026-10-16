@@ -103,6 +103,9 @@ internal data class StorePurchasesUpdate(
 
 /** Google Play Billing behind an interface so the engine can be tested with fakes. */
 internal interface PlayBillingGateway {
+    suspend fun queryProductDetails(productIds: List<String>): List<ProductDetails> = emptyList()
+    suspend fun storefrontCountry(): String? = null
+    fun appVersion(): String? = null
     /** Receives every `onPurchasesUpdated` (purchase flows, pending purchases completing). */
     fun setPurchasesUpdatedListener(listener: (StorePurchasesUpdate) -> Unit)
 
@@ -120,7 +123,7 @@ internal interface PlayBillingGateway {
  * Live gateway around `BillingClient`: pending purchases enabled, automatic service
  * reconnection, plus a retrying `startConnection` for the first connection.
  */
-internal class LivePlayBillingGateway(context: Context, private val logger: BillingLogger) : PlayBillingGateway {
+internal class LivePlayBillingGateway(private val context: Context, private val logger: BillingLogger) : PlayBillingGateway {
 
     @Volatile private var listener: ((StorePurchasesUpdate) -> Unit)? = null
     private val connectMutex = Mutex()
@@ -214,7 +217,7 @@ internal class LivePlayBillingGateway(context: Context, private val logger: Bill
     }
 
     /** Product details for both types, in the order requested. Unknown ids are left out. */
-    suspend fun queryProductDetails(productIds: List<String>): List<ProductDetails> {
+    override suspend fun queryProductDetails(productIds: List<String>): List<ProductDetails> {
         if (productIds.isEmpty()) return emptyList()
         val setup = ensureConnected()
         if (setup.responseCode != BillingClient.BillingResponseCode.OK) {
@@ -244,6 +247,15 @@ internal class LivePlayBillingGateway(context: Context, private val logger: Bill
         return productIds.distinct().mapNotNull { found[it] }
     }
 
+    override fun appVersion(): String? = context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    override suspend fun storefrontCountry(): String? {
+        if (ensureConnected().responseCode != BillingClient.BillingResponseCode.OK) return null
+        return suspendCancellableCoroutine { cont ->
+            client.getBillingConfigAsync(com.android.billingclient.api.GetBillingConfigParams.newBuilder().build()) { result, config ->
+                if (cont.isActive) cont.resume(if (result.responseCode == BillingClient.BillingResponseCode.OK) config?.countryCode else null)
+            }
+        }
+    }
     /** Must be called on the main thread. */
     suspend fun launchBillingFlow(activity: Activity, params: BillingFlowParams): BillingResult {
         val setup = ensureConnected()
@@ -277,8 +289,8 @@ internal object LocalEntitlements {
         learned: Map<String, List<String>>,
         defaultEntitlement: String?,
     ): List<String> {
-        configured[productId]?.takeIf { it.isNotEmpty() }?.let { return it }
-        learned[productId]?.takeIf { it.isNotEmpty() }?.let { return it }
+        configured[productId]?.let { return it }
+        learned[productId]?.let { return it }
         return listOf(defaultEntitlement ?: "premium")
     }
 
