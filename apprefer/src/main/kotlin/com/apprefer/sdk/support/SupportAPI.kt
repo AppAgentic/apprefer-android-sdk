@@ -55,7 +55,17 @@ internal interface SupportStore {
         get() = null
         set(_) {}
 }
-class AppReferSupportException(val status: Int, message: String) : Exception(message)
+/**
+ * A failed Support request. [message] is the server's (or the SDK's) English text, for logs; the
+ * chat shows its own text in the customer's language instead.
+ */
+class AppReferSupportException(val status: Int, message: String) : Exception(message) {
+    /** What kind of failure, so the chat can explain it in the customer's language. */
+    internal enum class Reason { SERVER, UPLOAD, UNAVAILABLE }
+    internal var reason: Reason = Reason.SERVER
+        private set
+    internal constructor(status: Int, message: String, reason: Reason) : this(status, message) { this.reason = reason }
+}
 
 internal class SupportAPI(
     private val key: () -> String?, private val store: SupportStore,
@@ -220,7 +230,7 @@ internal class SupportAPI(
     private val root = "/api/support/v1"
     private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?, epoch: Int = generation): Map<String, Any?> {
         check(epoch == generation) { "Support reset" }
-        val headers = mutableMapOf("X-AppRefer-Key" to (key() ?: error("Configure AppRefer first")))
+        val headers = mutableMapOf("X-AppRefer-Key" to (key() ?: throw AppReferSupportException(0, "AppRefer isn't configured", AppReferSupportException.Reason.UNAVAILABLE)))
         token?.let { headers["X-AppRefer-Support-Session"] = it }
         val bytes = body?.let { headers["Content-Type"] = "application/json"; JsonCodec.encode(it).toByteArray(Charsets.UTF_8) }
         check(epoch == generation) { "Support reset" }
@@ -306,9 +316,10 @@ internal class SupportAPI(
             currentCoroutineContext().ensureActive()
             check(generation == this@SupportAPI.generation) { "Support reset" }
             val headers = slot.obj("headers").mapValues { it.value.toString() }
-            val response = transport.request("PUT", slot["uploadUrl"] as String, headers, bytes)
+            val uploadUrl = slot["uploadUrl"] as? String ?: throw AppReferSupportException(0, "Bad upload address", AppReferSupportException.Reason.UPLOAD)
+            val response = transport.request("PUT", uploadUrl, headers, bytes)
             check(generation == this@SupportAPI.generation) { "Support reset" }
-            if (response.status !in 200..299) throw AppReferSupportException(response.status, "The screenshot didn't upload")
+            if (response.status !in 200..299) throw AppReferSupportException(response.status, "The screenshot didn't upload (${response.status})", AppReferSupportException.Reason.UPLOAD)
             slot["attachmentId"] as String
         }
     }
@@ -322,7 +333,7 @@ internal class SupportAPI(
 @Suppress("UNCHECKED_CAST") internal fun Map<String, Any?>.objects(k: String) = this[k] as? List<Map<String, Any?>> ?: emptyList()
 
 data class AppReferSupportConversation(val id: String, val subject: String, val status: String, val preview: String, val lastMessageAt: String, val lastFrom: String, val unread: Int) {
-    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["subject"] as? String ?: "Conversation", m["status"].toString(), m["preview"] as? String ?: "", m["lastMessageAt"] as? String ?: "", m["lastFrom"].toString(), (m["unread"] as? Number)?.toInt() ?: 0)
+    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["subject"] as? String ?: SupportStrings.text("support.conversation.defaultSubject"), m["status"].toString(), m["preview"] as? String ?: "", m["lastMessageAt"] as? String ?: "", m["lastFrom"].toString(), (m["unread"] as? Number)?.toInt() ?: 0)
 }
 data class AppReferSupportAttachment(val url: String?, val name: String?, val contentType: String?, val size: Long?)
 data class AppReferSupportMessage @JvmOverloads constructor(

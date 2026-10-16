@@ -35,6 +35,9 @@ android {
         // android.util.Log etc. return defaults in JVM unit tests.
         unitTests.isReturnDefaultValues = true
     }
+
+    // The shared Support translation table, so device tests can check every resource against it.
+    sourceSets.getByName("androidTest").assets.srcDir("../Localization")
 }
 
 kotlin {

@@ -1,5 +1,13 @@
 # AppRefer Android SDK
 
+## 0.10.0 (unreleased): the help chat speaks 35 languages
+
+**AppRefer Support is localized.** Every label, placeholder, error and accessibility
+label in the help chat ships in 35 languages and follows the language your app is
+running in, so the chat matches your screens. Override any string or force a language;
+see [Support chat → Languages](#languages-and-your-own-wording). Arabic and Hebrew lay
+out right to left.
+
 ## 0.9.3: the Billing account gate survives a relaunch
 
 After `reset()` without `AppReferBilling.logOut()`, the Billing user that was current
@@ -184,6 +192,7 @@ or tokens required.
 
 ```kotlin
 import com.apprefer.sdk.AppRefer
+import com.apprefer.sdk.billing.AppReferBilling  // only if you use AppRefer Billing
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -207,8 +216,11 @@ class MainActivity : AppCompatActivity() {
                 phone = "+15551234567",
             )
 
-            // Link this device to your user / RevenueCat ID.
-            AppRefer.setUserId("rc_abc123")
+            // Your app's user id (the one you pass to AppReferBilling.logIn), so Support
+            // conversations and product events carry the account. AppRefer Billing links
+            // purchases to the ad click on its own; this isn't needed for that.
+            AppRefer.setUserId(currentUser.id)
+            AppReferBilling.logIn(currentUser.id)  // if you use AppRefer Billing
         }
     }
 }
@@ -378,13 +390,14 @@ Configure AppRefer first, then call from a Help button:
 AppRefer.support.open()                      // optional conversationId
 AppRefer.support.identify("María", "maria@example.com")
 AppRefer.support.accentColor = Color.rgb(120, 82, 255)
-AppRefer.support.title = "My app support"     // defaults to application label + " support"
-AppRefer.support.replyTime = "under an hour"  // completes "We usually reply in …"
+AppRefer.support.title = "My app support"     // defaults to "<application label> support" in the chat's language
+AppRefer.support.replyTime = "a few hours"    // completes "We usually reply in …"; defaults to "under an hour", translated
 AppRefer.support.teamNames = listOf("Jay")    // first names shown on the help home
 AppRefer.support.appIcon = drawable           // defaults to the launcher icon, else the app's initials
 AppRefer.support.compose("Problem with my subscription") // opens the help home, field pre-filled and focused
 
-// Quick-help tiles (defaults: Billing & refunds, Restore purchase, Report a bug, Suggest an idea).
+// Quick-help tiles (defaults: Billing & refunds, Restore purchase, Report a bug, Suggest an idea,
+// translated; ids "billing", "restore", "bug", "idea").
 // A tile starts a message with its title as the subject, or runs `action` instead. Empty hides them.
 AppRefer.support.topics = listOf(
     AppReferSupportTopic.billing,
@@ -422,6 +435,33 @@ most 1600 px and 700 KB before direct storage uploads. Home refreshes every 15 s
 conversations check every 4 seconds and merge replies by ID. Failed messages remain available to
 retry. Network failures leave a new-message draft in place. Tokens use Android Keystore encryption
 and no-backup files. Dark mode follows the device; text follows system font scaling.
+
+### Languages and your own wording
+
+The chat ships in 35 languages: ar, ca, cs, da, de, el, en, es, es-MX, fi, fr, he, hi, hr, hu, id, it, ja, ko, ms, nb, nl, pl, pt-BR, pt-PT, ro, ru, sk, sv, th, tr, uk, vi, zh-Hans, zh-Hant. They are ordinary string resources (`res/values-xx/apprefer_support_strings.xml`, plurals included). Nothing to set up.
+
+- **Which language:** the one your app is running in: its per-app language (Android 13+ `LocaleManager`, or a locale your app applies to its resources), limited to the languages your app declares in `android:localeConfig` when it declares any. So an app that declares only English shows an English chat on a German phone. Without a `localeConfig`, the app's locale list is used as is (normally the device's). If the SDK has no table for it, the device's languages are tried, then English. Regional variants map sensibly: Latin American Spanish → es-MX, Portuguese outside Brazil → pt-PT, Chinese by script and region, Norwegian → nb, the legacy `iw`/`in` codes → he/id.
+- **Force a language:** `AppRefer.support.language = "de"` (any shipped code; `null` follows the app again).
+- **Right to left:** in Arabic and Hebrew the chat lays out right to left, bubble tails and the back arrow included. This needs `android:supportsRtl="true"` on your `<application>` (the Android Studio default); without it Android keeps every layout left to right.
+- **Your own wording:** set any key; your text wins over the SDK's translation in every language. Placeholders are written `{name}` and filled in by name, so you can reorder them.
+
+```kotlin
+AppRefer.support.strings = mapOf(
+    "support.home.subtitle" to "What can we fix for you?",
+    "support.presence.team" to "Real humans · usually {time}",
+    "support.a11y.unread#one" to "One new reply",   // plural keys: "#one", "#few", … or the bare key for every count
+)
+// For your own app languages, set the values for the language you're showing:
+if (resources.configuration.locales[0].language == "de") AppRefer.support.strings = mapOf("support.home.subtitle" to "Wie können wir helfen?")
+```
+
+Overriding a string resource also works the Android way: define `apprefer_support_home_subtitle` (the key with an `apprefer_` prefix, dots and capitals turned into underscores) in your app's own `values-de/strings.xml`, and the app's value wins for that language.
+
+`title`, `replyTime` and topic texts you set are shown as written. The defaults are translated, and `replyTime` is inserted into a translated sentence: in most languages that sentence already carries its own "in", so give the whole phrase (German `"innerhalb weniger Stunden"`, French `"en quelques heures"`). The built-in tiles (`AppReferSupportTopic.billing`, `.restore`, `.bug`, `.idea`) translate themselves; their title becomes the conversation subject in the customer's language, and `copy(...)` keeps the text you don't pass translated. The notification channel `apprefer_support` is named in the chat's language when Support is configured.
+
+Two Android details: with an App Bundle, Google Play installs only the device's languages, so a forced language the device doesn't list (or an in-app choice on Android 12 and older) may be missing and shows English; disable language splits (`bundle { language { enableSplit = false } }`) if you force languages. If your build keeps only some languages (`localeFilters` / `resConfigs`), the chat's other translations are removed too and those languages show English.
+
+Every key, its English text, a note for translators and all translations are in [`Localization/support-strings.json`](Localization/support-strings.json), the table all four AppRefer SDKs share; `scripts/generate-support-strings.py` regenerates the resources from it. Messages your team writes and the AI assistant's answers and hand-over line come from AppRefer, not from this table.
 
 ## Tracking consent (0.6.0)
 
@@ -475,7 +515,7 @@ AppRefer does this for you:
 
 - On first launch it registers the install (value 0, coarse `low`), as Apple recommends.
 - It then sets the value AppRefer computes from what it already knows: **10** (`medium`) once a free trial starts, **20 + whole dollars paid** (`high`, capped at 63) once the user pays, e.g. $9.99 → 30, $39.99 → 60. Values only go up and windows are never locked early.
-- It checks on launch, when the app becomes active, after trial or revenue events and after AppReferBilling purchases, for the 35 days Apple's postbacks cover. If you take payments elsewhere (e.g. RevenueCat), call `await AppRefer.updateConversionValue()` after a purchase to set it sooner.
+- It checks on launch, when the app becomes active, after trial or revenue events and after AppReferBilling purchases, for the 35 days Apple's postbacks cover. If you take payments outside AppReferBilling, call `await AppRefer.updateConversionValue()` after a purchase to set it sooner.
 - It updates both AdAttributionKit (iOS 17.4+) and SKAdNetwork (iOS 15.4+), as Apple asks when your ad networks may use either.
 
 To receive copies of the winning postbacks in AppRefer, add to your app's Info.plist:

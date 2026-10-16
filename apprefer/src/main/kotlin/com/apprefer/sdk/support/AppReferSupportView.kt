@@ -155,7 +155,7 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private var route = if (conversationId != null) "thread" else "home"
     private var id = conversationId
-    private var subject = "Conversation"
+    private var subject = SupportStrings.text("support.conversation.defaultSubject")
     private val timeline = SupportTimeline { date(it) }
     private val cursor get() = timeline.cursor
     private val messages get() = timeline.messages
@@ -222,6 +222,10 @@ class AppReferSupportView @JvmOverloads constructor(
 
     init { setBackgroundColor(backgroundColor); render() }
 
+    /** The chat's text for [key] (see [SupportStrings]). */
+    private fun s(key: String, vararg arguments: Pair<String, String>) = SupportStrings.text(key, *arguments)
+    private val rtl get() = SupportStrings.isRightToLeft
+
     // MARK: - Building blocks
 
     private fun dp(n: Number) = (resources.displayMetrics.density * n.toFloat()).toInt()
@@ -234,9 +238,10 @@ class AppReferSupportView @JvmOverloads constructor(
     }
     private fun text(value: String, size: Float, color: Int = c.ink, weight: Int = 400, lines: Int = 0) = TextView(context).apply {
         text = value; setTextSize(TypedValue.COMPLEX_UNIT_SP, size); setTextColor(color); typeface = font(weight); includeFontPadding = false
+        textLocale = SupportStrings.locale
         if (lines > 0) { maxLines = lines; ellipsize = TextUtils.TruncateAt.END }
     }
-    private fun label(value: String) = text(value.uppercase(Locale.getDefault()), 12f, c.muted, 700).apply { letterSpacing = 0.05f }
+    private fun label(value: String) = text(value.uppercase(SupportStrings.locale), 12f, c.muted, 700).apply { letterSpacing = 0.05f }
     private fun column() = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
     private fun row() = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
     private fun lp(w: Int = -1, h: Int = -2, top: Int = 0, start: Int = 0, end: Int = 0, weight: Float = 0f) =
@@ -250,9 +255,14 @@ class AppReferSupportView @JvmOverloads constructor(
     private fun gradient(radii: FloatArray? = null, oval: Boolean = false) = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(p.light, p.deep)).apply {
         if (oval) shape = GradientDrawable.OVAL else cornerRadii = radii
     }
-    /** Per-corner radii in dp: top-left, top-right, bottom-right, bottom-left. */
-    private fun corners(tl: Number, tr: Number, br: Number, bl: Number) =
-        floatArrayOf(dpf(tl), dpf(tl), dpf(tr), dpf(tr), dpf(br), dpf(br), dpf(bl), dpf(bl))
+    /**
+     * Per-corner radii in dp: top-start, top-end, bottom-end, bottom-start. In a right-to-left chat
+     * the corners swap sides, so a bubble's tail stays on the side it points to.
+     */
+    private fun corners(ts: Number, te: Number, be: Number, bs: Number): FloatArray {
+        val (tl, tr, br, bl) = if (rtl) listOf(te, ts, bs, be) else listOf(ts, te, be, bs)
+        return floatArrayOf(dpf(tl), dpf(tl), dpf(tr), dpf(tr), dpf(br), dpf(br), dpf(bl), dpf(bl))
+    }
     private fun shadow(v: View, elevation: Number, alpha: Float) {
         v.elevation = dpf(elevation)
         if (Build.VERSION.SDK_INT >= 28) { v.outlineSpotShadowColor = supportAlpha(c.shadow, alpha); v.outlineAmbientShadowColor = supportAlpha(c.shadow, alpha) }
@@ -284,12 +294,12 @@ class AppReferSupportView @JvmOverloads constructor(
     /** The persona as last read from AppRefer (shared by every help screen). */
     private val persona get() = api.persona
     /** The small "AI" tag on everything the AI assistant says. */
-    private fun aiTag() = text("AI", 10f, p.accent, 900).apply {
+    private fun aiTag() = text(s("support.ai.tag"), 10f, p.accent, 900).apply {
         letterSpacing = 0.04f; setPadding(dp(6), dp(2), dp(6), dp(2))
-        background = rounded(supportAlpha(p.accent, .12f), 6); contentDescription = "AI assistant"
+        background = rounded(supportAlpha(p.accent, .12f), 6); contentDescription = s("support.a11y.aiAssistant")
     }
     private fun badge(count: Int) = text("$count", 12f, p.onAccent, 700).apply {
-        background = rounded(p.accent, 99); setPadding(dp(8), dp(3), dp(8), dp(3)); contentDescription = "$count unread"
+        background = rounded(p.accent, 99); setPadding(dp(8), dp(3), dp(8), dp(3)); contentDescription = SupportStrings.plural("support.a11y.unread", count)
     }
 
     /** Springy press like the iOS chat; the click still fires. */
@@ -314,6 +324,8 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private fun render() {
         p = SupportPalette(AppReferSupport.accentColor)
+        // Arabic and Hebrew lay the chat out right to left (needs android:supportsRtl in the app).
+        layoutDirection = if (rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         removeAllViews(); hero = null; header = null; headerLabels = null; headerAvatar = null; headerKey = null; presenceHolder = null; shownQuickReplies = null; renderedCount = -1; lastStatusDark = null
         shownPersona = persona
         if (route == "home") buildHome() else buildThread()
@@ -344,7 +356,7 @@ class AppReferSupportView @JvmOverloads constructor(
         val top = row().apply { gravity = Gravity.TOP }
         top.addView(appIconView())
         top.addView(Space(context), lp(0, 1, weight = 1f))
-        top.addView(circleButton(R.drawable.apprefer_support_close, "Close", 40, 18, p.onAccent,
+        top.addView(circleButton(R.drawable.apprefer_support_close, s("support.a11y.close"), 40, 18, p.onAccent,
             oval(supportAlpha(p.onAccent, .2f), supportAlpha(p.onAccent, .35f))) { if (!goBack()) onClose() })
         box.addView(top, lp())
         box.addView(text(title(), 15f, supportAlpha(p.onAccent, .85f), 600, 1), lp(top = dp(20)))
@@ -352,7 +364,7 @@ class AppReferSupportView @JvmOverloads constructor(
             letterSpacing = -0.026f; maxLines = 1
             if (Build.VERSION.SDK_INT >= 26) setAutoSizeTextTypeUniformWithConfiguration(22, 38, 1, TypedValue.COMPLEX_UNIT_SP) else ellipsize = TextUtils.TruncateAt.END
         }, lp(top = dp(4)))
-        box.addView(text("How can we help today?", 19f, supportAlpha(p.onAccent, .92f), 500), lp(top = dp(6)))
+        box.addView(text(s("support.home.subtitle"), 19f, supportAlpha(p.onAccent, .92f), 500), lp(top = dp(6)))
         presenceHolder = FrameLayout(context).apply { clipChildren = false; addView(presence()) }.also { box.addView(it, lp(-2, top = dp(18))) }
         return box
     }
@@ -402,7 +414,7 @@ class AppReferSupportView @JvmOverloads constructor(
         val persona = persona
         val names = AppReferSupport.teamNames.take(if (persona == null) 3 else 2)
         val pill = row().apply {
-            setPadding(dp(8), dp(7), dp(14), dp(7))
+            setPaddingRelative(dp(8), dp(7), dp(14), dp(7))
             background = rounded(supportAlpha(Color.BLACK, if (p.onAccentIsDark) .06f else .16f), 22, supportAlpha(p.onAccent, .3f))
         }
         // The AI assistant first (with its portrait), then the team.
@@ -413,7 +425,7 @@ class AppReferSupportView @JvmOverloads constructor(
         val stack = FrameLayout(context)
         val count = faces.size
         // Added last-first so the first face sits on top, like the iOS pill.
-        for (i in count - 1 downTo 0) stack.addView(faces[i], FrameLayout.LayoutParams(dp(28), dp(28)).apply { leftMargin = dp(20) * i })
+        for (i in count - 1 downTo 0) stack.addView(faces[i], FrameLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(20) * i })
         pill.addView(stack, lp(dp(28) + dp(20) * (count - 1), dp(28)))
         val line = SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime, persona?.name)
         pill.addView(text(line, 14f, p.onAccent, 500).apply { maxLines = 2 }, lp(-2, start = dp(10)))
@@ -444,7 +456,7 @@ class AppReferSupportView @JvmOverloads constructor(
     private fun continueCard(conversation: AppReferSupportConversation): View {
         val card = column().apply { setPadding(dp(16), dp(16), dp(16), dp(16)); background = rounded(c.card, 26) }
         shadow(card, 12, .22f)
-        card.addView(label("Continue"))
+        card.addView(label(s("support.home.continue")))
         val line = row()
         val agent = SupportText.firstName(AppReferSupport.teamNames.firstOrNull())
         val persona = persona
@@ -452,17 +464,17 @@ class AppReferSupportView @JvmOverloads constructor(
             else avatar(agent, 46, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null))
         val labels = column()
         labels.addView(text(conversation.subject, 16f, c.ink, 600, 1))
-        labels.addView(text(if (conversation.lastFrom == "customer") "You: ${conversation.preview}" else conversation.preview, 14f, c.muted, lines = 1), lp(top = dp(3)))
+        labels.addView(text(if (conversation.lastFrom == "customer") s("support.home.youPrefix", "text" to conversation.preview) else conversation.preview, 14f, c.muted, lines = 1), lp(top = dp(3)))
         line.addView(labels, lp(0, weight = 1f, start = dp(12)))
         line.addView(if (conversation.unread > 0) badge(conversation.unread) else text(time(conversation.lastMessageAt), 12f, c.muted), lp(-2, start = dp(6)))
         card.addView(line, lp(top = dp(12)))
-        card.pressable("Continue: ${conversation.subject}") { openThread(conversation) }
+        card.pressable(s("support.a11y.continueConversation", "subject" to conversation.subject)) { openThread(conversation) }
         return card
     }
 
     private fun quickHelp(showLabel: Boolean): View {
         val box = column()
-        if (showLabel) box.addView(label("Quick help").apply { setPadding(dp(6), 0, 0, 0) }, lp())
+        if (showLabel) box.addView(label(s("support.home.quickHelp")).apply { setPaddingRelative(dp(6), 0, 0, 0) }, lp())
         AppReferSupport.topics.chunked(2).forEachIndexed { r, pair ->
             val line = row().apply { gravity = Gravity.TOP }
             pair.forEachIndexed { i, t -> line.addView(tile(t), lp(0, weight = 1f, start = if (i == 1) dp(10) else 0)) }
@@ -486,7 +498,7 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private fun pastConversations(list: List<AppReferSupportConversation>): View {
         val box = column()
-        box.addView(label("Your conversations").apply { setPadding(dp(6), 0, 0, 0) })
+        box.addView(label(s("support.home.conversations")).apply { setPaddingRelative(dp(6), 0, 0, 0) })
         val card = column().apply { background = rounded(c.card, 20); clipToOutline = true }
         shadow(card, 3, .07f)
         list.forEachIndexed { i, conversation ->
@@ -510,7 +522,7 @@ class AppReferSupportView @JvmOverloads constructor(
         line.addView(labels, lp(0, weight = 1f, start = dp(12)))
         line.addView(if (conversation.unread > 0) badge(conversation.unread).apply { setPadding(dp(7), dp(3), dp(7), dp(3)) } else text(time(conversation.lastMessageAt), 12f, c.muted), lp(-2, start = dp(8)))
         line.isClickable = true; line.isFocusable = true
-        line.contentDescription = conversation.subject
+        line.contentDescription = s("support.a11y.conversation", "subject" to conversation.subject)
         line.setOnClickListener { openThread(conversation) }
         return line
     }
@@ -523,7 +535,7 @@ class AppReferSupportView @JvmOverloads constructor(
         scrim = View(context).apply { setBackgroundColor(supportAlpha(backgroundColor, .96f)) }
         addView(scrim, LayoutParams(-1, 0, Gravity.TOP))
         header = buildHeader().also { addView(it, LayoutParams(-1, dp(64), Gravity.TOP).apply { setMargins(dp(12), dp(10), dp(12), 0) }) }
-        composerBox = buildComposer("Message", R.drawable.apprefer_support_add) { sendTyped() }
+        composerBox = buildComposer(s("support.composer.placeholder.thread"), R.drawable.apprefer_support_add) { sendTyped() }
         addView(composerBox, LayoutParams(-1, -2, Gravity.BOTTOM))
         composerBox.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
             if (bottom - top != oldBottom - oldTop) post {
@@ -536,7 +548,7 @@ class AppReferSupportView @JvmOverloads constructor(
     private fun buildHeader(): View {
         val bar = row().apply { setPadding(dp(10), 0, dp(10), 0); background = rounded(c.card, 32) }
         shadow(bar, 8, .14f)
-        bar.addView(circleButton(R.drawable.apprefer_support_back, "Back", 42, 18, p.accent, oval(supportAlpha(c.ink, .05f))) { goBack() })
+        bar.addView(circleButton(R.drawable.apprefer_support_back, s("support.a11y.back"), 42, 18, p.accent, oval(supportAlpha(c.ink, .05f))) { goBack() })
         headerAvatar = FrameLayout(context).also { bar.addView(it, lp(dp(42), dp(42), start = dp(10))) }
         headerLabels = FrameLayout(context).also { bar.addView(it, lp(0, weight = 1f, start = dp(10))) }
         return bar
@@ -559,11 +571,11 @@ class AppReferSupportView @JvmOverloads constructor(
                 addView(text(persona.name, 16f, c.ink, 700, 1).apply { maxWidth = dp(150); ellipsize = android.text.TextUtils.TruncateAt.END }, lp(-2))
                 addView(aiTag(), lp(-2, start = dp(6)))
             }, lp(-2))
-            labels.addView(text("${appName()} team · replies instantly", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
+            labels.addView(text(s("support.thread.personaSubtitle", "app" to appName()), 12.5f, c.muted, lines = 1), lp(top = dp(2)))
             avatar(persona.name, 42, agentColors, imageUrl = persona.avatarUrl)
         } else {
-            labels.addView(text(agent ?: "${appName()} team", 16f, c.ink, 700, 1))
-            labels.addView(text("Usually replies in ${AppReferSupport.replyTime}", 12.5f, c.muted, lines = 1), lp(top = dp(2)))
+            labels.addView(text(agent ?: s("support.thread.team", "app" to appName()), 16f, c.ink, 700, 1))
+            labels.addView(text(s("support.thread.replyTime", "time" to AppReferSupport.replyTime), 12.5f, c.muted, lines = 1), lp(top = dp(2)))
             avatar(agent, 42, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null)
         }
         headerAvatar?.apply { removeAllViews(); addView(face, FrameLayout.LayoutParams(-1, -1)) }
@@ -584,8 +596,15 @@ class AppReferSupportView @JvmOverloads constructor(
         body.removeAllViews()
         val waiting = pendingHere
         if (!threadLoaded && messages.isEmpty() && waiting.isEmpty()) {
-            if (loadError != null) body.addView(text(loadError ?: "", 14f, c.muted).apply { gravity = Gravity.CENTER }, lp(top = dp(30)))
-            else body.addView(FrameLayout(context).apply {
+            if (loadError != null) {
+                body.addView(text(loadError ?: "", 14f, c.muted).apply { gravity = Gravity.CENTER }, lp(top = dp(30)))
+                body.addView(FrameLayout(context).apply {
+                    addView(text(s("support.action.tryAgain"), 15f, p.accent, 600).apply {
+                        setPadding(dp(16), dp(10), dp(16), dp(10)); background = rounded(c.card, 99, supportAlpha(p.accent, .18f))
+                        pressable { loadError = null; renderMessages(); if (visible) startPolling() }
+                    }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL))
+                }, lp(top = dp(12)))
+            } else body.addView(FrameLayout(context).apply {
                 addView(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.accent) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
             }, lp(top = dp(30)))
         }
@@ -606,8 +625,10 @@ class AppReferSupportView @JvmOverloads constructor(
         waiting.forEach { body.addView(pendingBubble(it), lp(top = dp(6))) }
         val last = messages.lastOrNull()
         if (threadLoaded && waiting.isEmpty() && last?.from == "customer") {
-            body.addView(text("Sent ${clock(last.createdAt)} · we'll notify you when the team replies", 11.5f, c.muted, 500).apply {
-                gravity = Gravity.END; setPadding(0, 0, dp(4), 0)
+            val at = clock(last.createdAt)
+            val notice = if (at.isEmpty()) s("support.thread.sentNoticeNoTime") else s("support.thread.sentNotice", "time" to at)
+            body.addView(text(notice, 11.5f, c.muted, 500).apply {
+                gravity = Gravity.END; setPaddingRelative(0, 0, dp(4), 0)
             }, lp(top = dp(5)))
         }
         updateHeader()
@@ -624,13 +645,17 @@ class AppReferSupportView @JvmOverloads constructor(
         val strip = SupportFlowRow(context, dp(6), end)
         urls.forEach { a ->
             val (frame, picture) = framedImage(74, 112, 14)
-            picture.contentDescription = a.name ?: "Screenshot"
+            picture.contentDescription = a.name ?: s("support.a11y.screenshot")
             a.url?.let { url ->
-                frame.pressable(a.name ?: "Screenshot") { viewImage(url) }
+                frame.pressable(a.name ?: s("support.a11y.screenshot")) { viewImage(url) }
                 val cached = SupportImages.cached(url)
                 if (cached != null) picture.setImageBitmap(cached)
-                else scope.launch { try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) } catch (_: Exception) {} }
-            }
+                else scope.launch {
+                    try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { picture.contentDescription = s("support.a11y.imageUnavailable") }
+                }
+            } ?: run { picture.contentDescription = s("support.a11y.imageUnavailable") }
             strip.addView(frame, ViewGroup.LayoutParams(dp(74), dp(112)))
         }
         return strip
@@ -655,7 +680,7 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun customerBubble(m: AppReferSupportMessage, tail: Boolean): View {
-        val box = column().apply { gravity = Gravity.END; setPadding(dp(60), 0, 0, 0) }
+        val box = column().apply { gravity = Gravity.END; setPaddingRelative(dp(60), 0, 0, 0) }
         val shots = m.attachments.filter { it.contentType?.startsWith("image/") == true }
         if (shots.isNotEmpty()) box.addView(thumbnails(shots, true), lp(-2))
         if (m.text.isNotEmpty()) box.addView(bubbleText(m.text, p.onAccent).apply {
@@ -665,7 +690,7 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun teamBubble(m: AppReferSupportMessage, showAvatar: Boolean): View {
-        val line = row().apply { gravity = Gravity.BOTTOM; setPadding(0, 0, dp(40), 0) }
+        val line = row().apply { gravity = Gravity.BOTTOM; setPaddingRelative(0, 0, dp(40), 0) }
         if (showAvatar) line.addView(avatar(SupportText.firstName(m.authorName), 30, agentColors))
         else line.addView(Space(context), lp(dp(30), dp(30)))
         val box = column()
@@ -680,10 +705,10 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun botCard(m: AppReferSupportMessage): View {
-        val line = row().apply { setPadding(0, 0, dp(50), 0) }
+        val line = row().apply { setPaddingRelative(0, 0, dp(50), 0) }
         val card = column().apply { setPadding(dp(14), dp(12), dp(14), dp(12)); background = rounded(c.card, 20) }
         shadow(card, 2, .06f)
-        card.addView(text("✦ INSTANT ANSWER", 11.5f, p.accent, 700).apply { letterSpacing = 0.035f })
+        card.addView(text("✦ " + s("support.thread.instantAnswer").uppercase(SupportStrings.locale), 11.5f, p.accent, 700).apply { letterSpacing = 0.035f })
         card.addView(text(m.text, 15.5f, c.ink).apply { setLineSpacing(dpf(2), 1f); setTextIsSelectable(true) }, lp(-2, top = dp(4)))
         line.addView(card, lp(-2))
         return line
@@ -693,7 +718,7 @@ class AppReferSupportView @JvmOverloads constructor(
     private fun personaMessage(m: AppReferSupportMessage, name: String, last: Boolean): View {
         val persona = persona
         val showAvatar = last || m.isHandoff
-        val line = row().apply { gravity = Gravity.BOTTOM; setPadding(0, 0, dp(40), 0) }
+        val line = row().apply { gravity = Gravity.BOTTOM; setPaddingRelative(0, 0, dp(40), 0) }
         if (showAvatar) line.addView(avatar(name, 30, agentColors, imageUrl = persona?.takeIf { it.name == name }?.avatarUrl))
         else line.addView(Space(context), lp(dp(30), dp(30)))
         val bubble = column().apply {
@@ -717,7 +742,7 @@ class AppReferSupportView @JvmOverloads constructor(
     /** Under the hand-over: who has the conversation now. */
     private fun handoffPill(to: String?): View {
         val pill = row().apply {
-            setPadding(dp(5), dp(5), dp(12), dp(5)); background = rounded(c.card, 99, supportAlpha(c.muted, .18f))
+            setPaddingRelative(dp(5), dp(5), dp(12), dp(5)); background = rounded(c.card, 99, supportAlpha(c.muted, .18f))
         }
         pill.addView(avatar(to, 22, agentColors, if (to == null) R.drawable.apprefer_support_people else null))
         pill.addView(text(SupportText.handoff(to, AppReferSupport.replyTime), 12.5f, c.muted, 600, 2), lp(-2, start = dp(8)))
@@ -725,7 +750,7 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun pendingBubble(pend: SupportPending): View {
-        val box = column().apply { gravity = Gravity.END; setPadding(dp(60), 0, 0, 0) }
+        val box = column().apply { gravity = Gravity.END; setPaddingRelative(dp(60), 0, 0, 0) }
         if (pend.images.isNotEmpty()) {
             val strip = SupportFlowRow(context, dp(6), true).apply { alpha = .6f }
             pend.images.forEach { bytes ->
@@ -738,9 +763,9 @@ class AppReferSupportView @JvmOverloads constructor(
         if (pend.text.isNotEmpty()) box.addView(bubbleText(pend.text, p.onAccent).apply {
             background = gradient(corners(22, 22, 6, 22)); alpha = .6f
         }, lp(-2, top = if (pend.images.isNotEmpty()) dp(5) else 0))
-        box.addView(if (pend.failed) text("Not sent · Tap to retry", 12f, c.error, 600).apply {
-            setPadding(0, dp(4), 0, dp(4)); setOnClickListener { deliver(pend) }
-        } else text("Sending…", 11.5f, c.muted, 500), lp(-2, top = dp(5)))
+        box.addView(if (pend.failed) text(s("support.thread.notSent"), 12f, c.error, 600).apply {
+            setPadding(0, dp(4), 0, dp(4)); setOnClickListener { deliver(pend) }; contentDescription = s("support.a11y.retryMessage")
+        } else text(s("support.thread.sending"), 11.5f, c.muted, 500).apply { contentDescription = s("support.a11y.sendingMessage") }, lp(-2, top = dp(5)))
         return box
     }
 
@@ -751,16 +776,16 @@ class AppReferSupportView @JvmOverloads constructor(
         accessories = column()
         box.addView(accessories, lp())
         val bar = row().apply {
-            gravity = Gravity.BOTTOM; setPadding(dp(6), dp(7), dp(7), dp(7)); background = rounded(c.card, 29)
+            gravity = Gravity.BOTTOM; setPaddingRelative(dp(6), dp(7), dp(7), dp(7)); background = rounded(c.card, 29)
         }
         shadow(bar, 10, .18f)
-        bar.addView(circleButton(leading, "Add screenshot", 44, 22, c.muted, ColorDrawable(Color.TRANSPARENT)) { pick() })
+        bar.addView(circleButton(leading, s("support.a11y.addScreenshot"), 44, 22, c.muted, ColorDrawable(Color.TRANSPARENT)) { pick() })
         field = EditText(context).apply {
             setText(draft); hint = placeholder; setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f); setTextColor(c.ink); setHintTextColor(supportAlpha(c.muted, .75f))
             background = null; minLines = 1; maxLines = 5; gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setPadding(dp(4), dp(11), dp(4), dp(11)); minHeight = dp(44)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            highlightColor = supportAlpha(p.accent, .3f)
+            highlightColor = supportAlpha(p.accent, .3f); textLocale = SupportStrings.locale
             if (Build.VERSION.SDK_INT >= 29) setTextCursorDrawable(GradientDrawable().apply { setColor(p.accent); setSize(dp(2), dp(1)) })
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -774,7 +799,7 @@ class AppReferSupportView @JvmOverloads constructor(
         sendIcon = icon(R.drawable.apprefer_support_send, Color.WHITE, 22)
         sendSpinner = ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.onAccent); visibility = View.GONE; layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER) }
         sendButton = FrameLayout(context).apply {
-            addView(sendIcon); addView(sendSpinner); contentDescription = "Send"
+            addView(sendIcon); addView(sendSpinner); contentDescription = s("support.a11y.send")
             isClickable = true; isFocusable = true; setOnClickListener { onSend() }
         }
         bar.addView(sendButton, lp(dp(44), dp(44)))
@@ -813,7 +838,7 @@ class AppReferSupportView @JvmOverloads constructor(
         shownQuickReplies = showsQuickReplies
         if (shownQuickReplies == true) add(quickReplies(), -1)
         if (images.isNotEmpty()) add(attachmentStrip(), -1)
-        field.hint = if (route == "home") SupportText.homeHint(topic?.prompt, persona?.name) else "Message"
+        field.hint = if (route == "home") SupportText.homeHint(topic?.prompt, persona?.name) else s("support.composer.placeholder.thread")
     }
 
     private fun View.withMargins(h: Int): View = FrameLayout(context).also { holder ->
@@ -823,11 +848,11 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private fun topicChip(t: AppReferSupportTopic): View {
         val chip = row().apply {
-            setPadding(dp(12), dp(6), dp(6), dp(6)); background = rounded(c.card, 99, supportAlpha(t.tint, .25f))
+            setPaddingRelative(dp(12), dp(6), dp(6), dp(6)); background = rounded(c.card, 99, supportAlpha(t.tint, .25f))
         }
         chip.addView(icon(t.icon, t.tint, 14), lp(dp(14), dp(14)))
         chip.addView(text(t.title, 14f, t.tint, 600, 1), lp(-2, start = dp(6)))
-        chip.addView(circleButton(R.drawable.apprefer_support_close, "Remove topic", 24, 12, t.tint, ColorDrawable(Color.TRANSPARENT)) {
+        chip.addView(circleButton(R.drawable.apprefer_support_close, s("support.a11y.removeTopic"), 24, 12, t.tint, ColorDrawable(Color.TRANSPARENT)) {
             topic = null; renderAccessories(); saveDraft()
         }, lp(dp(24), dp(24), start = dp(2)))
         return chip
@@ -839,8 +864,9 @@ class AppReferSupportView @JvmOverloads constructor(
             setPadding(dp(13), dp(8), dp(13), dp(8)); background = rounded(c.card, 99, supportAlpha(p.accent, .18f))
             pressable(title, action)
         }
-        strip.addView(chip("👍 Thanks, that's sorted") { sendText("👍 Thanks, that's sorted") })
-        strip.addView(chip("I have another question") { focusField() }, lp(-2, start = dp(8)))
+        val thanks = s("support.thread.quickReply.thanks")
+        strip.addView(chip(thanks) { sendText(thanks) })
+        strip.addView(chip(s("support.thread.quickReply.another")) { focusField() }, lp(-2, start = dp(8)))
         return HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; addView(strip) }
     }
 
@@ -849,9 +875,9 @@ class AppReferSupportView @JvmOverloads constructor(
         images.toList().forEachIndexed { index, bytes ->
             val holder = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
             val (frame, picture) = framedImage(62, 88, 12)
-            picture.setImageBitmap(thumb(bytes)); picture.contentDescription = "Screenshot ${index + 1}"
+            picture.setImageBitmap(thumb(bytes)); picture.contentDescription = s("support.a11y.screenshotNumbered", "number" to "${index + 1}")
             holder.addView(frame, FrameLayout.LayoutParams(dp(62), dp(88), Gravity.BOTTOM or Gravity.START))
-            val remove = circleButton(R.drawable.apprefer_support_close, "Remove screenshot", 22, 12, Color.WHITE, oval(0x99000000.toInt(), Color.WHITE)) {
+            val remove = circleButton(R.drawable.apprefer_support_close, s("support.a11y.removeScreenshotNumbered", "number" to "${index + 1}"), 22, 12, Color.WHITE, oval(0x99000000.toInt(), Color.WHITE)) {
                 if (!starting && index < images.size) { images.removeAt(index); renderAccessories(); updateSend(); saveDraft() }
             }
             remove.elevation = dpf(4)
@@ -860,7 +886,7 @@ class AppReferSupportView @JvmOverloads constructor(
         }
         if (images.size < 4) strip.addView(FrameLayout(context).apply {
             background = rounded(supportAlpha(c.card, .9f), 12); addView(icon(R.drawable.apprefer_support_add, p.accent, 22))
-            pressable("Add another screenshot") { pick() }
+            pressable(s("support.a11y.addAnotherScreenshot")) { pick() }
         }, lp(dp(62), dp(88), start = dp(10)))
         return HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; clipChildren = false; addView(strip) }
     }
@@ -876,18 +902,23 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private fun viewImage(url: String) {
         val dialog = Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-        val root = FrameLayout(context).apply { setBackgroundColor(Color.BLACK) }
-        val picture = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "Screenshot" }
+        val root = FrameLayout(context).apply {
+            setBackgroundColor(Color.BLACK); layoutDirection = this@AppReferSupportView.layoutDirection
+            contentDescription = s("support.a11y.closeScreenshot")
+        }
+        val picture = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = s("support.a11y.screenshot") }
         root.addView(picture, FrameLayout.LayoutParams(-1, -1))
         val spinner = ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(Color.WHITE) }
         root.addView(spinner, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
-        root.addView(circleButton(R.drawable.apprefer_support_close, "Close", 40, 18, Color.WHITE, oval(0x33FFFFFF)) { dialog.dismiss() },
+        root.addView(circleButton(R.drawable.apprefer_support_close, s("support.a11y.close"), 40, 18, Color.WHITE, oval(0x33FFFFFF)) { dialog.dismiss() },
             FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.END).apply { setMargins(dp(16), dp(16), dp(16), dp(16)) })
         root.setOnClickListener { dialog.dismiss() }
         dialog.setContentView(root)
         dialog.show()
         scope.launch {
-            try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) } catch (_: Exception) {}
+            try { picture.setImageBitmap(withContext(Dispatchers.IO) { SupportImages.remote(url) }) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { picture.contentDescription = s("support.a11y.imageUnavailable") }
             spinner.visibility = View.GONE
         }
     }
@@ -925,7 +956,7 @@ class AppReferSupportView @JvmOverloads constructor(
         starting = true; sendError = null
         updateSend(); renderAccessories(); saveDraft()
         val epoch = api.actionGeneration
-        val sentDraft = draft; val shots = images.toList(); val about = topic?.title; val clientId = homeClientMessageId
+        val sentDraft = draft; val shots = images.toList(); val about = topic?.title; val aboutId = topic?.id; val clientId = homeClientMessageId
         scope.launch {
             try {
                 // Every attempt uses fresh upload slots but keeps the same send identity.
@@ -935,7 +966,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 // Clear only what was sent: anything typed or picked meanwhile stays as the next home draft.
                 if (draft == sentDraft) draft = ""
                 images.removeAll { kept -> shots.any { it === kept } }
-                if (topic?.title == about) topic = null
+                if (topic?.id == aboutId) topic = null
                 homeClientMessageId = UUID.randomUUID().toString()
                 id = t.conversation.id; subject = t.conversation.subject
                 timeline.reset(); timeline.merge(t.messages); threadLoaded = true; loadError = null
@@ -943,7 +974,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 navigate("thread")
             } catch (e: CancellationException) { starting = false; throw e }
             catch (e: Exception) {
-                starting = false; sendError = e.message ?: "Your message wasn't sent. Try again."
+                starting = false; sendError = SupportStrings.errorText(e, "support.error.notSent")
                 if (route == "home") { updateSend(); renderAccessories() }
             } finally { if (isAttachedToWindow) saveDraft() }
         }
@@ -1008,7 +1039,8 @@ class AppReferSupportView @JvmOverloads constructor(
                 val room = 4 - images.size
                 val bytes = withContext(Dispatchers.IO) { uris.take(room).map { SupportImages.jpeg(context, it) } }
                 images.addAll(bytes.take(4 - images.size)); sendError = null
-            } catch (e: Exception) { sendError = e.message ?: "This image could not be read" }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { sendError = s("support.error.imageUnreadable") }
             renderAccessories(); updateSend(); saveDraft()
         }
     }
@@ -1041,7 +1073,7 @@ class AppReferSupportView @JvmOverloads constructor(
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) {
-                    loadError = e.message ?: "Couldn't load. Check your connection."
+                    loadError = SupportStrings.errorText(e, if (route == "thread") "support.thread.loadFailed" else "support.error.loadFailed")
                     if (route == "home") { homeLoaded = true; renderHomeContent() } else if (messages.isEmpty()) renderMessages()
                 }
                 delay(if (route == "thread") 4_000 else 15_000)
@@ -1115,13 +1147,13 @@ class AppReferSupportView @JvmOverloads constructor(
             out.writeInt(images.size); images.forEach { out.writeInt(it.size); out.write(it) }
             out.writeInt(pending.size)
             pending.forEach { it.write(out) }
-            out.writeUTF(topic?.title ?: ""); out.writeUTF(homeClientMessageId)
+            out.writeUTF(topic?.id ?: ""); out.writeUTF(homeClientMessageId)
             val stash = homeStash
             out.writeBoolean(stash != null)
             if (stash != null) {
                 val stashText = stash.draft.toByteArray(Charsets.UTF_8); out.writeInt(stashText.size); out.write(stashText)
                 out.writeInt(stash.images.size); stash.images.forEach { out.writeInt(it.size); out.write(it) }
-                out.writeUTF(stash.topic?.title ?: "")
+                out.writeUTF(stash.topic?.id ?: "")
             }
             out.flush(); atomic.finishWrite(stream)
         } catch (e: Exception) { atomic.failWrite(stream); throw e }
@@ -1158,7 +1190,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 }
                 if (input.available() > 0) {
                     val savedTopic = input.readUTF()
-                    topic = AppReferSupport.topics.firstOrNull { it.title == savedTopic && it.action == null }
+                    topic = savedTopic(savedTopic)
                     homeClientMessageId = input.readUTF().takeIf { it.matches(Regex("[A-Za-z0-9_-]{8,64}")) } ?: homeClientMessageId
                 }
                 homeStash = null
@@ -1167,12 +1199,17 @@ class AppReferSupportView @JvmOverloads constructor(
                     val stashText = String(ByteArray(stashSize).also { input.readFully(it) }, Charsets.UTF_8)
                     val stashCount = input.readInt(); require(stashCount in 0..4)
                     val stashImages = List(stashCount) { val length = input.readInt(); require(length in 1..700_000); ByteArray(length).also { input.readFully(it) } }
-                    val stashTopic = input.readUTF().let { saved -> AppReferSupport.topics.firstOrNull { it.title == saved && it.action == null } }
+                    val stashTopic = savedTopic(input.readUTF())
                     if (route == "thread") homeStash = HomeStash(stashText, stashImages, stashTopic, null)
                 }
             }
             draftFile = file; render()
         }
+    }
+
+    /** A saved topic by id (older saves stored the title). */
+    private fun savedTopic(saved: String): AppReferSupportTopic? = saved.takeIf { it.isNotEmpty() }?.let { value ->
+        AppReferSupport.topics.firstOrNull { it.action == null && it.id == value } ?: AppReferSupport.topics.firstOrNull { it.action == null && it.title == value }
     }
 
     override fun onAttachedToWindow() {
@@ -1186,25 +1223,31 @@ class AppReferSupportView @JvmOverloads constructor(
 
     // MARK: - Dates
 
-    private fun date(s: String): Long {
-        val normalized = s.replace(Regex("Z$"), "+0000").replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
+    private fun date(iso: String): Long {
+        val normalized = iso.replace(Regex("Z$"), "+0000").replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
         return listOf("yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ssZ").firstNotNullOfOrNull { pattern ->
             runCatching { SimpleDateFormat(pattern, Locale.US).parse(normalized)?.time }.getOrNull()
         } ?: 0L
     }
-    private fun clock(s: String): String = date(s).takeIf { it > 0 }?.let { android.text.format.DateFormat.getTimeFormat(context).format(Date(it)) } ?: ""
-    /** "Today, 12:35", "Yesterday, 09:10" or "14 Oct, 18:02", like the iOS SDK. */
-    private fun time(s: String): String {
-        val ms = date(s).takeIf { it > 0 } ?: return ""
-        val clock = android.text.format.DateFormat.getTimeFormat(context).format(Date(ms))
+    /** A clock time in the chat's language, following the device's 12/24-hour setting. */
+    private fun clockFormat(): java.text.DateFormat {
+        val locale = SupportStrings.locale
+        val skeleton = if (android.text.format.DateFormat.is24HourFormat(context)) "Hm" else "hm"
+        return SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton), locale)
+    }
+    private fun clock(iso: String): String = date(iso).takeIf { it > 0 }?.let { clockFormat().format(Date(it)) } ?: ""
+    /** "Today, 12:35", "Yesterday, 09:10" or "14 Oct 2026, 18:02", in the chat's language. */
+    private fun time(iso: String): String {
+        val ms = date(iso).takeIf { it > 0 } ?: return ""
+        val clock = clockFormat().format(Date(ms))
         val day = Calendar.getInstance().apply { timeInMillis = ms }
         val today = Calendar.getInstance()
         fun same(a: Calendar, b: Calendar) = a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
         val yesterday = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
         return when {
-            same(day, today) -> "Today, $clock"
-            same(day, yesterday) -> "Yesterday, $clock"
-            else -> "${android.text.format.DateFormat.getMediumDateFormat(context).format(Date(ms))}, $clock"
+            same(day, today) -> s("support.time.today", "time" to clock)
+            same(day, yesterday) -> s("support.time.yesterday", "time" to clock)
+            else -> "${java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM, SupportStrings.locale).format(Date(ms))}, $clock"
         }
     }
 }
@@ -1300,11 +1343,14 @@ internal class SupportFlowRow(context: Context, private val gap: Int, private va
         setMeasuredDimension(resolveSize(widest, widthMeasureSpec), resolveSize(height, heightMeasureSpec))
     }
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        // Children run from the start edge; in a right-to-left layout that is the right.
+        val rtl = layoutDirection == LAYOUT_DIRECTION_RTL
         var y = 0
         lines.forEach { line ->
             val lineWidth = line.sumOf { it.measuredWidth } + gap * (line.size - 1)
-            var x = if (alignEnd) width - lineWidth else 0
-            line.forEach { child -> child.layout(x, y, x + child.measuredWidth, y + child.measuredHeight); x += child.measuredWidth + gap }
+            val atRight = alignEnd != rtl
+            var x = if (atRight) width - lineWidth else 0
+            (if (rtl) line.asReversed() else line).forEach { child -> child.layout(x, y, x + child.measuredWidth, y + child.measuredHeight); x += child.measuredWidth + gap }
             y += line.maxOf { it.measuredHeight } + gap
         }
     }

@@ -18,10 +18,35 @@ import java.util.Locale
 object AppReferSupport {
     /** Hero, bubble and button colour. Text on it turns dark automatically when the colour is bright. */
     var accentColor: Int = Color.rgb(120, 82, 255)
-    /** Line above the greeting. Defaults to "<App name> support". */
+    /** Line above the greeting. Defaults to "<App name> support" in the chat's language. */
     var title: String? = null
-    /** How fast the team usually answers, completing "We usually reply in …". */
-    var replyTime: String = "under an hour"
+    /**
+     * How fast the team usually answers, completing "We usually reply in …". Defaults to "under an
+     * hour" in the chat's language. A value you set is used as written in every language, so set it
+     * for the language your app is showing; in most languages the sentence around it leaves out
+     * "in" (e.g. German "innerhalb einer Stunde").
+     */
+    var replyTime: String
+        get() = customReplyTime ?: SupportStrings.text("support.replyTime.default")
+        set(value) { customReplyTime = value }
+    @Volatile private var customReplyTime: String? = null
+    /**
+     * Your own text for any of the chat's strings, by key (e.g.
+     * `mapOf("support.home.subtitle" to "What's up?")`). Used before the SDK's translations, in
+     * every language. Placeholders such as `{name}` are filled in; plural keys take `"key#one"`,
+     * `"key#few"`, … or just `"key"` for every count. Keys: `Localization/support-strings.json`
+     * in the SDK repo.
+     */
+    var strings: Map<String, String>
+        get() = SupportStrings.overrides
+        set(value) { SupportStrings.overrides = value.toMap() }
+    /**
+     * Forces the chat's language (e.g. "de", "pt-BR", "zh-Hant"). By default it follows the
+     * language your app is running in, then the device's languages, then English.
+     */
+    var language: String?
+        get() = SupportStrings.forcedLanguage
+        set(value) { SupportStrings.forcedLanguage = value }
     /** First names of the people who answer (e.g. `listOf("Jay")`), shown on the help home. */
     var teamNames: List<String> = emptyList()
     /** The quick-help tiles on the home screen. Empty hides them. */
@@ -98,7 +123,7 @@ object AppReferSupport {
         com.apprefer.sdk.AppReferContext.context = app
         if (Build.VERSION.SDK_INT >= 26) {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
-                NotificationChannel("apprefer_support", "Support replies", NotificationManager.IMPORTANCE_DEFAULT))
+                NotificationChannel("apprefer_support", SupportStrings.text("support.notification.channel"), NotificationManager.IMPORTANCE_DEFAULT))
         }
         if (pendingClearIdentity) applyPendingClear(app!!)
     }
@@ -146,7 +171,7 @@ object AppReferSupport {
     }
     suspend fun unreadCount(): Int = app?.let { api(it).conversations().sumOf { c -> c.unread } } ?: 0
     internal fun appName(context: Context): String = context.applicationInfo.loadLabel(context.packageManager).toString()
-    internal fun resolvedTitle(context: Context): String = title ?: "${appName(context)} support"
+    internal fun resolvedTitle(context: Context): String = title ?: SupportStrings.text("support.home.title", "app" to appName(context))
     /** The override, else the launcher icon (null when the app has none, so initials are shown). */
     internal fun resolvedIcon(context: Context): Drawable? = appIcon ?: runCatching {
         if (context.applicationInfo.icon == 0) null else context.packageManager.getApplicationIcon(context.applicationInfo)
@@ -160,23 +185,62 @@ object AppReferSupport {
 /**
  * A quick-help tile on the home screen. Tapping it starts a message on that topic (its title becomes
  * the conversation subject), or runs [action] instead (e.g. your own restore-purchases flow).
+ *
+ * The built-in tiles ([billing], [restore], [bug], [idea]) show their text in the chat's language;
+ * text you pass is shown as written.
  */
-data class AppReferSupportTopic @JvmOverloads constructor(
-    val title: String,
-    val subtitle: String,
+class AppReferSupportTopic private constructor(
+    /** "billing", "restore", "bug" or "idea" for the built-in tiles. */
+    private val builtIn: String?,
+    private val customTitle: String?,
+    private val customSubtitle: String?,
+    private val customPrompt: String?,
     /** A drawable resource, tinted with [tint]. */
     val icon: Int,
     /** ARGB colour of the icon and the topic chip. */
     val tint: Int,
-    /** The hint in the message field once the tile is picked. */
-    val prompt: String,
-    val action: (() -> Unit)? = null,
+    val action: (() -> Unit)?,
 ) {
+    @JvmOverloads constructor(
+        title: String,
+        subtitle: String,
+        icon: Int,
+        tint: Int,
+        prompt: String,
+        action: (() -> Unit)? = null,
+    ) : this(null, title, subtitle, prompt, icon, tint, action)
+
+    /** Stable id: "billing", "restore", "bug" or "idea" for the built-in tiles, else the title you set. */
+    val id: String get() = builtIn ?: customTitle.orEmpty()
+    /** The tile's title; also the new conversation's subject. */
+    val title: String get() = customTitle ?: SupportStrings.text("support.topic.$builtIn.title")
+    val subtitle: String get() = customSubtitle ?: SupportStrings.text("support.topic.$builtIn.subtitle")
+    /** The hint in the message field once the tile is picked. */
+    val prompt: String get() = customPrompt ?: SupportStrings.text("support.topic.$builtIn.prompt")
+
+    /** A changed copy. Text you leave out keeps following the chat's language on a built-in tile. */
+    @JvmOverloads fun copy(
+        title: String? = null,
+        subtitle: String? = null,
+        icon: Int = this.icon,
+        tint: Int = this.tint,
+        prompt: String? = null,
+        action: (() -> Unit)? = this.action,
+    ): AppReferSupportTopic = AppReferSupportTopic(builtIn, title ?: customTitle, subtitle ?: customSubtitle, prompt ?: customPrompt, icon, tint, action)
+
+    override fun equals(other: Any?): Boolean = other is AppReferSupportTopic && other.builtIn == builtIn &&
+        other.customTitle == customTitle && other.customSubtitle == customSubtitle && other.customPrompt == customPrompt &&
+        other.icon == icon && other.tint == tint && other.action == action
+
+    override fun hashCode(): Int = listOf(builtIn, customTitle, customSubtitle, customPrompt, icon, tint, action).hashCode()
+
+    override fun toString(): String = "AppReferSupportTopic(id=$id, title=$title)"
+
     companion object {
-        @JvmField val billing = AppReferSupportTopic("Billing & refunds", "Charges, plans, receipts", R.drawable.apprefer_support_card, 0xFF6E4AFF.toInt(), "What happened with the charge?")
-        @JvmField val restore = AppReferSupportTopic("Restore purchase", "Get your plan back", R.drawable.apprefer_support_restore, 0xFF2E8FFA.toInt(), "Which plan did you buy, and on which account?")
-        @JvmField val bug = AppReferSupportTopic("Report a bug", "Screenshots welcome", R.drawable.apprefer_support_bug, 0xFFF04554.toInt(), "What went wrong? A screenshot helps.")
-        @JvmField val idea = AppReferSupportTopic("Suggest an idea", "We read every one", R.drawable.apprefer_support_idea, 0xFF1FB866.toInt(), "What would make the app better for you?")
+        @JvmField val billing = AppReferSupportTopic("billing", null, null, null, R.drawable.apprefer_support_card, 0xFF6E4AFF.toInt(), null)
+        @JvmField val restore = AppReferSupportTopic("restore", null, null, null, R.drawable.apprefer_support_restore, 0xFF2E8FFA.toInt(), null)
+        @JvmField val bug = AppReferSupportTopic("bug", null, null, null, R.drawable.apprefer_support_bug, 0xFFF04554.toInt(), null)
+        @JvmField val idea = AppReferSupportTopic("idea", null, null, null, R.drawable.apprefer_support_idea, 0xFF1FB866.toInt(), null)
         @JvmStatic val defaults: List<AppReferSupportTopic> get() = listOf(billing, restore, bug, idea)
     }
 }

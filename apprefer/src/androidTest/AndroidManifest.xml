@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Like most host apps: right-to-left layouts are on, so the Arabic/Hebrew chat test can see them. -->
+    <application android:supportsRtl="true" />
+</manifest>
