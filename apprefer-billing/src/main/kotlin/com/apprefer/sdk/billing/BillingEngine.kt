@@ -50,11 +50,12 @@ internal class BillingEngine(
 
     private val offeringsCache = HashMap<String, Pair<Long, String>>()
     private var offeringRequest: Deferred<Result<AppReferOfferings>>? = null
+    private var offeringPolicy: AppReferBilling.FetchPolicy? = null
     private var offeringGeneration = 0
     private var offeringsInvalidated = false
     suspend fun offerings(policy: AppReferBilling.FetchPolicy = AppReferBilling.FetchPolicy.CACHED_OR_FETCHED): AppReferOfferings = withContext(dispatcher) {
         val running = offeringRequest
-        if (running != null) return@withContext running.await().getOrThrow()
+        if (running != null && (offeringPolicy == policy || offeringPolicy == AppReferBilling.FetchPolicy.FETCH_CURRENT)) return@withContext running.await().getOrThrow()
         val generation = offeringGeneration
         val task = scope.async(dispatcher) { runCatching {
             val user = activeUser() ?: throw AppReferBillingException.Storage("identity unreadable")
@@ -65,7 +66,7 @@ internal class BillingEngine(
             if (offeringsInvalidated || policy == AppReferBilling.FetchPolicy.FETCH_CURRENT || cached == null || now() - cached!!.first >= 300000) {
                 try {
                     val body = org.json.JSONObject().put("appUserId", user).put("bucketId", bucket).put("platform", "android")
-                    play.storefrontCountry()?.let { body.put("country", it) }
+                    kotlinx.coroutines.withTimeoutOrNull(3_000) { play.storefrontCountry() }?.let { body.put("country", it) }
                     play.appVersion()?.let { body.put("appVersion", it) }
                     cached?.let {
                         val context = org.json.JSONObject(it.second).optJSONObject("context")
@@ -87,9 +88,13 @@ internal class BillingEngine(
             }
             if (generation == offeringGeneration) offeringsCache[user] = cached!!
             OfferingsJson.resolve(cached!!.second) { play.queryProductDetails(it) }
+        }.recoverCatching { e ->
+            if (e is BillingStorageException) throw AppReferBillingException.Storage(e.message ?: "storage unavailable")
+            throw e
         } }
         offeringRequest = task
-        try { task.await().getOrThrow() } catch (e: BillingStorageException) { throw AppReferBillingException.Storage(e.message ?: "storage unavailable") } finally { if (generation == offeringGeneration) offeringRequest = null }
+        offeringPolicy = policy
+        try { task.await().getOrThrow() } finally { if (offeringRequest === task) offeringRequest = null }
     }
     private fun invalidateOfferings() {
         offeringGeneration++
@@ -425,6 +430,8 @@ internal class BillingEngine(
                     launchFailed(update.responseCode, update.debugMessage)
                 }
             }
+        } catch (e: BillingStorageException) {
+            throw AppReferBillingException.Storage(e.message ?: "storage unavailable")
         } finally {
             if (purchaseWaiter?.second === waiter) purchaseWaiter = null
         }

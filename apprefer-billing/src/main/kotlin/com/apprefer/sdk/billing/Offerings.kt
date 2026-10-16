@@ -56,7 +56,10 @@ internal object OfferingsJson {
             val packages = offerings.getJSONObject(i).optJSONArray("packages") ?: continue
             for (j in 0 until packages.length()) (packages.getJSONObject(j).opt("productId") as? String)?.takeIf { it.isNotEmpty() }?.let { ids.add(it.substringBefore(':')) }
         }
-        val loaded = products(ids.toList()).associateBy { it.productId }
+        val loaded = try { products(ids.toList()) } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            emptyList()
+        }.associateBy { it.productId }
         val c = root.optJSONObject("context") ?: JSONObject()
         val context = OfferingContext(c.opt("targetingRuleId") as? String, c.opt("experimentId") as? String, c.opt("variantId") as? String)
         val all = linkedMapOf<String, AppReferOffering>()

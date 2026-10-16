@@ -248,9 +248,9 @@ internal class LivePlayBillingGateway(private val context: Context, private val 
     }
 
     override fun appVersion(): String? = context.packageManager.getPackageInfo(context.packageName, 0).versionName
-    override suspend fun storefrontCountry(): String? {
-        if (ensureConnected().responseCode != BillingClient.BillingResponseCode.OK) return null
-        return suspendCancellableCoroutine { cont ->
+    override suspend fun storefrontCountry(): String? = kotlinx.coroutines.withTimeoutOrNull(3_000) {
+        if (ensureConnected().responseCode != BillingClient.BillingResponseCode.OK) return@withTimeoutOrNull null
+        suspendCancellableCoroutine { cont ->
             client.getBillingConfigAsync(com.android.billingclient.api.GetBillingConfigParams.newBuilder().build()) { result, config ->
                 if (cont.isActive) cont.resume(if (result.responseCode == BillingClient.BillingResponseCode.OK) config?.countryCode else null)
             }

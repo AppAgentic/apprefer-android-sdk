@@ -11,6 +11,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class OfferingsTest {
     private val response = """{"currentOfferingId":"default","offerings":[{"id":"default","metadata":{"nested":[true,null]},"packages":[{"id":"${'$'}rc_annual","packageType":"annual","productId":"year"},{"id":"future","packageType":"future","productId":"missing"},{"id":"no-platform"}]}],"placements":{"onboarding":"default","settings":null},"context":{"experimentId":"exp","variantId":"b"},"requestDateMs":1700000000000,"future":true}"""
     private fun product(): ProductDetails = ProductDetails::class.java.getDeclaredConstructor(String::class.java).apply { isAccessible = true }.newInstance("""{"productId":"year","type":"inapp","title":"Year","name":"Year","description":"Year","oneTimePurchaseOfferDetails":{"priceAmountMicros":1000000,"priceCurrencyCode":"USD","formattedPrice":"$1"}}""")
@@ -29,10 +30,10 @@ class OfferingsTest {
         assertEquals("onboarding", offerings.currentOffering("onboarding")!!.annual!!.presentedOfferingContext.placementId)
         assertNull(offerings.current!!.annual!!.presentedOfferingContext.placementId)
     }
-    private fun engine(scope: TestScope, storage: BillingStorage, transport: BillingTransport): BillingEngine = BillingEngine(
+    private fun engine(scope: TestScope, storage: BillingStorage, play: PlayBillingGateway = object : PlayBillingGateway by FakePlay() { override suspend fun queryProductDetails(productIds: List<String>) = listOf(product()) }, transport: BillingTransport): BillingEngine = BillingEngine(
         BillingApiClient(listOf("https://example.test"), { "pk_test" }, transport, keyWaitAttempts = 0),
         storage, PendingPurchaseQueue(File(storage.directory, "pending.json")), RejectedPurchaseLog(File(storage.directory,"rejected.json")),
-        object : PlayBillingGateway by FakePlay() { override suspend fun queryProductDetails(productIds: List<String>) = listOf(product()) },
+        play,
         BillingEngine.Options(), null, { null }, BillingLogger(), StandardTestDispatcher(scope.testScheduler), scope, { NOW },
     )
     @Test fun concurrentCallsShareOneRequestAndFreshCache() = runTest {
@@ -77,6 +78,85 @@ class OfferingsTest {
         assertEquals("year-token", offerings.current!!.annual!!.offerToken)
         assertEquals("month-token", offerings.current!!.`package`("explicit")!!.offerToken)
         assertNull(offerings.current!!.`package`("missing"))
+    }
+    @Test fun productFailurePreservesCachedCatalogue() = runTest {
+        val storage = newStorage()
+        engine(this, storage) { BillingHttpResponse(200, response) }.offerings()
+        val play = object : PlayBillingGateway by FakePlay() {
+            override suspend fun queryProductDetails(productIds: List<String>): List<ProductDetails> = throw IllegalStateException("Play disconnected")
+        }
+        val result = engine(this, storage, play) { throw AppReferBillingException.Network("offline") }.offerings(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        assertEquals("default", result.current?.identifier)
+        assertTrue(result.current!!.availablePackages.isEmpty())
+    }
+    @Test fun joinedCallersReceiveMappedStorageError() = runTest {
+        val kv = object : BillingKeyValueStore {
+            override fun getString(key: String): String? = if (key == "offerings_bucket") throw BillingStorageException("bucket unreadable") else null
+            override fun putString(key: String, value: String?, durable: Boolean) = true
+        }
+        var requests = 0
+        val engine = engine(this, newStorage(kv)) { requests++; BillingHttpResponse(200, response) }
+        val a = async { runCatching { engine.offerings() }.exceptionOrNull() }
+        val b = async { runCatching { engine.offerings() }.exceptionOrNull() }
+        assertTrue(a.await() is AppReferBillingException.Storage)
+        assertTrue(b.await() is AppReferBillingException.Storage)
+        assertEquals(0, requests)
+    }
+    @Test fun purchaseBucketFailureIsMappedAndDoesNotOpenStore() = runTest {
+        val backing = InMemoryKeyValueStore()
+        val kv = object : BillingKeyValueStore {
+            override fun getString(key: String): String? = if (key == "offerings_bucket") throw BillingStorageException("bucket unreadable") else backing.getString(key)
+            override fun putString(key: String, value: String?, durable: Boolean) = backing.putString(key, value, durable)
+        }
+        val server = FakeServer()
+        val engine = engine(this, newStorage(kv)) { server.handle(it) }
+        var launched = false
+        val error = runCatching { engine.purchase("year", "subscription", PresentedOfferingContext("default", "annual")) { launched = true; 0 to null } }.exceptionOrNull()
+        assertTrue(error is AppReferBillingException.Storage)
+        assertFalse(launched)
+    }
+    @Test fun countryTimeoutOmitsCountryAndStillReturnsOfferings() = runTest {
+        val play = object : PlayBillingGateway by FakePlay() {
+            override suspend fun storefrontCountry(): String? = kotlinx.coroutines.awaitCancellation()
+        }
+        var body: JSONObject? = null
+        val engine = engine(this, newStorage(), play) { body = JSONObject(it.body!!); BillingHttpResponse(200, response) }
+        val result = engine.offerings()
+        assertEquals("default", result.current?.identifier)
+        assertFalse(body!!.has("country"))
+        assertEquals(3000L, testScheduler.currentTime)
+    }
+    @Test fun fetchCurrentDoesNotJoinCachedResolution() = runTest {
+        var block = false
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val play = object : PlayBillingGateway by FakePlay() {
+            override suspend fun queryProductDetails(productIds: List<String>): List<ProductDetails> {
+                if (block) { block = false; entered.complete(Unit); release.await() }
+                return listOf(product())
+            }
+        }
+        var requests = 0
+        val engine = engine(this, newStorage(), play) { requests++; BillingHttpResponse(200, response) }
+        engine.offerings(); block = true
+        val cached = async { engine.offerings() }; entered.await()
+        engine.offerings(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        assertEquals(2, requests)
+        release.complete(Unit); cached.await()
+    }
+    @Test fun cachedCallerJoinsFetchCurrent() = runTest {
+        var requests = 0
+        val engine = engine(this, newStorage()) { requests++; delay(10); BillingHttpResponse(200, response) }
+        val fresh = async { engine.offerings(AppReferBilling.FetchPolicy.FETCH_CURRENT) }
+        val cached = async { engine.offerings() }
+        assertEquals(fresh.await(), cached.await())
+        assertEquals(1, requests)
+    }
+    @Test fun foregroundWithoutOfferingsCacheNeverRequestsOfferings() = runTest {
+        val server = FakeServer()
+        val engine = engine(this, newStorage()) { server.handle(it) }
+        engine.onForeground()
+        assertTrue(server.requests.none { it.url.endsWith("/offerings") })
     }
     @Test fun emptyEntitlementMapsUnlockNothing() {
         assertEquals(emptyList<String>(), LocalEntitlements.entitlementIds("p", mapOf("p" to emptyList()), mapOf("p" to listOf("other")), null))
