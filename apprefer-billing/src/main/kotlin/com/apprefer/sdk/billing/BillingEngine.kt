@@ -35,6 +35,11 @@ internal class BillingEngine(
     private val linkAllowed: () -> Boolean = { com.apprefer.sdk.AppReferInternal.installLinkAllowed() },
     /** Advances on every `AppRefer.reset()` (`AppReferInternal.accountEpoch()`). */
     private val accountEpoch: () -> Int = { com.apprefer.sdk.AppReferInternal.accountEpoch() },
+    /**
+     * logIn/logOut set the user (`AppReferInternal.billingIdentitySet`): the anonymous id a logOut
+     * minted (null for logIn) and the marker clear, run under reset()'s marker lock.
+     */
+    private val identityChanged: (String?, () -> Unit) -> Unit = { fresh, clear -> com.apprefer.sdk.AppReferInternal.billingIdentitySet(fresh, clear) },
 ) {
     data class Options(
         val productEntitlements: Map<String, List<String>> = emptyMap(),
@@ -154,10 +159,14 @@ internal class BillingEngine(
         return false
     }
 
-    /** logIn/logOut set the Billing user for the current reset epoch. */
-    private fun identitySet() {
+    /**
+     * logIn/logOut set the Billing user for the current reset epoch. [freshAnonymousId] is the id
+     * logOut minted: reset() won't mark it (a sign-out of Billing before reset() is not the old account).
+     */
+    private fun identitySet(freshAnonymousId: String? = null) {
         // The app said who the user is now (even the same id): the reset() marker no longer applies.
-        runCatching { storage.clearResetUser() }
+        // After the new user is stored, under reset()'s marker lock, so a late marker write can't outlive it.
+        runCatching { identityChanged(freshAnonymousId) { runCatching { storage.clearResetUser() } } }
         val epoch = accountEpoch()
         if (identityEpoch == epoch) return
         identityEpoch = epoch
@@ -1072,11 +1081,12 @@ internal class BillingEngine(
     /** Signs out and starts a fresh anonymous id. Pending identifies stay: they still have to reach the server. */
     suspend fun logOut(): AppReferCustomerInfo = withContext(dispatcher) {
         activeUser() ?: throw AppReferBillingException.Storage("identity unreadable")
+        var minted: String? = null
         storageWrite {
-            storage.resetAnonymousId()
+            minted = storage.resetAnonymousId()
             storage.loggedInAppUserId = null
         }
-        identitySet()
+        identitySet(freshAnonymousId = minted)
         lastServerFetch = null
         invalidateOfferings()
         customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)

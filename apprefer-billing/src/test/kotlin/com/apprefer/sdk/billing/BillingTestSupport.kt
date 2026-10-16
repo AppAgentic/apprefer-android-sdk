@@ -176,7 +176,11 @@ internal class Harness(
     linkAllowed: (() -> Boolean)? = null,
     /** `AppReferInternal.accountEpoch()`: advances on every `AppRefer.reset()`. */
     accountEpoch: () -> Int = { 0 },
+    /** `AppReferInternal.billingIdentitySet`; records the ids logIn/logOut report. */
+    identityChanged: ((String?, () -> Unit) -> Unit)? = null,
 ) {
+    /** What logIn/logOut reported: the anonymous id logOut minted, null for logIn. */
+    val identityReports = mutableListOf<String?>()
     var now = NOW
     val published = mutableListOf<AppReferCustomerInfo>()
     val queue = PendingPurchaseQueue(File(storage.directory, "pending_purchases.json"))
@@ -205,5 +209,6 @@ internal class Harness(
         onChange = { published += it },
         linkAllowed = linkAllowed ?: { appreferId() != null },
         accountEpoch = accountEpoch,
+        identityChanged = identityChanged ?: { fresh, clear -> identityReports += fresh; clear() },
     )
 }

@@ -145,4 +145,34 @@ class SDK093BillingTest {
         assertEquals("device-1", h.bodies("/customers").single().getString("appreferId"))
         assertNull(storage.resetUser)
     }
+
+    // region Round 2: logOut's fresh anonymous id is never the previous account
+
+    @Test
+    fun logOutReportsTheIdItMintedAndLogInReportsNone() = runTest {
+        storage.loggedInAppUserId = "user_a"
+        val h = Harness(this, "user_a", storage = storage)
+        h.engine.logOut()
+        val minted = storage.currentAppUserId
+        assertTrue(minted.startsWith("\$ARAnon:"))
+        h.engine.logIn("user_b")
+        h.engine.logOut()
+        assertEquals(listOf(minted, null, storage.currentAppUserId), h.identityReports)
+    }
+
+    @Test
+    fun theMarkerIsClearedInsideTheIdentityReportAfterTheNewUserIsStored() = runTest {
+        storage.loggedInAppUserId = "user_a"
+        resetMarker("user_a")
+        val seen = mutableListOf<Pair<String?, String?>>()
+        val h = Harness(this, "user_a", storage = storage, identityChanged = { _, clear ->
+            seen += storage.loggedInAppUserId to storage.resetUser
+            clear()
+            seen += storage.loggedInAppUserId to storage.resetUser
+        })
+        h.engine.logIn("user_b")
+        assertEquals(listOf<Pair<String?, String?>>("user_b" to "user_a", "user_b" to null), seen)
+    }
+
+    // endregion
 }

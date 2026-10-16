@@ -12,6 +12,7 @@ import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+@OptIn(InternalAppReferApi::class)
 class SDK093Test {
     private data class Call(val method: String, val url: String, val session: String?, val body: Map<String, Any?>)
 
@@ -116,6 +117,7 @@ class SDK093Test {
     // region Fix 2: reset() persists the Billing user it ran for
 
     @Test fun resetStoresTheCurrentBillingUserAsTheMarker() = runBlocking {
+        BillingResetMarker.resetForTests()
         assertEquals("apprefer_billing_reset_user", BillingResetMarker.KEY_RESET_USER)
         for ((loggedIn, anonymous, expected) in listOf(
             Triple("user_sparkly", "\$ARAnon:1", "user_sparkly"),
@@ -130,6 +132,45 @@ class SDK093Test {
                 assertEquals(expected, f.data["apprefer_billing_reset_user"])
             } finally { f.close() }
         }
+    }
+
+    // region Round 2: logOut-then-reset order, and late marker writes
+
+    @Test fun resetAfterBillingLogOutDoesNotMarkTheFreshAnonymousId() = runBlocking {
+        BillingResetMarker.resetForTests()
+        val f = SDK091Test.Fixture()
+        try {
+            // AppReferBilling.logOut() minted $ARAnon:fresh, then the app calls reset().
+            f.data["apprefer_billing_anonymous_id"] = "\$ARAnon:fresh"
+            AppReferInternal.billingIdentitySet("\$ARAnon:fresh") { f.data.remove("apprefer_billing_reset_user") }
+            AppRefer.reset(f.context)
+            assertNull("the fresh anonymous user keeps its device id", f.data["apprefer_billing_reset_user"])
+            // A logIn(A) user is still marked by a later reset().
+            f.data["apprefer_billing_app_user_id"] = "user_fitquest"
+            AppReferInternal.billingIdentitySet(null) { f.data.remove("apprefer_billing_reset_user") }
+            AppRefer.reset(f.context)
+            assertEquals("user_fitquest", f.data["apprefer_billing_reset_user"])
+            // Another logOut mints another id: that one is skipped, the old fresh id is not special any more.
+            f.data.remove("apprefer_billing_app_user_id"); f.data["apprefer_billing_anonymous_id"] = "\$ARAnon:second"
+            AppReferInternal.billingIdentitySet("\$ARAnon:second") { f.data.remove("apprefer_billing_reset_user") }
+            AppRefer.reset(f.context)
+            assertNull(f.data["apprefer_billing_reset_user"])
+        } finally { f.close(); BillingResetMarker.resetForTests() }
+    }
+
+    @Test fun aMarkerWriteFromAResetThatStartedBeforeALogInIsDropped() {
+        BillingResetMarker.resetForTests()
+        val data = mutableMapOf<String, String>("apprefer_billing_app_user_id" to "user_sparkly")
+        // reset() starts (not awaited), then AppReferBilling.logIn("user_sparkly") clears the marker...
+        val since = BillingResetMarker.generation()
+        AppReferInternal.billingIdentitySet(null) { data.remove("apprefer_billing_reset_user") }
+        // ...and the reset's write lands afterwards: it must not apply.
+        assertFalse(BillingResetMarker.mark(since, { data[it] }, { k, v -> data[k] = v; true }))
+        assertNull(data["apprefer_billing_reset_user"])
+        // A reset that starts after the logIn still marks that user.
+        assertTrue(BillingResetMarker.mark(BillingResetMarker.generation(), { data[it] }, { k, v -> data[k] = v; true }))
+        assertEquals("user_sparkly", data["apprefer_billing_reset_user"])
+        BillingResetMarker.resetForTests()
     }
 
     // endregion
