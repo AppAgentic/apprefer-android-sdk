@@ -18,6 +18,10 @@ attribution result, consent and conversion state are retained. Advanced-matching
 hashes are never persisted by this SDK. Billing is separate: also call
 AppReferBilling.logOut() when your app uses Billing, then identify its next user
 through Billing's existing login API.
+After reset, attribution sends nothing (no consent re-report, user id, advanced
+matching or event delivery) and Support sends no device id until configure is
+called again, so the next account's Support session is never linked to the
+previous account's install. Support also omits the device id while collection is off.
 
 ```kotlin
 AppRefer.support.configure(context, apiKey = "pk_...") // Support only

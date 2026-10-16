@@ -63,11 +63,14 @@ object AppReferSupport {
     internal fun api(context: Context, initialize: Boolean = true): SupportAPI {
         if (initialize) configure(context)
         return synchronized(this) {
-            client ?: SupportAPI({ supportKey ?: AppRefer.currentApiKey() }, SecureSupportStore(context), {
-                val storage = AppReferStorage(context)
-                linkedMapOf<String, Any?>("appUserId" to storage.getUserId(), "deviceId" to AppRefer.getDeviceId(), "name" to name, "email" to email).filterValues { it != null }
-            }, { deviceContext(context) }).also { client = it }
+            client ?: SupportAPI({ supportKey ?: AppRefer.currentApiKey() }, SecureSupportStore(context), { profile(context) },
+                { deviceContext(context) }).also { client = it }
         }
+    }
+    /** The session profile. The device id is left out after reset(), with collection off and in Support-only apps. */
+    internal fun profile(context: Context): Map<String, Any?> {
+        val storage = AppReferStorage(context)
+        return linkedMapOf<String, Any?>("appUserId" to storage.getUserId(), "deviceId" to AppRefer.supportDeviceId(), "name" to name, "email" to email).filterValues { it != null }
     }
     fun identify(name: String? = null, email: String? = null) {
         this.name = name?.trim()?.takeIf { it.isNotEmpty() }; this.email = email?.trim()?.takeIf { it.isNotEmpty() }

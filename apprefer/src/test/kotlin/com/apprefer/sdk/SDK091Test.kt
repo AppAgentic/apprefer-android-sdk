@@ -44,7 +44,7 @@ class SDK091Test {
         var clock = System.currentTimeMillis()
         val paths = java.util.concurrent.CopyOnWriteArrayList<String>()
         val http = HttpClient("pk_test", logger, collectionAllowed = storage::isSdkEnabled, transport = { _, path, _ -> paths.add(path); mapOf("attribution" to null) })
-        fun queue() = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, storage::isSdkEnabled, { calls.add(it); status }, scope, { clock })
+        fun queue() = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, storage::isSdkEnabled, { calls.add(it); status }, scope, { clock }, held = { AppRefer.stoppedByReset })
         val stateField = AppRefer::class.java.getDeclaredField("state").apply { isAccessible = true }
         val queueField = AppRefer::class.java.getDeclaredField("eventQueue").apply { isAccessible = true }
         val oldState = stateField.get(AppRefer)
@@ -60,8 +60,9 @@ class SDK091Test {
             val state = ctor.newInstance("pk_test", false, 1, storage, logger, http, DeviceIdManager(context, storage, logger), DeviceInfo(context, logger), InstallReferrerCollector(context, logger), context)
             type.getDeclaredMethod("setEvents", EventQueue::class.java).invoke(state, queue)
             stateField.set(AppRefer, state); queueField.set(AppRefer, queue); AppReferContext.context = context
+            AppRefer.stoppedByReset = false // configured, as after configure()
         }
-        suspend fun close() { queue.clear(); scope.cancel(); stateField.set(AppRefer, oldState); queueField.set(AppRefer, oldQueue); AppReferContext.context = oldContext; directory.deleteRecursively() }
+        suspend fun close() { queue.clear(); scope.cancel(); AppRefer.stoppedByReset = false; stateField.set(AppRefer, oldState); queueField.set(AppRefer, oldQueue); AppReferContext.context = oldContext; directory.deleteRecursively() }
     }
     @Test fun publicEventIdentityPersistsThroughSwitchRestartAndRetry() = runBlocking {
         val f = Fixture()
@@ -166,6 +167,68 @@ class SDK091Test {
                 assertNull(withTimeout(2000) { sending.await() })
             } finally { release.countDown(); server.close(); serving.join(); f.close() }
         }
+    }
+
+    private fun supportApi(sessions: MutableList<Map<String, Any?>>, profile: () -> Map<String, Any?>): SupportAPI {
+        val store = object : SupportStore { override var token: String? = null; override var profile: String? = null }
+        return SupportAPI({ "pk_test" }, store, profile, { emptyMap() }, SupportTransport { method, url, _, bytes ->
+            if (url.endsWith("/session") && method == "POST") sessions.add(JsonCodec.decodeObject(bytes?.toString(Charsets.UTF_8) ?: "{}"))
+            SupportResponse(200, if (url.endsWith("/session")) """{"session":"support-091b"}""" else """{"conversations":[]}""")
+        })
+    }
+
+    @Test fun resetStopsAttributionAndSupportDeviceIdUntilConfigure() = runBlocking {
+        val f = Fixture()
+        val appField = AppReferSupport::class.java.getDeclaredField("app").apply { isAccessible = true }
+        val clientField = AppReferSupport::class.java.getDeclaredField("client").apply { isAccessible = true }
+        val oldApp = appField.get(AppReferSupport); val oldClient = clientField.get(AppReferSupport)
+        try {
+            appField.set(AppReferSupport, null); clientField.set(AppReferSupport, null)
+            f.status = 200
+            // A granted analytics: attribution is configured in this process.
+            assertEquals("meta", AppRefer.configure(f.context, "pk_test")?.network)
+            assertEquals("device", AppRefer.supportDeviceId())
+            // A signs out.
+            AppRefer.reset()
+            assertNull(AppRefer.supportDeviceId())
+            val paths = f.paths.size; val events = f.calls.size
+            // B signs in and never consents; the app only uses Support.
+            val sessions = mutableListOf<Map<String, Any?>>()
+            val api = supportApi(sessions) { AppReferSupport.profile(f.context) }
+            assertTrue(api.conversations().isEmpty())
+            assertEquals(1, sessions.size); assertFalse(sessions.last().containsKey("deviceId"))
+            // Nothing on the attribution side sends until configure runs again.
+            AppRefer.setTrackingConsent(true); AppRefer.trackingConsentDidChange()
+            AppRefer.setUserId("B"); AppRefer.setAdvancedMatching(email = "b@example.test")
+            assertEquals(AppReferEventResult.QUEUED, AppRefer.trackEventResult("signed_out"))
+            f.queue.flush(); delay(100)
+            assertEquals(paths, f.paths.size); assertEquals(events, f.calls.size)
+            // Configure again: consent is reported, the queued event is sent, Support links the install.
+            AppRefer.configure(f.context, "pk_test")
+            withTimeout(2000) { while (f.calls.none { it["event_name"] == "signed_out" }) delay(10) }
+            assertTrue(f.paths.size > paths)
+            assertEquals("device", AppRefer.supportDeviceId())
+            api.conversations()
+            assertEquals("device", sessions.last()["deviceId"])
+            // Collection withdrawn: Support stops sending the device id.
+            AppRefer.setCollectionEnabled(false)
+            assertNull(AppRefer.supportDeviceId())
+            val before = sessions.size
+            api.conversations()
+            assertEquals(before + 1, sessions.size); assertFalse(sessions.last().containsKey("deviceId"))
+        } finally { appField.set(AppReferSupport, oldApp); clientField.set(AppReferSupport, oldClient); f.close() }
+    }
+
+    @Test fun supportOnlyProfileHasNoDeviceId() = runBlocking {
+        val f = Fixture()
+        val stateField = AppRefer::class.java.getDeclaredField("state").apply { isAccessible = true }
+        try {
+            stateField.set(AppRefer, null) // support.configure without configure
+            val sessions = mutableListOf<Map<String, Any?>>()
+            val api = supportApi(sessions) { AppReferSupport.profile(f.context) }
+            api.conversations()
+            assertEquals(1, sessions.size); assertFalse(sessions.single().containsKey("deviceId"))
+        } finally { f.close() }
     }
 
 }

@@ -52,6 +52,11 @@ object AppRefer {
     private var eventQueue: EventQueue? = null
     @Volatile private var generation = 0
     @Volatile private var configureFailed = false
+    /**
+     * Set by reset(): attribution sends nothing (consent re-reports, events, user id, advanced
+     * matching) and Support sends no device id until configure runs again for the next account.
+     */
+    @Volatile internal var stoppedByReset = false
     private val consentReporter = com.apprefer.sdk.internal.ConsentReporter()
     private var pendingConsentSet = false
     private var pendingConsent: String? = null
@@ -82,7 +87,7 @@ object AppRefer {
     private suspend fun reportConsent(s: SdkState) = safelyRun {
         val epoch = generation
         consentReporter.report(
-            eligible = { epoch == generation && s.storage.isSdkEnabled() && s.storage.isMatchRequestAttempted() },
+            eligible = { epoch == generation && !stoppedByReset && s.storage.isSdkEnabled() && s.storage.isMatchRequestAttempted() },
             disabled = { s.storage.setSdkEnabled(false) },
             pending = { cachedAttribution(s)?.let { it.trackingDecisionPending && it.matchType != "adservices" } == true },
             current = { s.storage.getTrackingConsent() },
@@ -148,13 +153,13 @@ object AppRefer {
 
     @JvmOverloads suspend fun reset(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
         safelyRun {
-            synchronized(this@AppRefer) { generation++ }
+            synchronized(this@AppRefer) { generation++; stoppedByReset = true }
             scope.coroutineContext.cancelChildren()
             state?.http?.cancel()
             val c = context ?: state?.appContext
             if (eventQueue == null && c != null) {
                 val storage = AppReferStorage(c)
-                eventQueue = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, { true }, { null }, scope)
+                eventQueue = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, { true }, { null }, scope, held = { stoppedByReset })
             }
             eventQueue?.clear()
             c?.let { AppReferStorage(it).apply { clearUser(); clearEventQuarantine() } }
@@ -209,6 +214,7 @@ object AppRefer {
         val accountEpoch = generation
         configurations.run(listOf(apiKey, userId, debug, logLevel, accountEpoch)) { safely<Attribution?>(null) {
         val s = ensureState(context, apiKey, debug, logLevel)
+        synchronized(this) { if (accountEpoch == generation) stoppedByReset = false }
         if (accountEpoch != generation) return@safely null
         s.storage.resumeCollection()
         if (!s.storage.isCollectionEnabled()) return@safely cachedAttribution(s)
@@ -328,7 +334,7 @@ object AppRefer {
                 android.util.Log.i("AppRefer", "setAdvancedMatching called before configure() — ignoring")
                 return@safelyRun
             }
-            if (!s.storage.isSdkEnabled()) return@safelyRun
+            if (!s.storage.isSdkEnabled() || stoppedByReset) return@safelyRun
 
             if (!TrackingConsent.allowed(s.storage.getTrackingConsent())) return@safelyRun
             val hashed = LinkedHashMap<String, String>()
@@ -400,7 +406,7 @@ object AppRefer {
             safelyRun { s.storage.setUserId(userId); support.identityChanged() }
             s.logger.info("User ID set")
 
-            if (!s.storage.isSdkEnabled()) return@safelyRun
+            if (!s.storage.isSdkEnabled() || stoppedByReset) return@safelyRun
 
             val deviceId = safely<String?>(null) { s.storage.getDeviceId() } ?: run {
                 s.logger.error("setUserId: no device_id — did configure() run?")
@@ -456,6 +462,16 @@ object AppRefer {
     /** SDK key passed to `configure` in this process (read by AppRefer Billing). */
     internal fun currentApiKey(): String? = state?.apiKey
 
+    /**
+     * The install device id Support may send: only after configure in this process, never after
+     * reset() (until configure runs again) or while collection is off. Support-only apps never
+     * configure attribution, so they never send it.
+     */
+    internal fun supportDeviceId(): String? = safely<String?>(null) {
+        val s = state ?: return@safely null
+        if (stoppedByReset || !s.storage.isCollectionEnabled()) null else s.storage.getDeviceId()
+    }
+
     private suspend fun ensureState(
         context: Context,
         apiKey: String,
@@ -468,7 +484,7 @@ object AppRefer {
         val appCtx = context.applicationContext
         val logger = Logger(debug = debug, logLevel = logLevel)
         val storage = AppReferStorage(appCtx)
-        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() }, collectionAllowed = { storage.isSdkEnabled() })
+        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() }, collectionAllowed = { storage.isSdkEnabled() && !stoppedByReset })
         val deviceIdManager = DeviceIdManager(appCtx, storage, logger)
         val deviceInfo = DeviceInfo(appCtx, logger)
         val installReferrer = InstallReferrerCollector(appCtx, logger)
@@ -493,7 +509,7 @@ object AppRefer {
             val write: (String?) -> Unit = { s.storage.pendingEvents = it }
             val enabled = { s.storage.isSdkEnabled() }
             val send: suspend (Map<String, Any?>) -> Any? = s.http::eventResponse
-            if (eventQueue == null) eventQueue = EventQueue(read, write, enabled, send, scope, quarantine = s.storage::quarantineEvents)
+            if (eventQueue == null) eventQueue = EventQueue(read, write, enabled, send, scope, quarantine = s.storage::quarantineEvents, held = { stoppedByReset })
             else { state?.http?.cancelEvents(); eventQueue!!.replace(read, write, enabled, send, s.storage::quarantineEvents) }
             s.events = eventQueue!!
             state = s

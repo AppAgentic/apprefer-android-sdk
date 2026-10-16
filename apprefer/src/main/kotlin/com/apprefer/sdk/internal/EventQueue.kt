@@ -14,6 +14,8 @@ internal class EventQueue(
     private val scope: CoroutineScope,
     private val now: () -> Long = { System.currentTimeMillis() },
     private var quarantine: (String) -> Unit = {},
+    /** True after reset() until configure: events stay queued but are not sent. */
+    private val held: () -> Boolean = { false },
 ) {
     private val lock = Any()
     private var generation = 0
@@ -66,13 +68,14 @@ internal class EventQueue(
         val epoch = synchronized(lock) {
             if (running) return emptyMap()
             if (!enabled()) { write(null); return emptyMap() }
+            if (held()) return emptyMap()
             running = true; generation
         }
         val results = mutableMapOf<String, Int>()
         try {
             val entries = synchronized(lock) { load().also { save(it) } }
             for (entry in entries) {
-                if (synchronized(lock) { epoch != generation || !enabled() }) break
+                if (synchronized(lock) { epoch != generation || !enabled() || held() }) break
                 currentCoroutineContext().ensureActive()
                 if ((only != null && entry["id"] != only) || (entry["next"] as Number).toLong() > now()) continue
                 @Suppress("UNCHECKED_CAST")
