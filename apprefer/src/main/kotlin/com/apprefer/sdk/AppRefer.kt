@@ -104,7 +104,11 @@ object AppRefer {
                         body["google_play_instant_param"] = referrer?.googlePlayInstantParam
                     }
                     s.storage.getUserId()?.let { body["customer_user_id"] = it }
-                    if (epoch != generation) null else s.http.post("/api/track/configure", body, consent, true)
+                    if (epoch != generation) null else {
+                        val response = s.http.post("/api/track/configure", body, consent, true)
+                        if (epoch == generation) configureFailed = response == null
+                        response
+                    }
                 }
             },
             refresh = { response ->
