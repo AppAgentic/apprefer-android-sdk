@@ -503,7 +503,7 @@ object AppRefer {
         val appCtx = context.applicationContext
         val logger = Logger(debug = debug, logLevel = logLevel)
         val storage = AppReferStorage(appCtx)
-        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() }, collectionAllowed = { storage.isSdkEnabled() && !stoppedByReset })
+        val http = HttpClient(apiKey = apiKey, logger = logger, consentProvider = { storage.getTrackingConsent() }, collectionAllowed = { storage.isSdkEnabled() && !stoppedByReset && !collectionOffUnsaved })
         val deviceIdManager = DeviceIdManager(appCtx, storage, logger)
         val deviceInfo = DeviceInfo(appCtx, logger)
         val installReferrer = InstallReferrerCollector(appCtx, logger)
