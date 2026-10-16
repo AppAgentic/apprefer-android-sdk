@@ -86,7 +86,7 @@ class TrackingConsentTest {
         var reported: String? = null
         val sent = mutableListOf<String>()
         suspend fun report() = reporter.report({ current }, { reported },
-            { sent.add(it); emptyMap() }, {}, { reported = it },
+            { sent.add(requireNotNull(it)); emptyMap() }, {}, { reported = it },
             eligible = { attempted })
         report()
         current = "granted" // ATT answered while configure was in flight.
@@ -126,7 +126,7 @@ class TrackingConsentTest {
         val sent = mutableListOf<String>()
         suspend fun report() = reporter.report({ current }, { saved },
             {
-                sent.add(it)
+                sent.add(requireNotNull(it))
                 if (sent.size == 1) { started.complete(Unit); finish.await() }
                 emptyMap()
             }, {}, { saved = it })

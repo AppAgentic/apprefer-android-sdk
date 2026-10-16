@@ -105,7 +105,7 @@ class Review090Test {
         withTimeout(1000) { while (paths.none { it.startsWith("DELETE") }) delay(1) }
         assertTrue(paths.none { it.contains("attachments") || it.contains("/messages") })
     }
-    @Test fun publicResetBeforeConfigureClearsPersistedIdentityEventsAndSupportSlots() = runBlocking {
+    @Test fun publicResetBeforeConfigureClearsSlotsWithoutInitializingSupportOrNotificationChannel() = runBlocking {
         val maps = mutableMapOf<String, MutableMap<String, Any?>>()
         var canCommit = true
         fun preferences(name: String): SharedPreferences {
@@ -142,6 +142,7 @@ class Review090Test {
             java.io.File(directory, "apprefer-support-session").writeText("persisted A token")
             canCommit = false // A failed queue write must not skip Support cleanup or escape.
             AppRefer.reset()
+            assertNull(appField.get(AppReferSupport)) // No Support initialization means no notification channel.
             assertNull(AppReferStorage(context).getUserId()); assertNull(AppReferStorage(context).pendingEvents)
             assertFalse(java.io.File(directory, "apprefer-support-session").exists())
             assertNull(preferences("apprefer_support").getString("profile", null)); assertNull(preferences("apprefer_support").getString("pushToken", null))

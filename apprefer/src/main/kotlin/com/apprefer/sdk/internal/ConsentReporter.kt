@@ -9,21 +9,22 @@ internal class ConsentReporter {
     suspend fun report(
         current: () -> String?,
         reported: () -> String?,
-        send: suspend (String) -> Map<String, Any?>?,
+        send: suspend (String?) -> Map<String, Any?>?,
         refresh: (Map<String, Any?>) -> Unit,
         save: (String) -> Unit,
         eligible: () -> Boolean = { true },
         disabled: () -> Unit = {},
+        pending: () -> Boolean = { false },
     ) = mutex.withLock {
         if (!eligible()) return@withLock
-        val consent = current() ?: return@withLock
-        if (consent == reported()) return@withLock
+        val consent = current()
+        if ((consent == null || consent == reported()) && !pending()) return@withLock
         val response = send(consent) ?: return@withLock
         if (response["sdkEnabled"] == false) {
             disabled()
             return@withLock
         }
         refresh(response)
-        save(consent)
+        if (consent != null) save(consent)
     }
 }

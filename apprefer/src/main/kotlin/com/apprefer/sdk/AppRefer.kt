@@ -48,6 +48,7 @@ object AppRefer {
     // One global singleton-ish state, protected for concurrent access.
     @Volatile private var state: SdkState? = null
     private val initMutex = Mutex()
+    private val configurations by lazy { com.apprefer.sdk.internal.ConfigureCoordinator(scope) }
     private var eventQueue: EventQueue? = null
     @Volatile private var generation = 0
     @Volatile private var configureFailed = false
@@ -83,6 +84,7 @@ object AppRefer {
         consentReporter.report(
             eligible = { epoch == generation && s.storage.isSdkEnabled() && s.storage.isMatchRequestAttempted() },
             disabled = { s.storage.setSdkEnabled(false) },
+            pending = { cachedAttribution(s)?.let { it.trackingDecisionPending && it.matchType != "adservices" } == true },
             current = { s.storage.getTrackingConsent() },
             reported = { s.storage.getReportedConsent() },
             send = { consent ->
@@ -149,9 +151,13 @@ object AppRefer {
             synchronized(this@AppRefer) { generation++ }
             scope.coroutineContext.cancelChildren()
             state?.http?.cancel()
-            eventQueue?.clear()
             val c = context ?: state?.appContext
-            c?.let { AppReferStorage(it).apply { clearUser(); safelyRun { pendingEvents = null }; clearEventQuarantine() } }
+            if (eventQueue == null && c != null) {
+                val storage = AppReferStorage(c)
+                eventQueue = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, { true }, { null }, scope)
+            }
+            eventQueue?.clear()
+            c?.let { AppReferStorage(it).apply { clearUser(); clearEventQuarantine() } }
             support.reset(c)
         }
     }
@@ -188,6 +194,7 @@ object AppRefer {
         logLevel: Int = 1,
     ): Attribution? = safely<Attribution?>(null) {
         val accountEpoch = generation
+        configurations.run(listOf(apiKey, userId, debug, logLevel, accountEpoch)) { safely<Attribution?>(null) {
         val s = ensureState(context, apiKey, debug, logLevel)
         if (accountEpoch != generation) return@safely null
         scope.launch { safelyRun { s.events.flush() } }
@@ -213,7 +220,7 @@ object AppRefer {
 
         if (accountEpoch != generation) return@safely null
         return@safely resolveAttribution(s)
-    }
+    } } }
 
     /** Java-friendly callback variant. */
     @JvmStatic

@@ -83,21 +83,28 @@ internal class SupportAPI(
     }
     fun resumeRevocations() { revokeScope.launch { runCatching { revokePending() } } }
     private val revocationMutex = Mutex()
-    private suspend fun revokePending() = revocationMutex.withLock {
+    internal suspend fun revokePending() = revocationMutex.withLock {
         val pending = synchronized(accountLock) { (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] } }
+        synchronized(accountLock) {
+            val current = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
+            store.pendingRevocations = JsonCodec.encode(mapOf("items" to (current + deferredRevocations).distinctBy { it["token"] }))
+        }
         for (item in pending) {
             val apiKey = item["key"] as? String ?: key() ?: continue
             val token = item["token"] as? String ?: continue
+            var succeeded = true
             for (path in listOfNotNull(if (item["push"] != null) "/push-token" else null, "/session")) {
                 runCatching {
                     val headers = mapOf("X-AppRefer-Key" to apiKey, "X-AppRefer-Support-Session" to token, "Content-Type" to "application/json")
-                    transport.request("DELETE", base + root + path, headers, if (path == "/push-token") JsonCodec.encode(mapOf("token" to item["push"])).toByteArray() else null)
-                }
+                    val response = transport.request("DELETE", base + root + path, headers, if (path == "/push-token") JsonCodec.encode(mapOf("token" to item["push"])).toByteArray() else null)
+                    check(response.status in 200..299)
+                }.onFailure { succeeded = false }
             }
+            if (!succeeded) continue
             synchronized(accountLock) {
-                deferredRevocations.removeAll { it["token"] == token }
                 val current = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
                 store.pendingRevocations = JsonCodec.encode(mapOf("items" to current.filter { it["token"] != token }))
+                deferredRevocations.removeAll { it["token"] == token }
             }
         }
     }

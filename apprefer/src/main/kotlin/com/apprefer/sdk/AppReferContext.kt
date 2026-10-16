@@ -9,7 +9,21 @@ import android.net.Uri
 /** Obtains storage access at process startup without configuring attribution or Support. */
 internal object AppReferContext { @Volatile var context: Context? = null }
 class AppReferInitializer : ContentProvider() {
-    override fun onCreate(): Boolean { AppReferContext.context = context?.applicationContext; return true }
+    override fun onCreate(): Boolean {
+        val app = context?.applicationContext
+        AppReferContext.context = app
+        com.apprefer.sdk.support.AppReferSupport.resumeRevocations()
+        (app as? android.app.Application)?.registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: android.app.Activity) { com.apprefer.sdk.support.AppReferSupport.resumeRevocations() }
+            override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) {}
+            override fun onActivityStarted(activity: android.app.Activity) {}
+            override fun onActivityPaused(activity: android.app.Activity) {}
+            override fun onActivityStopped(activity: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, state: android.os.Bundle) {}
+            override fun onActivityDestroyed(activity: android.app.Activity) {}
+        })
+        return true
+    }
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
     override fun getType(uri: Uri): String? = null
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null

@@ -35,7 +35,7 @@ object AppReferSupport {
     @Volatile private var supportKey: String? = null
     internal val resetListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
     fun configure(context: Context, apiKey: String) { supportKey = apiKey; configure(context); resumeRevocations() }
-    internal fun resumeRevocations() { app?.let { c -> scope.launch { runCatching { api(c).resumeRevocations() } } } }
+    internal fun resumeRevocations() { (app ?: com.apprefer.sdk.AppReferContext.context)?.let { c -> scope.launch { runCatching { api(c, initialize = false).resumeRevocations() } } } }
     internal fun setUserId(userId: String) { (app ?: com.apprefer.sdk.AppReferContext.context)?.let { AppReferStorage(it).setUserId(userId) } }
     @Volatile internal var accountGeneration = 0
     suspend fun reset(context: Context? = com.apprefer.sdk.AppReferContext.context) = withContext(Dispatchers.IO) {
@@ -43,10 +43,9 @@ object AppReferSupport {
         name = null; email = null
         val c = app ?: context
         if (c != null) {
-            configure(c)
             AppReferStorage(c).clearUser()
             runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
-            api(c).reset()
+            api(c, initialize = false).reset()
         }
         accountGeneration++
         withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
@@ -61,8 +60,8 @@ object AppReferSupport {
                 NotificationChannel("apprefer_support", "Support replies", NotificationManager.IMPORTANCE_DEFAULT))
         }
     }
-    internal fun api(context: Context): SupportAPI {
-        configure(context)
+    internal fun api(context: Context, initialize: Boolean = true): SupportAPI {
+        if (initialize) configure(context)
         return synchronized(this) {
             client ?: SupportAPI({ supportKey ?: AppRefer.currentApiKey() }, SecureSupportStore(context), {
                 val storage = AppReferStorage(context)
