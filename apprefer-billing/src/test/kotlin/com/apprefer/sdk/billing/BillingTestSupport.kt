@@ -172,6 +172,10 @@ internal class Harness(
     transportDelayMs: Long = 0,
     /** The attribution gate: null while the device id must not be sent. */
     appreferId: () -> String? = { "device-1" },
+    /** `AppReferInternal.installLinkAllowed()`; defaults to the [appreferId] gate being open. */
+    linkAllowed: (() -> Boolean)? = null,
+    /** `AppReferInternal.accountEpoch()`: advances on every `AppRefer.reset()`. */
+    accountEpoch: () -> Int = { 0 },
 ) {
     var now = NOW
     val published = mutableListOf<AppReferCustomerInfo>()
@@ -199,5 +203,7 @@ internal class Harness(
         scope = scope,
         now = { now },
         onChange = { published += it },
+        linkAllowed = linkAllowed ?: { appreferId() != null },
+        accountEpoch = accountEpoch,
     )
 }

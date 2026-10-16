@@ -59,6 +59,11 @@ object AppRefer {
     @Volatile internal var stoppedByReset = false
     /** "Off" was chosen in this process but couldn't be saved: the next configure must not resume. */
     @Volatile internal var collectionOffUnsaved = false
+    /**
+     * Advances on every reset() and nothing else, so AppRefer Billing can tell which account
+     * its user belongs to (the install link goes only to the Billing user set after the last reset).
+     */
+    @Volatile internal var accountEpoch = 0
     private val consentReporter = com.apprefer.sdk.internal.ConsentReporter()
     private var pendingConsentSet = false
     private var pendingConsent: String? = null
@@ -155,7 +160,7 @@ object AppRefer {
 
     @JvmOverloads suspend fun reset(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
         safelyRun {
-            synchronized(this@AppRefer) { generation++; stoppedByReset = true }
+            synchronized(this@AppRefer) { generation++; accountEpoch++; stoppedByReset = true }
             scope.coroutineContext.cancelChildren()
             state?.http?.cancel()
             val c = context ?: state?.appContext

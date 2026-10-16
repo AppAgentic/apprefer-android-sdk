@@ -2,6 +2,13 @@
 
 - Billing sends no install device id (`appreferId`) or device attribute (`$gpsAdId`, `$fbAnonId`, `$deviceVersion`, `$ip`) with customers/purchases requests while collection is off (saved, unsaved or paused waiting for configure), after reset() until configure/configureResult runs again, or in Billing-only apps. It reuses the Support device id gate (new `AppReferInternal.linkableDeviceId()` / `installLinkAllowed()`); queued purchases are resent without it while the gate is closed, and Billing then uses apprefer.com rather than trk.apprefer.com. Purchases, restore, entitlements and offerings are unchanged.
 - Add `AppRefer.support.clearIdentity()`: forgets the Support name, email and app user id, revokes the current Support session through the durable revocation path and starts a new anonymous session (push token carried over). Conversations from the old session are no longer visible in the app; they stay in the team inbox. Support stays anonymous until the user id changes or reset() runs.
+- Review fixes:
+  - The anonymous Support session after clearIdentity() sends no device id (it would link the session back to the account).
+  - A session minted while the identity was cleared is never given an app user id: when a different user id is stored without reset(), it is revoked and a fresh session is minted for that account (in-flight Support calls are not cancelled). The marker is persisted next to the session token.
+  - The push token moves to the new session only after the old session's revocation succeeds (never when the revocation is dropped for age or attempts, and never after a reset). clearIdentity() no longer registers it itself, and registerPushToken() with a token still waiting to move only saves it.
+  - Billing sends the device id only for the Billing user set after the last reset(): call AppReferBilling.logIn/logOut for the next account. Requests for an earlier user, or a purchase owned by someone other than the current Billing user (queued entries included), carry none, and users registered before the reset are not re-linked. New `AppReferInternal.accountEpoch()`.
+  - `/identify` sends `link` (false while collection is off, unsaved or awaiting configure, after reset() until configure, and in Billing-only apps), so the server skips copying the install link.
+  - clearIdentity() before AppRefer has a Context is no longer a silent no-op: it clears the name and email, logs a warning, and is applied (flag saved, session retired) on the next configure or Support use.
 
 ## 0.9.1
 

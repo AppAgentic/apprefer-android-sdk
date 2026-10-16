@@ -69,6 +69,9 @@ class BillingApiClientTest {
         val body = JSONObject(r.body!!)
         assertEquals("\$ARAnon:x", body.getString("anonymousId"))
         assertEquals("user_1", body.getString("appUserId"))
+        assertTrue("0.9.2: link defaults to true", body.getBoolean("link"))
+        val closed = JSONObject(BillingApiClient.makeRequest(BillingEndpoint.Identify("\$ARAnon:x", "user_1", link = false), base, "k").body!!)
+        assertFalse(closed.getBoolean("link"))
     }
 
     private fun client(key: () -> String? = { "k" }, handler: (BillingRequest) -> BillingHttpResponse) =

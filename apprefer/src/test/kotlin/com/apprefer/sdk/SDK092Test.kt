@@ -14,9 +14,12 @@ class SDK092Test {
     private class Server {
         val calls = java.util.concurrent.CopyOnWriteArrayList<Call>()
         private var minted = 0
+        /** Status for DELETE /session (revocation). */
+        @Volatile var deleteStatus = 200
         val transport = SupportTransport { method, url, headers, bytes ->
             val session = headers["X-AppRefer-Support-Session"]
             calls.add(Call(method, url, session, JsonCodec.decodeObject(bytes?.toString(Charsets.UTF_8) ?: "{}")))
+            if (method == "DELETE" && url.endsWith("/session")) return@SupportTransport SupportResponse(deleteStatus, "{}")
             SupportResponse(200, when {
                 url.endsWith("/session") && method == "POST" -> """{"session":"${session ?: "ars_092_${++minted}"}"}"""
                 url.endsWith("/conversations") -> """{"conversations":[]}"""
@@ -24,6 +27,8 @@ class SDK092Test {
             })
         }
         fun sessionPosts() = calls.filter { it.method == "POST" && it.url.endsWith("/session") }
+        fun pushPosts() = calls.filter { it.method == "POST" && it.url.endsWith("/push-token") }
+        fun revoked(token: String?) = calls.filter { it.method == "DELETE" && it.url.endsWith("/session") && it.session == token }
     }
     private class Store : SupportStore {
         override var token: String? = null; override var profile: String? = null
@@ -88,9 +93,10 @@ class SDK092Test {
             var name: String? = "Sam"
             val api = SupportAPI({ "pk_test" }, store, {
                 AppReferSupport.profile(f.context) + (name?.let { mapOf("name" to it) } ?: emptyMap())
-            }, { emptyMap() }, server.transport)
+            }, { emptyMap() }, server.transport, identityCleared = { f.storage.supportIdentityCleared })
             api.conversations()
             assertEquals("acct_A", server.sessionPosts().last().body["appUserId"])
+            assertEquals("device", server.sessionPosts().last().body["deviceId"])
             val old = store.token!!
 
             f.storage.supportIdentityCleared = true; name = null // what AppReferSupport.clearIdentity() does first
@@ -98,11 +104,13 @@ class SDK092Test {
             val fresh = server.sessionPosts().last()
             assertNull("a new session, not an update of the old one", fresh.session)
             assertFalse(fresh.body.containsKey("appUserId")); assertFalse(fresh.body.containsKey("name"))
+            assertFalse("no device id links it back to the account", fresh.body.containsKey("deviceId"))
+            assertTrue(store.clearedSession)
             assertNotEquals(old, store.token)
             assertEquals("acct_A", f.storage.getUserId()) // attribution's user id is untouched
             // The old session is revoked through the durable list.
-            api.revokePending()
-            assertTrue(server.calls.any { it.method == "DELETE" && it.url.endsWith("/session") && it.session == old })
+            api.drainRevocations()
+            assertTrue(server.revoked(old).isNotEmpty())
             assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").none { it["token"] == old })
 
             // configure(userId:) with the same id on the next launch keeps Support anonymous.
@@ -110,25 +118,151 @@ class SDK092Test {
             val posts = server.sessionPosts().size
             api.conversations()
             assertEquals(posts, server.sessionPosts().size)
-            assertEquals(store.token, server.calls.last().session)
-            // Another account: linked again.
+            assertEquals(store.token, server.calls.last { it.url.endsWith("/conversations") }.session)
+            // Another account (without reset): a fresh session, never the cleared one.
+            val cleared = store.token!!
             f.storage.setUserId("acct_B")
             assertFalse(f.storage.supportIdentityCleared)
             api.conversations()
-            assertEquals("acct_B", server.sessionPosts().last().body["appUserId"])
+            val forB = server.sessionPosts().last()
+            assertEquals("acct_B", forB.body["appUserId"])
+            assertNull("minted, not an upgrade of the cleared session", forB.session)
+            assertTrue(server.sessionPosts().none { it.session == cleared && it.body["appUserId"] == "acct_B" })
+            assertNotEquals(cleared, store.token); assertFalse(store.clearedSession)
+            assertEquals(store.token, server.calls.last { it.url.endsWith("/conversations") }.session)
+            api.drainRevocations()
+            assertEquals(1, server.revoked(cleared).size)
         } finally { f.close() }
     }
 
-    @Test fun clearIdentityMovesThePushTokenToTheNewSession() = runBlocking {
-        val server = Server(); val store = Store()
+    @Test fun clearIdentityMovesThePushTokenOnlyAfterTheOldSessionIsRevoked() = runBlocking {
+        val server = Server().apply { deleteStatus = 500 }; val store = Store()
         val api = SupportAPI({ "pk_test" }, store, { mapOf("appUserId" to "acct_A") }, { emptyMap() }, server.transport)
         api.register("fcm-1")
         val old = store.token
         api.clearIdentity()
-        val push = server.calls.last()
-        assertTrue(push.url.endsWith("/push-token")); assertEquals("fcm-1", push.body["token"])
-        assertNotNull(push.session); assertNotEquals(old, push.session)
+        api.drainRevocations()
+        assertTrue(server.revoked(old).isNotEmpty())
+        assertEquals("not on the new session while the old one still holds it", 1, server.pushPosts().size)
         assertEquals("fcm-1", store.pushToken)
+        // The next successful revocation pass moves it.
+        server.deleteStatus = 200
+        api.drainRevocations()
+        val push = server.pushPosts().last()
+        assertEquals(2, server.pushPosts().size)
+        assertEquals("fcm-1", push.body["token"]); assertEquals("production", push.body["environment"])
+        assertEquals(store.token, push.session); assertNotEquals(old, push.session)
+        val okDelete = server.calls.indexOfLast { it.method == "DELETE" && it.session == old }
+        assertTrue("moved after the DELETE succeeded", okDelete < server.calls.indexOf(push))
+        api.drainRevocations()
+        assertEquals("moved once", 2, server.pushPosts().size)
+    }
+
+    @Test fun resetBeforeTheRevocationSucceedsNeverMovesTheToken() = runBlocking {
+        val server = Server().apply { deleteStatus = 500 }; val store = Store()
+        val api = SupportAPI({ "pk_test" }, store, { mapOf("appUserId" to "acct_A") }, { emptyMap() }, server.transport)
+        api.register("fcm-1")
+        api.clearIdentity()
+        api.drainRevocations()
+        api.reset()
+        server.deleteStatus = 200
+        api.drainRevocations()
+        assertEquals(1, server.pushPosts().size)
+        assertNull(store.pushToken)
+        assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").isEmpty())
+    }
+
+    @Test fun registeringTheTokenWhileItWaitsToMoveDefersThePost() = runBlocking {
+        val server = Server().apply { deleteStatus = 500 }; val store = Store()
+        val api = SupportAPI({ "pk_test" }, store, { mapOf("appUserId" to "acct_A") }, { emptyMap() }, server.transport)
+        api.register("fcm-1")
+        api.clearIdentity()
+        api.drainRevocations()
+        api.register("fcm-1") // the app re-registers on launch
+        assertEquals(1, server.pushPosts().size)
+        assertEquals("fcm-1", store.pushToken)
+        // A new token is not held back.
+        api.register("fcm-2")
+        assertEquals(2, server.pushPosts().size)
+        server.deleteStatus = 200
+        api.drainRevocations()
+        assertEquals("the old token is no longer this device's, so it isn't moved", 2, server.pushPosts().size)
+    }
+
+    @Test fun clearIdentityWithNoSessionRegistersTheTokenOnTheNewSession() = runBlocking {
+        val server = Server(); val store = Store().apply { pushToken = "fcm-1" }
+        val api = SupportAPI({ "pk_test" }, store, { emptyMap() }, { emptyMap() }, server.transport)
+        api.clearIdentity()
+        assertEquals(store.token, server.pushPosts().single().session)
+    }
+
+    @Test fun clearedSessionRetiredForAnotherUserMovesItsPushToken() = runBlocking {
+        val f = SDK091Test.Fixture()
+        try {
+            f.storage.setUserId("acct_A")
+            val server = Server(); val store = Store()
+            val api = SupportAPI({ "pk_test" }, store, { AppReferSupport.profile(f.context) }, { emptyMap() }, server.transport,
+                identityCleared = { f.storage.supportIdentityCleared })
+            f.storage.supportIdentityCleared = true
+            api.register("fcm-1") // minted while cleared
+            val cleared = store.token!!
+            assertTrue(store.clearedSession)
+            val gen = api.actionGeneration
+            f.storage.setUserId("acct_B")
+            api.syncIdentity()
+            assertEquals("in-flight UI calls are not cancelled", gen, api.actionGeneration)
+            assertEquals("acct_B", server.sessionPosts().last().body["appUserId"])
+            assertNull(server.sessionPosts().last().session)
+            api.drainRevocations()
+            assertEquals(1, server.revoked(cleared).size)
+            assertEquals(store.token, server.pushPosts().last().session)
+            assertEquals(2, server.pushPosts().size)
+        } finally { f.close() }
+    }
+
+    @Test fun profileWhileClearedHasNoDeviceIdEvenWhenConfigured() = runBlocking {
+        val f = SDK091Test.Fixture()
+        try {
+            f.storage.setUserId("acct_A")
+            assertEquals("device", AppReferSupport.profile(f.context)["deviceId"])
+            f.storage.supportIdentityCleared = true
+            val profile = AppReferSupport.profile(f.context)
+            assertFalse(profile.containsKey("deviceId")); assertFalse(profile.containsKey("appUserId"))
+        } finally { f.close() }
+    }
+
+    @Test fun clearIdentityWithNoContextIsAppliedWhenOneAppears() = runBlocking {
+        val f = SDK091Test.Fixture()
+        val appField = AppReferSupport::class.java.getDeclaredField("app").apply { isAccessible = true }
+        val clientField = AppReferSupport::class.java.getDeclaredField("client").apply { isAccessible = true }
+        val oldApp = appField.get(AppReferSupport); val oldClient = clientField.get(AppReferSupport)
+        try {
+            f.storage.setUserId("acct_A")
+            appField.set(AppReferSupport, null); clientField.set(AppReferSupport, null)
+            AppReferContext.context = null
+            AppReferSupport.identify("Sam", "sam@example.com")
+            AppReferSupport.clearIdentity(null)
+            assertTrue("remembered, not a silent no-op", AppReferSupport.pendingClearIdentity)
+            assertNull(AppReferSupport.name)
+            assertFalse(f.storage.supportIdentityCleared)
+
+            val server = Server(); val store = Store().apply { token = "ars_named" }
+            clientField.set(AppReferSupport, SupportAPI({ "pk_test" }, store, { AppReferSupport.profile(f.context) }, { emptyMap() },
+                server.transport, identityCleared = { f.storage.supportIdentityCleared }))
+            // The first Support use with a context applies it before any request.
+            val api = AppReferSupport.api(f.context, initialize = false)
+            assertFalse(AppReferSupport.pendingClearIdentity)
+            assertTrue(f.storage.supportIdentityCleared)
+            assertNull(store.token)
+            assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").any { it["token"] == "ars_named" })
+            api.conversations()
+            assertNull(server.sessionPosts().last().session)
+            assertFalse(server.sessionPosts().last().body.containsKey("appUserId"))
+        } finally {
+            AppReferSupport.pendingClearIdentity = false
+            appField.set(AppReferSupport, oldApp); clientField.set(AppReferSupport, oldClient)
+            f.close()
+        }
     }
 
     @Test fun resetEndsAnIdentityClear() = runBlocking {

@@ -90,6 +90,94 @@ class SDK092BillingTest {
         assertEquals("device-1", h.bodies("/purchases").last().getString("appreferId"))
     }
 
+    // region Review fixes: the device id follows the account (reset epoch); identify sends link
+
+    @Test
+    fun afterResetTheEarlierBillingUserIsNeverLinkedUntilTheNextAccountIsSet() = runTest {
+        val gate = Gate().apply { open = false }
+        var epoch = 0
+        val h = Harness(this, "user_a", appreferId = gate::deviceId, accountEpoch = { epoch })
+        // user_a registered while the gate was closed: normally re-linked once it opens.
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        // AppRefer.reset(), then AppRefer.configure(userId: "B"), while Billing is still on user_a.
+        epoch++; gate.open = true
+        h.queue.add(PendingPurchase("tok-q", "pro_monthly", ProductTypes.SUBSCRIPTION, "user_a", "device-1", NOW, 0))
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        buy(h, "tok-2").await().getOrThrow()
+        h.engine.restore()
+        val forA = h.bodies("/customers") + h.bodies("/purchases")
+        assertTrue(forA.all { it.getString("appUserId") == "user_a" })
+        assertTrue("no device id and no re-link for the earlier account", forA.none { it.has("appreferId") })
+        assertEquals("registered once, never re-linked", 1, h.bodies("/customers").size)
+        assertTrue(h.bodies("/purchases").any { it.getString("purchaseToken") == "tok-q" })
+
+        // The next account is set: linked once, then its purchases carry the device id.
+        h.engine.logIn("user_b")
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        buy(h, "tok-3").await().getOrThrow()
+        val forB = h.bodies("/customers").filter { it.getString("appUserId") == "user_b" }
+        assertEquals(1, forB.size)
+        assertEquals("device-1", forB.single().getString("appreferId"))
+        val purchaseB = h.bodies("/purchases").last()
+        assertEquals("tok-3", purchaseB.getString("purchaseToken"))
+        assertEquals("device-1", purchaseB.getString("appreferId"))
+    }
+
+    @Test
+    fun logOutAfterResetSetsTheNextAccount() = runTest {
+        val gate = Gate()
+        var epoch = 0
+        val h = Harness(this, "user_a", appreferId = gate::deviceId, accountEpoch = { epoch })
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        assertEquals("device-1", h.bodies("/customers").single().getString("appreferId"))
+        epoch++ // reset() + configure
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        assertEquals(1, h.bodies("/customers").size)
+        h.engine.logOut()
+        val anon = h.bodies("/customers").last()
+        assertTrue(anon.getString("appUserId").startsWith("\$ARAnon:"))
+        assertEquals("device-1", anon.getString("appreferId"))
+    }
+
+    @Test
+    fun aPurchaseOwnedByAnotherUserGetsNoDeviceId() = runTest {
+        val h = Harness(this, "user_1")
+        h.queue.add(PendingPurchase("tok-old", "pro_monthly", ProductTypes.SUBSCRIPTION, "user_old", "device-1", NOW, 0))
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        buy(h, "tok-1").await().getOrThrow()
+        val purchases = h.bodies("/purchases").associateBy { it.getString("purchaseToken") }
+        assertFalse("stored id never resent for someone else", purchases.getValue("tok-old").has("appreferId"))
+        assertEquals("device-1", purchases.getValue("tok-1").getString("appreferId"))
+    }
+
+    @Test
+    fun identifySendsLinkFalseWhileTheGateIsClosed() = runTest {
+        for (open in listOf(false, true)) {
+            val gate = Gate().apply { this.open = open }
+            val h = Harness(this, appreferId = gate::deviceId)
+            h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+            h.engine.logIn("user_1")
+            val identify = JSONObject(h.server.requests.single { it.url.contains("/identify") }.body!!)
+            assertEquals(open, identify.getBoolean("link"))
+        }
+    }
+
+    @Test
+    fun identifyLinkIsReadAtSendTime() = runTest {
+        var allowed = true
+        val h = Harness(this, linkAllowed = { allowed })
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        h.server.reachable = false
+        runCatching { h.engine.logIn("user_1") }
+        allowed = false // e.g. setCollectionEnabled(false) or reset() before the retry
+        h.server.reachable = true
+        h.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+        val identify = h.server.requests.filter { it.url.contains("/identify") }.last()
+        assertFalse(JSONObject(identify.body!!).getBoolean("link"))
+    }
+
+    // endregion
+
     @Test
     fun sendableDropsOnlyDeviceSignals() {
         val all = mapOf("\$email" to "e", "\$displayName" to "d", "\$phoneNumber" to "p", "\$gpsAdId" to "g",

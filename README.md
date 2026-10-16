@@ -16,6 +16,15 @@ queued earlier keep their device id only if linking is allowed when they are
 resent. A customer registered without the device id is linked once on the next
 customer refresh after configure. Billing-only apps never send it.
 
+**The device id follows the account.** After `reset()`, Billing sends the device id
+only for the Billing user set after that reset: call `AppReferBilling.logIn(...)`
+(or `logOut()`) for the next account. Until then the earlier user, and any queued
+purchase or renewal that belongs to someone other than the current Billing user,
+gets no device id and is never re-linked, even once configure has run again.
+`logIn` also sends `link: false` to `/identify` while the gate is closed, so the
+server merges the anonymous purchases without copying the install link to the
+signed-in customer.
+
 **Remove the account from Support without a full reset**, e.g. when the user
 withdraws consent:
 
@@ -25,8 +34,15 @@ AppRefer.support.clearIdentity() // suspend
 
 This forgets the Support name, email and app user id, revokes the current Support
 session (through the same durable revocation used by reset) and starts a new
-anonymous session that carries no link to the old id. A registered push token moves
-to the new session, and an open help screen closes. **Conversations from the old
+anonymous session that carries no link to the old id: it sends neither the app user
+id nor the install device id. A registered push token moves to the new session only
+after the old session's revocation succeeds (offline, it waits for the next
+successful retry), so the two sessions never hold it at once; a reset before then
+means it is never moved. An open help screen closes. If a different user id is
+stored later without `reset()`, Support revokes the anonymous session and starts a
+fresh one for that account, so the next account never takes over the anonymous
+conversations. Called before AppRefer has a `Context`, it is remembered and applied
+on the next configure or Support use. **Conversations from the old
 session are no longer visible in the app**; they stay in your team inbox. The app
 user id is not sent to Support again until it changes (another account is stored
 with `setUserId`/`configure(userId = …)`) or `reset()` runs; configuring with the

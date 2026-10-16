@@ -40,4 +40,7 @@ object AppReferInternal {
 
     /** True while [linkableDeviceId] may be sent. */
     fun installLinkAllowed(): Boolean = AppRefer.installLinkAllowed()
+
+    /** Process-wide counter that advances on every [AppRefer.reset] (and nothing else). */
+    fun accountEpoch(): Int = AppRefer.accountEpoch
 }
