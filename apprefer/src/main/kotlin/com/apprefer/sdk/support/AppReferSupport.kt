@@ -32,6 +32,21 @@ object AppReferSupport {
     @Volatile private var email: String? = null
     @Volatile private var app: Context? = null
     private var client: SupportAPI? = null
+    @Volatile private var supportKey: String? = null
+    internal val resetListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+    fun configure(context: Context, apiKey: String) { supportKey = apiKey; configure(context) }
+    internal fun setUserId(userId: String) { app?.let { AppReferStorage(it).setUserId(userId) } }
+    suspend fun reset() {
+        scope.coroutineContext.cancelChildren()
+        name = null; email = null
+        if (app == null) return
+        withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
+        app?.let { c ->
+            AppReferStorage(c).clearUser()
+            c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() }
+            api(c).reset()
+        }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Synchronized internal fun configure(context: Context) {
         if (app != null) return
@@ -44,7 +59,7 @@ object AppReferSupport {
     internal fun api(context: Context): SupportAPI {
         configure(context)
         return synchronized(this) {
-            client ?: SupportAPI({ AppRefer.currentApiKey() }, SecureSupportStore(context), {
+            client ?: SupportAPI({ supportKey ?: AppRefer.currentApiKey() }, SecureSupportStore(context), {
                 val storage = AppReferStorage(context)
                 linkedMapOf<String, Any?>("appUserId" to storage.getUserId(), "deviceId" to AppRefer.getDeviceId(), "name" to name, "email" to email).filterValues { it != null }
             }, { deviceContext(context) }).also { client = it }

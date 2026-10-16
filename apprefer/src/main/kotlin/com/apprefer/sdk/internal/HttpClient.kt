@@ -30,10 +30,34 @@ internal class HttpClient(
     private val transport: (suspend (String, String, ByteArray) -> Map<String, Any?>?)? = null,
 ) {
 
+    private val connections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    @Volatile private var generation = 0
+    fun cancel() { generation++; connections.forEach { it.disconnect() }; connections.clear() }
+
+    suspend fun event(body: Map<String, Any?>): Int? = withContext(Dispatchers.IO) {
+        val epoch = generation
+        val host = TrackingConsent.hosts(consentProvider(), listOfNotNull(primaryBaseUrl, fallbackBaseUrl)).first()
+        var connection: HttpURLConnection? = null
+        try {
+            connection = URL(host + "/api/track/event").openConnection() as HttpURLConnection
+            connections.add(connection)
+            if (epoch != generation) return@withContext null
+            connection.requestMethod = "POST"; connection.doOutput = true
+            connection.connectTimeout = TIMEOUT_MS; connection.readTimeout = TIMEOUT_MS
+            connection.setRequestProperty("X-AppRefer-Key", apiKey)
+            connection.setRequestProperty("X-SDK-Version", APPREFER_SDK_VERSION)
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.outputStream.use { it.write(JsonCodec.encode(body).toByteArray(StandardCharsets.UTF_8)) }
+            connection.responseCode
+        } catch (_: IOException) { null }
+        finally { connection?.let { connections.remove(it); it.disconnect() } }
+    }
+
     /**
      * POST [body] to [path], return decoded JSON object or null on total failure.
      */
     suspend fun post(path: String, body: Map<String, Any?>, consent: String? = null, consentSnapshot: Boolean = false): Map<String, Any?>? = withContext(Dispatchers.IO) {
+        val epoch = generation
         val current = if (consentSnapshot) consent else consentProvider()
         if (body["event_name"] == "_advanced_matching" && !TrackingConsent.allowed(current)) return@withContext null
         val hosts = TrackingConsent.hosts(current, listOfNotNull(primaryBaseUrl, fallbackBaseUrl))
@@ -41,6 +65,7 @@ internal class HttpClient(
 
         performPost(hosts.first(), path, payload)?.let { return@withContext it }
 
+        if (epoch != generation) return@withContext null
         val fb = hosts.getOrNull(1)
         if (!fb.isNullOrBlank() && fb != primaryBaseUrl) {
             logger.info("Primary URL failed, retrying on fallback: $fb$path")
@@ -58,6 +83,7 @@ internal class HttpClient(
             logger.error("Invalid URL: $urlString", e); return null
         }
 
+        val epoch = generation
         for (attempt in 0 until MAX_RETRIES) {
             if (attempt > 0) {
                 val delayMs = (1L shl attempt) * 1000L // 2s, 4s, 8s — matches iOS 2^attempt
@@ -65,6 +91,7 @@ internal class HttpClient(
                 delay(delayMs)
             }
 
+            if (epoch != generation) return null
             val result = doPost(url, body, path, attempt)
             when (result.outcome) {
                 Outcome.SUCCESS -> return result.json
@@ -94,6 +121,7 @@ internal class HttpClient(
                 setFixedLengthStreamingMode(body.size)
             }
 
+            connections.add(conn)
             logger.debug("POST $url")
 
             conn.outputStream.use { it.write(body); it.flush() }
@@ -125,6 +153,7 @@ internal class HttpClient(
             logger.error("POST $path exception", e)
             return HttpResult(Outcome.CLIENT_ERROR, null) // don't retry unknown errors
         } finally {
+            conn?.let { connections.remove(it) }
             try { conn?.disconnect() } catch (_: Exception) {}
         }
     }

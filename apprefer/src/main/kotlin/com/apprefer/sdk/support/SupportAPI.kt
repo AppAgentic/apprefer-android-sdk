@@ -12,11 +12,15 @@ import java.net.URLEncoder
 internal data class SupportResponse(val status: Int, val body: String)
 internal fun interface SupportTransport {
     fun request(method: String, url: String, headers: Map<String, String>, bytes: ByteArray?): SupportResponse
+    fun cancel() {}
 }
 internal object SupportNetwork : SupportTransport {
+    private val connections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    override fun cancel() { connections.forEach { it.disconnect() }; connections.clear() }
     override fun request(method: String, url: String, headers: Map<String, String>, bytes: ByteArray?): SupportResponse {
         require(URL(url).protocol == "https") { "Support requires HTTPS" }
         val c = URL(url).openConnection() as HttpURLConnection
+        connections.add(c)
         try {
             c.requestMethod = method; c.connectTimeout = 20_000; c.readTimeout = 60_000
             c.instanceFollowRedirects = false
@@ -24,10 +28,16 @@ internal object SupportNetwork : SupportTransport {
             if (bytes != null) { c.doOutput = true; c.setFixedLengthStreamingMode(bytes.size); c.outputStream.use { it.write(bytes) } }
             val status = c.responseCode
             return SupportResponse(status, (if (status in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "")
-        } finally { c.disconnect() }
+        } finally { connections.remove(c); c.disconnect() }
     }
 }
-internal interface SupportStore { var token: String?; var profile: String? }
+internal interface SupportStore {
+    var token: String?
+    var profile: String?
+    var pushToken: String?
+        get() = null
+        set(_) {}
+}
 class AppReferSupportException(val status: Int, message: String) : Exception(message)
 
 internal class SupportAPI(
@@ -38,12 +48,29 @@ internal class SupportAPI(
     private val base: String = "https://apprefer.com",
 ) {
     private val mutex = Mutex()
+    @Volatile private var generation = 0
+    suspend fun reset() = withContext(Dispatchers.IO) {
+        generation++
+        transport.cancel()
+        mutex.withLock {
+            val old = store.token
+            val push = store.pushToken
+            store.token = null; store.profile = null; store.pushToken = null; persona = null
+            if (old != null && key() != null) {
+                if (push != null) runCatching { raw("DELETE", "$root/push-token", mapOf("token" to push), old) }
+                runCatching { raw("DELETE", "$root/session", null, old) }
+            }
+        }
+        Unit
+    }
     private val root = "/api/support/v1"
     private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?): Map<String, Any?> {
         val headers = mutableMapOf("X-AppRefer-Key" to (key() ?: error("Configure AppRefer first")))
         token?.let { headers["X-AppRefer-Support-Session"] = it }
         val bytes = body?.let { headers["Content-Type"] = "application/json"; JsonCodec.encode(it).toByteArray(Charsets.UTF_8) }
+        val epoch = generation
         val r = transport.request(method, base + path, headers, bytes)
+        check(epoch == generation) { "Support reset" }
         val obj = JsonCodec.decodeObject(r.body)
         if (r.status !in 200..299) throw AppReferSupportException(r.status, obj["error"] as? String ?: obj["message"] as? String ?: "Something went wrong (${r.status})")
         return obj
@@ -60,9 +87,15 @@ internal class SupportAPI(
         return token
     }
     private suspend fun call(method: String, path: String, body: Map<String, Any?>? = null): Map<String, Any?> = withContext(Dispatchers.IO) {
+        val epoch = generation
         mutex.withLock {
-            try { raw(method, root + path, body, session()) }
+            try {
+                val bearer = session()
+                check(epoch == generation) { "Support reset" }
+                raw(method, root + path, body, bearer)
+            }
             catch (e: AppReferSupportException) {
+                check(epoch == generation) { "Support reset" }
                 if (e.status != 401 || !e.message.orEmpty().contains("support session", true)) throw e
                 store.token = null; store.profile = null
                 raw(method, root + path, body, session())
@@ -89,8 +122,8 @@ internal class SupportAPI(
         SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
             (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap())))
     suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString()): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId)).obj("message"))
-    suspend fun register(token: String) { call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")) }
-    suspend fun remove(token: String) { call("DELETE", "/push-token", mapOf("token" to token)) }
+    suspend fun register(token: String) { call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")); store.pushToken = token }
+    suspend fun remove(token: String) { call("DELETE", "/push-token", mapOf("token" to token)); store.pushToken = null }
     suspend fun upload(bytes: ByteArray): String {
         val slot = call("POST", "/attachments", mapOf("contentType" to "image/jpeg", "size" to bytes.size, "name" to "screenshot.jpg"))
         return withContext(Dispatchers.IO) {

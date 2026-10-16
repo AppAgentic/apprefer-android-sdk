@@ -55,12 +55,15 @@ import kotlin.math.max
 /** Full-screen host. The view can also be embedded in any native layout. */
 class AppReferSupportActivity : Activity() {
     private lateinit var chat: AppReferSupportView
+    private val resetListener: () -> Unit = { finish() }
+    override fun onDestroy() { AppReferSupport.resetListeners.remove(resetListener); super.onDestroy() }
     private val night get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
     @Suppress("DEPRECATION") // Bar colours and decor fitting are still needed below API 35.
     override fun onCreate(state: Bundle?) {
         setTheme(if (night) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(state)
+        AppReferSupport.resetListeners.add(resetListener)
         chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"))
         chat.onClose = { finish() }
         chat.onPickImages = {
@@ -174,6 +177,15 @@ class AppReferSupportView @JvmOverloads constructor(
     private var homeStash: HomeStash? = null
     private class HomeStash(val draft: String, val images: List<ByteArray>, val topic: AppReferSupportTopic?, val error: String?)
     private var draftFile: java.io.File? = null
+    private var accountReset = false
+    private val resetListener: () -> Unit = {
+        accountReset = true
+        pause(); scope.cancel()
+        timeline.reset(); conversations = emptyList(); pending.clear()
+        images.clear(); draft = ""; homeStash = null; id = null; topic = null
+        draftFile?.delete(); draftFile = null
+        removeAllViews()
+    }
 
     private var insetL = 0; private var insetT = 0; private var insetR = 0; private var insetB = 0
     private lateinit var scroll: SupportScrollView
@@ -200,7 +212,7 @@ class AppReferSupportView @JvmOverloads constructor(
     private var lastStatusDark: Boolean? = null
     private val thumbs = WeakHashMap<ByteArray, Bitmap>()
 
-    init { setBackgroundColor(backgroundColor); render() }
+    init { setBackgroundColor(backgroundColor); render(); AppReferSupport.resetListeners.add(resetListener) }
 
     // MARK: - Building blocks
 
@@ -1082,6 +1094,7 @@ class AppReferSupportView @JvmOverloads constructor(
 
     // Large images stay out of Binder saved-state parcels during Activity recreation.
     internal fun saveDraft(): String? = runCatching {
+        if (accountReset) return@runCatching null
         val file = draftFile ?: java.io.File.createTempFile("apprefer-support-", ".draft", context.cacheDir).also { draftFile = it }
         val atomic = android.util.AtomicFile(file)
         val stream = atomic.startWrite()
@@ -1158,7 +1171,7 @@ class AppReferSupportView @JvmOverloads constructor(
         resume()
         if (focusOnOpen && route == "home") { focusOnOpen = false; focusField() }
     }
-    override fun onDetachedFromWindow() { pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { AppReferSupport.resetListeners.remove(resetListener); pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
 
     // MARK: - Dates
 

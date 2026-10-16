@@ -68,6 +68,9 @@ internal class SecureSupportStore(private val context: Context) : SupportStore {
         }
         return ks
     }
+    override var pushToken: String?
+        get() = prefs.getString("pushToken", null)
+        set(value) { prefs.edit().putString("pushToken", value).apply() }
     override var profile: String?
         get() = prefs.getString("profile", null)
         set(value) { prefs.edit().putString("profile", value).apply() }

@@ -29,6 +29,14 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
         check(prefs.edit().putString("apprefer_reported_tracking_consent", value).commit())
     }
 
+    fun clearUser() { check(prefs.edit().remove(KEY_USER_ID).commit()) }
+    var pendingEvents: String?
+        get() = prefs.getString("apprefer_pending_events", null)
+        set(value) { check(prefs.edit().putString("apprefer_pending_events", value).commit()) }
+    var organicConfirmed: Boolean
+        get() = prefs.getBoolean("apprefer_organic_confirmed", false)
+        set(value) { check(prefs.edit().putBoolean("apprefer_organic_confirmed", value).commit()) }
+
     // region device_id
 
     /** Null when missing or unreadable; use [readDeviceId] to tell them apart. */
@@ -103,6 +111,7 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
         safely(true) { prefs.getBoolean(KEY_SDK_ENABLED, true) }
 
     fun setSdkEnabled(value: Boolean) {
+        if (!value) pendingEvents = null
         safely(Unit) { prefs.edit().putBoolean(KEY_SDK_ENABLED, value).apply() }
     }
 
