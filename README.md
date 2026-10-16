@@ -4,7 +4,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.7.0 — full attribution flow, event tracking, and Meta
+> **Status:** 0.8.0 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -29,7 +29,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.7.0")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.8.0")
 }
 ```
 
@@ -363,3 +363,24 @@ To receive copies of the winning postbacks in AppRefer, add to your app's Info.p
 Also add the `SKAdNetworkItems` identifiers your ad networks publish.
 
 On Android, `AppRefer.updateConversionValue()` is a public no-op for API parity. The conversion-value feature above is iOS-only; no Apple conversion requests or postbacks run on Android. Add the Info.plist keys above to your iOS app only.
+
+## Offerings (0.8.0)
+
+Configure named offerings, packages, placements, targeting and experiments in AppRefer. Your paywall reads the store products without hard-coding product ids.
+
+```kotlin
+val offerings = AppReferBilling.offerings()
+val annual = offerings.currentOffering("onboarding")?.annual
+if (annual != null) {
+    // Show annual.storeProduct's localized price in your paywall.
+    val result = AppReferBilling.purchase(activity, annual)
+}
+```
+
+`current` is the resolved default, and `all` contains offerings by identifier. Each offering has JSON `metadata`, `availablePackages`, a package lookup, and `weekly`, `monthly`, `twoMonth`, `threeMonth`, `sixMonth`, `annual` and `lifetime` shortcuts. `$rc_*` package identifiers are accepted alongside `$ar_*`; unrecognized types become `custom`. Packages missing a product for this platform or unavailable in the store are omitted.
+
+Unknown placements fall back to current; a configured null placement suppresses the paywall. Placement lookups return a copy carrying placement attribution. Purchase the package to send its offering/package, placement, targeting and experiment context, plus the persistent install bucket. Context survives pending purchases and retry-queue restarts.
+
+Offerings use a five-minute memory and disk cache. Foreground refreshes stale data; login/logout invalidates it and refreshes an already-used catalogue. Network/server failures return the last cached response of any age after resolving store products again. No cache means the SDK billing error is thrown; catch it and use your existing paywall product ids. Offerings never gate configuration or purchases. Concurrent callers share one request.
+
+Google Play `subscription:basePlan` selects that base plan; a bare subscription selects the period matching the package type, otherwise the first base plan. The package exposes the selected offer token. Storefront country uses ISO alpha-2 when available; no device locale is substituted. The install bucket stays stable after login/logout.

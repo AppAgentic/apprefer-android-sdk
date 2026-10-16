@@ -1,5 +1,13 @@
 ## 0.7.0 - 2026-10-16
 
+## 0.8.0 — 2026-10-16
+
+- Add RevenueCat-style Offerings, packages, placements, metadata and experiment context, with native store product resolution.
+- Add five-minute memory/disk caching, shared in-flight requests, foreground refresh, identity invalidation and offline catalogue fallback.
+- Add package purchases with durable offering attribution and a stable anonymous install bucket.
+- Include the 0.7.1 offline fallback fix: explicitly empty entitlement mappings unlock nothing; only unmapped products use the default.
+- Add paywall examples and Offerings regression tests.
+
 - Version alignment with iOS 0.7.0 and its SKAdNetwork / AdAttributionKit conversion values.
 - New `AppRefer.updateConversionValue()` for API parity: iOS-only, a no-op on Android.
 - README: iOS Info.plist keys to receive postback copies (`NSAdvertisingAttributionReportEndpoint`, `AdAttributionKit.AttributionCopyEndpoint`).

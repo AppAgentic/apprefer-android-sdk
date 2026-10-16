@@ -18,6 +18,8 @@ internal data class PendingPurchase(
     /** Queued by Restore Purchases, so the retry is still sent as a restore. */
     val restore: Boolean = false,
     val migrationOnly: Boolean = false,
+    val presentedOfferingContext: PresentedOfferingContext? = null,
+    val bucketId: String? = null,
 ) {
     val queueKey: String get() = if (migrationOnly) "migration:${appUserId.length}:$appUserId:$purchaseToken" else purchaseToken
     override fun toString() =
@@ -189,6 +191,8 @@ internal class PendingPurchaseQueue(private val file: File) {
                     .put("appreferId", e.appreferId ?: JSONObject.NULL)
                     .put("enqueuedAtMs", e.enqueuedAtMillis)
                     .put("attempts", e.attempts)
+                    .put("presentedOfferingContext", e.presentedOfferingContext?.json())
+                    .put("bucketId", e.bucketId)
                     .apply {
                         if (e.restore) put("restore", true)
                         if (e.migrationOnly) put("migrationOnly", true)
@@ -215,6 +219,8 @@ internal class PendingPurchaseQueue(private val file: File) {
             attempts = (o.opt("attempts") as? Number)?.toInt() ?: 0,
             restore = o.optBoolean("restore", false),
             migrationOnly = o.optBoolean("migrationOnly", false),
+            presentedOfferingContext = o.optJSONObject("presentedOfferingContext")?.let(PresentedOfferingContext::parse),
+            bucketId = o.opt("bucketId") as? String,
         )
     }
 
