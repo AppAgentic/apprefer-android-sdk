@@ -2,6 +2,7 @@ package com.apprefer.sdk
 
 import android.content.Context
 import com.apprefer.sdk.internal.AppReferStorage
+import com.apprefer.sdk.internal.BillingResetMarker
 import com.apprefer.sdk.internal.DeviceIdManager
 import com.apprefer.sdk.internal.DeviceInfo
 import com.apprefer.sdk.internal.GaidCollector
@@ -170,6 +171,8 @@ object AppRefer {
             }
             eventQueue?.clear()
             c?.let { AppReferStorage(it).apply { clearUser(); clearEventQuarantine() } }
+            // Persisted so Billing keeps the previous account unlinked across a relaunch too.
+            c?.let { BillingResetMarker.mark(it) }
             support.reset(c)
         }
     }

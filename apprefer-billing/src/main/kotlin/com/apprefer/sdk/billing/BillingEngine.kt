@@ -135,11 +135,29 @@ internal class BillingEngine(
             registeredWithoutDeviceId.clear()
         }
         if (owner == null || identityEpoch != epoch || owner != activeUser()) return null
+        if (heldByReset(owner)) return null
         return appreferId()
+    }
+
+    /**
+     * True while the persisted `AppRefer.reset()` marker names [user], the current Billing user:
+     * that account was current at the last reset and has not been set again with logIn/logOut,
+     * so it gets no install device id, no re-link and identify sends `link: false`, across
+     * relaunches too. A marker naming someone else means the Billing user changed: it is cleared.
+     * An unreadable marker counts as held.
+     */
+    private fun heldByReset(user: String?): Boolean {
+        val marker = try { storage.resetUser } catch (_: BillingStorageException) { return true } ?: return false
+        if (user == null) return true
+        if (marker == user) return true
+        runCatching { storage.clearResetUser() }
+        return false
     }
 
     /** logIn/logOut set the Billing user for the current reset epoch. */
     private fun identitySet() {
+        // The app said who the user is now (even the same id): the reset() marker no longer applies.
+        runCatching { storage.clearResetUser() }
         val epoch = accountEpoch()
         if (identityEpoch == epoch) return
         identityEpoch = epoch
@@ -183,7 +201,10 @@ internal class BillingEngine(
                 throw BillingStorageException("Could not save the pending identify")
             }
         }
+        val before = storage.loggedInAppUserId ?: if (storage.hasAnonymousId) storage.anonymousId() else null
         storage.loggedInAppUserId = if (BillingStorage.isAnonymous(appUserId)) null else appUserId
+        // A different Billing user than the one current at reset(): the marker no longer applies.
+        if (storage.currentAppUserId != before) runCatching { storage.clearResetUser() }
     }
 
     /**
@@ -1102,7 +1123,7 @@ internal class BillingEngine(
             attempted.add(entry)
             try {
                 // link: false while the install may not be linked, so the server copies no attribution.
-                api.send(BillingEndpoint.Identify(entry.first, entry.second, link = linkAllowed()))
+                api.send(BillingEndpoint.Identify(entry.first, entry.second, link = linkAllowed() && !heldByReset(activeUser())))
                 storage.removePendingIdentify(entry)
             } catch (e: AppReferBillingException) {
                 if (e.isRetryable) {

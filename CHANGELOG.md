@@ -1,3 +1,10 @@
+## 0.9.3
+
+- Billing's account gate survives a relaunch. reset() saves the Billing app user id that was current at that moment (`apprefer_billing_reset_user`, in Billing's own storage). While that is still the current Billing user, Billing sends no install device id (`appreferId`) or device attributes with customers/purchases requests, never re-links that user, and `/identify` sends `link: false`, even after the app restarts and configure runs again. It is cleared by any AppReferBilling.logIn(…) (even with the same id) or logOut(), and when the Billing user id changes to a different one. Nothing is saved if Billing has never stored a user on the install.
+- Re-registering a push token that an old Support session still holds while it waits for revocation (after reset(), clearIdentity(), or saved by an earlier version) no longer posts it at once: that revocation is flagged to move the token, and it is registered on the current session once the old session is revoked. A token no pending revocation holds is still posted immediately.
+- A Support revocation requested while a revocation pass is running is processed in the same app session: the running pass runs again when it finishes. Android already picked up most of these; this closes the last gap, at the very end of a pass.
+- The cleared-session marker was already stored next to the Support session token on Android (both are removed together on uninstall); no change.
+
 ## 0.9.2
 
 - Billing sends no install device id (`appreferId`) or device attribute (`$gpsAdId`, `$fbAnonId`, `$deviceVersion`, `$ip`) with customers/purchases requests while collection is off (saved, unsaved or paused waiting for configure), after reset() until configure/configureResult runs again, or in Billing-only apps. It reuses the Support device id gate (new `AppReferInternal.linkableDeviceId()` / `installLinkAllowed()`); queued purchases are resent without it while the gate is closed, and Billing then uses apprefer.com rather than trk.apprefer.com. Purchases, restore, entitlements and offerings are unchanged.

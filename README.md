@@ -1,5 +1,15 @@
 # AppRefer Android SDK
 
+## 0.9.3: the Billing account gate survives a relaunch
+
+After `reset()` without `AppReferBilling.logOut()`, the Billing user that was current
+at the reset gets no device id even after the app restarts: `reset()` saves it, and
+until you call `AppReferBilling.logIn(...)` (even with the same id) or `logOut()`, or
+the Billing user id changes, Billing sends that user no `appreferId` or device
+attributes, never re-links it, and `/identify` sends `link: false`. A push token
+re-registered while an old Support session still holds it moves to the current
+session once the old one is revoked, instead of being posted at once.
+
 ## 0.9.2: Billing follows the collection choice; Support clearIdentity
 
 **Billing sends no device id while it must not.** AppReferBilling uses the same rule
@@ -17,7 +27,7 @@ resent. A customer registered without the device id is linked once on the next
 customer refresh after configure. Billing-only apps never send it.
 
 **The device id follows the account.** After `reset()`, Billing sends the device id
-only for the Billing user set after that reset: call `AppReferBilling.logIn(...)`
+only for the Billing user set after that reset (across relaunches since 0.9.3): call `AppReferBilling.logIn(...)`
 (or `logOut()`) for the next account. Until then the earlier user, and any queued
 purchase or renewal that belongs to someone other than the current Billing user,
 gets no device id and is never re-linked, even once configure has run again.
@@ -124,7 +134,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.9.2 — full attribution flow, event tracking, and Meta
+> **Status:** 0.9.3 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -149,7 +159,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.2")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.3")
 }
 ```
 
