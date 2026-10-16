@@ -113,10 +113,18 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
     fun pauseCollection() { collectionPaused = true }
     fun resumeCollection() { collectionPaused = false }
     fun isCollectionEnabled(): Boolean = !collectionPaused && safely(false) { prefs.getBoolean("apprefer_collection_enabled", true) }
-    fun setCollectionEnabled(enabled: Boolean) {
-        collectionPaused = true
-        check(prefs.edit().putBoolean("apprefer_collection_enabled", enabled).commit()) { "Collection setting could not be saved" }
+    /**
+     * Turning off pauses at once; turning back on takes effect only on configure. An unchanged "on"
+     * never pauses anything. Returns false when the choice couldn't be saved (never throws).
+     */
+    fun setCollectionEnabled(enabled: Boolean): Boolean {
+        if (!enabled || collectionSavedOff()) collectionPaused = true
+        return safely(false) { prefs.edit().putBoolean("apprefer_collection_enabled", enabled).commit() }
     }
+    /** The app saved "off". */
+    fun collectionSavedOff(): Boolean = safely(false) { !prefs.getBoolean("apprefer_collection_enabled", true) }
+    /** Only a saved "off" or the server kill switch clears queued events, never a pause alone. */
+    fun shouldDiscardEvents(): Boolean = collectionSavedOff() || !safely(true) { prefs.getBoolean(KEY_SDK_ENABLED, true) }
     fun isSdkEnabled(): Boolean =
         isCollectionEnabled() && safely(true) { prefs.getBoolean(KEY_SDK_ENABLED, true) }
 

@@ -13,6 +13,7 @@ import java.lang.reflect.Proxy
 class SDK091Test {
     private class Fixture {
         val data = mutableMapOf<String, Any?>()
+        @Volatile var commit: () -> Boolean = { true }
         val directory = java.nio.file.Files.createTempDirectory("ar091").toFile()
         val prefs: SharedPreferences
         init {
@@ -22,7 +23,7 @@ class SDK091Test {
                     method.name.startsWith("put") -> { data[args!![0] as String] = args[1]; editor }
                     method.name == "remove" -> { data.remove(args!![0]); editor }
                     method.name == "clear" -> { data.clear(); editor }
-                    method.name == "commit" -> true
+                    method.name == "commit" -> commit()
                     else -> null
                 }
             } as SharedPreferences.Editor
@@ -44,7 +45,7 @@ class SDK091Test {
         var clock = System.currentTimeMillis()
         val paths = java.util.concurrent.CopyOnWriteArrayList<String>()
         val http = HttpClient("pk_test", logger, collectionAllowed = storage::isSdkEnabled, transport = { _, path, _ -> paths.add(path); mapOf("attribution" to null) })
-        fun queue() = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, storage::isSdkEnabled, { calls.add(it); status }, scope, { clock }, held = { AppRefer.stoppedByReset })
+        fun queue() = EventQueue({ storage.pendingEvents }, { storage.pendingEvents = it }, storage::isSdkEnabled, { calls.add(it); status }, scope, { clock }, held = { AppRefer.stoppedByReset }, discard = { storage.shouldDiscardEvents() })
         val stateField = AppRefer::class.java.getDeclaredField("state").apply { isAccessible = true }
         val queueField = AppRefer::class.java.getDeclaredField("eventQueue").apply { isAccessible = true }
         val oldState = stateField.get(AppRefer)
@@ -235,4 +236,80 @@ class SDK091Test {
         } finally { f.close() }
     }
 
+    // region review fixes
+
+    @Test fun enablingWhileAlreadyOnIsANoOpAndKeepsTheQueue() = runBlocking {
+        val f = Fixture()
+        try {
+            assertEquals(AppReferEventResult.QUEUED, AppRefer.trackEventResult("kept"))
+            AppRefer.setCollectionEnabled(true) // e.g. a consent tool reporting "granted" each launch
+            assertTrue(f.storage.isCollectionEnabled())
+            assertEquals(AppReferEventResult.QUEUED, AppRefer.trackEventResult("still-collecting"))
+            f.queue.flush()
+            assertEquals(2, JsonCodec.decodeObject(f.storage.pendingEvents).objects("events").size)
+        } finally { f.close() }
+    }
+
+    @Test fun pauseWaitingForConfigureNeverClearsTheQueue() = runBlocking {
+        val f = Fixture()
+        try {
+            assertEquals(AppReferEventResult.QUEUED, AppRefer.trackEventResult("saved"))
+            val saved = f.storage.pendingEvents
+            f.storage.setCollectionEnabled(false); f.storage.setCollectionEnabled(true) // on again, paused until configure
+            assertFalse(f.storage.isCollectionEnabled())
+            f.queue.flush()
+            assertEquals(saved, f.storage.pendingEvents)
+            f.storage.setSdkEnabled(false) // the server kill switch still clears it
+            f.queue.flush()
+            assertNull(f.storage.pendingEvents)
+        } finally { f.close() }
+    }
+
+    @Test fun configureWithUserIdWhileCollectionOffStoresTheNewUser() = runBlocking {
+        val f = Fixture()
+        try {
+            f.storage.setUserId("A")
+            AppRefer.setCollectionEnabled(false)
+            AppRefer.configure(f.context, "pk_test", userId = "B")
+            assertEquals("B", f.storage.getUserId()) // Support now uses B
+            assertTrue(f.paths.isEmpty())
+        } finally { f.close() }
+    }
+
+    @Test fun setCollectionEnabledNeverThrowsAndDisablesEvenWhenSavingFails() = runBlocking {
+        val stateField = AppRefer::class.java.getDeclaredField("state").apply { isAccessible = true }
+        val f = Fixture()
+        try {
+            assertEquals(AppReferEventResult.QUEUED, AppRefer.trackEventResult("queued"))
+            f.commit = { false }
+            AppRefer.setCollectionEnabled(false)
+            assertFalse(f.storage.isCollectionEnabled())
+            assertNull(f.storage.pendingEvents)
+            assertEquals(AppReferEventResult.DROPPED, AppRefer.trackEventResult("blocked"))
+            assertTrue(f.paths.isEmpty())
+            // No configure and no context: still no exception.
+            val state = stateField.get(AppRefer); stateField.set(AppRefer, null)
+            AppRefer.setCollectionEnabled(false, null); AppRefer.setCollectionEnabled(true, null)
+            stateField.set(AppRefer, state)
+        } finally { f.close() }
+    }
+
+    @Test fun configureStartingWhileDisablingSendsNothing() = runBlocking {
+        val f = Fixture()
+        try {
+            f.storage.setMatchRequestAttempted(false) // configure would send a first-open request
+            val saving = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+            f.commit = { saving.countDown(); release.await(2, java.util.concurrent.TimeUnit.SECONDS); true }
+            val disabling = launch(Dispatchers.IO) { AppRefer.setCollectionEnabled(false) }
+            withContext(Dispatchers.IO) { saving.await(2, java.util.concurrent.TimeUnit.SECONDS) }
+            f.commit = { true }
+            val configuring = async(Dispatchers.IO) { AppRefer.configure(f.context, "pk_test") }
+            delay(50); release.countDown()
+            disabling.join(); configuring.await()
+            assertTrue(f.paths.isEmpty())
+            assertFalse(f.storage.isCollectionEnabled())
+        } finally { f.close() }
+    }
+
+    // endregion
 }

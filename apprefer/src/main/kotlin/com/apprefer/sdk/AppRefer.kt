@@ -170,11 +170,20 @@ object AppRefer {
     /** Persistent collection control. Enabling resumes on the next configure. Support/Billing are unaffected. */
     @JvmStatic
     @JvmOverloads
-    suspend fun setCollectionEnabled(enabled: Boolean, context: Context? = AppReferContext.context) {
-        val storage = state?.storage ?: AppReferStorage(requireNotNull(context) { "Pass context before configure" })
-        synchronized(this) { generation++; storage.pauseCollection(); state?.http?.cancel() }
-        storage.setCollectionEnabled(enabled)
+    suspend fun setCollectionEnabled(enabled: Boolean, context: Context? = AppReferContext.context) = safelyRun {
+        val storage = state?.storage ?: context?.let { AppReferStorage(it) }
+        // Already on: a consent tool reporting "granted" on every launch changes nothing.
+        if (enabled && storage?.isCollectionEnabled() != false) return@safelyRun
+        // Saved and paused in one step, so a configure can't start in between and read the old value.
+        val saved = synchronized(this) {
+            val saved = storage?.setCollectionEnabled(enabled) ?: false
+            generation++
+            if (!enabled) { storage?.pauseCollection(); state?.http?.cancel() }
+            saved
+        }
+        if (!saved) android.util.Log.w("AppRefer", "Collection setting could not be saved; applied for this session")
         if (!enabled) {
+            // Even when saving failed: stop and clear now, erring on the side of not collecting.
             scope.coroutineContext.cancelChildren()
             clearPendingEvents(context)
         }
@@ -216,13 +225,17 @@ object AppRefer {
         val s = ensureState(context, apiKey, debug, logLevel)
         synchronized(this) { if (accountEpoch == generation) stoppedByReset = false }
         if (accountEpoch != generation) return@safely null
-        s.storage.resumeCollection()
-        if (!s.storage.isCollectionEnabled()) return@safely cachedAttribution(s)
+        // Stored even while collection is off, so Support uses this account, not the last one.
+        if (userId != null) synchronized(this) { if (accountEpoch == generation) safelyRun { s.storage.setUserId(userId); support.identityChanged() } }
+        val collecting = synchronized(this) {
+            if (accountEpoch != generation) return@safely null
+            s.storage.resumeCollection()
+            s.storage.isCollectionEnabled()
+        }
+        if (!collecting) return@safely cachedAttribution(s)
         scope.launch { safelyRun { s.events.flush() } }
 
         s.logger.info("AppReferSDK initialized v$APPREFER_SDK_VERSION")
-
-        if (userId != null) synchronized(this) { if (accountEpoch == generation) safelyRun { s.storage.setUserId(userId); support.identityChanged() } }
 
         // Record first run date
         safelyRun { s.storage.getFirstRunDate() }
@@ -512,8 +525,9 @@ object AppRefer {
             val write: (String?) -> Unit = { s.storage.pendingEvents = it }
             val enabled = { s.storage.isSdkEnabled() }
             val send: suspend (Map<String, Any?>) -> Any? = s.http::eventResponse
-            if (eventQueue == null) eventQueue = EventQueue(read, write, enabled, send, scope, quarantine = s.storage::quarantineEvents, held = { stoppedByReset })
-            else { state?.http?.cancelEvents(); eventQueue!!.replace(read, write, enabled, send, s.storage::quarantineEvents) }
+            val discard = { s.storage.shouldDiscardEvents() }
+            if (eventQueue == null) eventQueue = EventQueue(read, write, enabled, send, scope, quarantine = s.storage::quarantineEvents, held = { stoppedByReset }, discard = discard)
+            else { state?.http?.cancelEvents(); eventQueue!!.replace(read, write, enabled, send, s.storage::quarantineEvents, discard) }
             s.events = eventQueue!!
             state = s
             support.resumeRevocations()
