@@ -14,11 +14,18 @@ class AppReferInitializer : ContentProvider() {
         AppReferContext.context = app
         com.apprefer.sdk.support.AppReferSupport.resumeRevocations()
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
-            override fun onActivityResumed(activity: android.app.Activity) { com.apprefer.sdk.support.AppReferSupport.resumeRevocations() }
+            private var started = 0
+            private var changingConfiguration = false
+            override fun onActivityResumed(activity: android.app.Activity) {}
             override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) {}
-            override fun onActivityStarted(activity: android.app.Activity) {}
+            override fun onActivityStarted(activity: android.app.Activity) {
+                if (started++ == 0 && !changingConfiguration) com.apprefer.sdk.support.AppReferSupport.resumeRevocations()
+            }
             override fun onActivityPaused(activity: android.app.Activity) {}
-            override fun onActivityStopped(activity: android.app.Activity) {}
+            override fun onActivityStopped(activity: android.app.Activity) {
+                changingConfiguration = activity.isChangingConfigurations
+                started--
+            }
             override fun onActivitySaveInstanceState(activity: android.app.Activity, state: android.os.Bundle) {}
             override fun onActivityDestroyed(activity: android.app.Activity) {}
         })

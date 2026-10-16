@@ -69,7 +69,7 @@ internal class SupportAPI(
             val old = store.token; val push = store.pushToken; val oldKey = key() ?: store.lastKey
             store.token = null; store.profile = null; store.pushToken = null; persona = null
             if (old != null) {
-                deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push))
+                deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push, "createdAt" to System.currentTimeMillis(), "attempts" to 0))
                 runCatching {
                     val items = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
                     store.pendingRevocations = JsonCodec.encode(mapOf("items" to (items + deferredRevocations).distinctBy { it["token"] }))
@@ -83,30 +83,35 @@ internal class SupportAPI(
     }
     fun resumeRevocations() { revokeScope.launch { runCatching { revokePending() } } }
     private val revocationMutex = Mutex()
-    internal suspend fun revokePending() = revocationMutex.withLock {
-        val pending = synchronized(accountLock) { (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] } }
-        synchronized(accountLock) {
-            val current = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
-            store.pendingRevocations = JsonCodec.encode(mapOf("items" to (current + deferredRevocations).distinctBy { it["token"] }))
-        }
-        for (item in pending) {
-            val apiKey = item["key"] as? String ?: key() ?: continue
-            val token = item["token"] as? String ?: continue
-            var succeeded = true
-            for (path in listOfNotNull(if (item["push"] != null) "/push-token" else null, "/session")) {
-                runCatching {
-                    val headers = mapOf("X-AppRefer-Key" to apiKey, "X-AppRefer-Support-Session" to token, "Content-Type" to "application/json")
-                    val response = transport.request("DELETE", base + root + path, headers, if (path == "/push-token") JsonCodec.encode(mapOf("token" to item["push"])).toByteArray() else null)
-                    check(response.status in 200..299)
-                }.onFailure { succeeded = false }
+    internal suspend fun revokePending() {
+        // Do not queue foreground/configure passes behind slow network requests.
+        if (!revocationMutex.tryLock()) return
+        try {
+            val pending = synchronized(accountLock) { (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] } }
+            for (original in pending) {
+                val token = original["token"] as? String ?: continue
+                val created = (original["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
+                var attempts = (original["attempts"] as? Number)?.toInt() ?: 0
+                var remove = System.currentTimeMillis() - created > 400L * 86_400_000 || attempts >= 20
+                val apiKey = original["key"] as? String ?: key()
+                if (!remove && apiKey != null) {
+                    remove = runCatching {
+                        val response = transport.request("DELETE", base + root + "/session", mapOf("X-AppRefer-Key" to apiKey, "X-AppRefer-Support-Session" to token), null)
+                        response.status in 200..299 || response.status in listOf(401, 403, 404)
+                    }.getOrDefault(false)
+                    if (!remove) { attempts++; remove = attempts >= 20 }
+                }
+                synchronized(accountLock) {
+                    val current = (JsonCodec.decodeObject(store.pendingRevocations).objects("items") + deferredRevocations).distinctBy { it["token"] }
+                    val updated = current.mapNotNull { item ->
+                        if (item["token"] != token) item else if (remove) null else item + mapOf("createdAt" to created, "attempts" to attempts)
+                    }
+                    val encoded = JsonCodec.encode(mapOf("items" to updated))
+                    if (store.pendingRevocations != encoded) store.pendingRevocations = encoded
+                    deferredRevocations.removeAll { it["token"] == token }
+                }
             }
-            if (!succeeded) continue
-            synchronized(accountLock) {
-                val current = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
-                store.pendingRevocations = JsonCodec.encode(mapOf("items" to current.filter { it["token"] != token }))
-                deferredRevocations.removeAll { it["token"] == token }
-            }
-        }
+        } finally { revocationMutex.unlock() }
     }
     private val root = "/api/support/v1"
     private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?, epoch: Int = generation): Map<String, Any?> {
@@ -137,7 +142,6 @@ internal class SupportAPI(
     private suspend fun call(method: String, path: String, body: Map<String, Any?>? = null, epoch: Int = generation): Map<String, Any?> = withContext(Dispatchers.IO) {
         currentCoroutineContext().ensureActive()
         check(epoch == generation) { "Support reset" }
-        revokeScope.launch { runCatching { revokePending() } }
         mutex.withLock {
             check(epoch == generation) { "Support reset" }
             currentCoroutineContext().ensureActive()

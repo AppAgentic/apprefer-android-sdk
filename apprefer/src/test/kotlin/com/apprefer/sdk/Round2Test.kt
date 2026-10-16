@@ -12,7 +12,7 @@ class Round2Test {
         override var pushToken: String? = "push-A"
         override var pendingRevocations: String? = null
     }
-    @Test fun failedRevocationsPersistAcrossRestartAndRequireBoth2xx() = runBlocking {
+    @Test fun failedRevocationsPersistAcrossRestartUntilSessionDeleted() = runBlocking {
         val store = Store()
         val attempts = java.util.Collections.synchronizedList(mutableListOf<String>())
         val failed = SupportAPI({ "pk_A" }, store, { emptyMap() }, { emptyMap() }, SupportTransport { _, url, _, _ -> attempts.add(url); SupportResponse(503, "{}") })
@@ -24,7 +24,7 @@ class Round2Test {
         })
         next.revokePending()
         assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").isEmpty())
-        assertTrue(attempts.any { it.endsWith("/push-token") }); assertTrue(attempts.any { it.endsWith("/session") })
+        assertFalse(attempts.any { it.endsWith("/push-token") }); assertTrue(attempts.any { it.endsWith("/session") })
     }
     @Test fun pendingRefreshDoesNotNeedAConsentChange() = runBlocking {
         val reporter = ConsentReporter(); var pending = true; var calls = 0; var network = "organic"
@@ -41,11 +41,12 @@ class Round2Test {
     @Test fun adServicesAlwaysReportsAttributed() {
         assertTrue(AppReferAttributionResult.resolve(Attribution("apple_search_ads", matchType = "adservices", trackingDecisionPending = true), false, false) is AppReferAttributionResult.Attributed)
     }
-    @Test fun sessionSuccessWithFailedPushRemovalStaysSaved() = runBlocking {
+    @Test fun sessionSuccessNeedsNoPushRemoval() = runBlocking {
         val store = Store()
         val api = SupportAPI({ "pk" }, store, { emptyMap() }, { emptyMap() }, SupportTransport { _, url, _, _ -> SupportResponse(if (url.endsWith("/push-token")) 503 else 200, "{}") })
         api.reset(); api.revokePending()
-        assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").isNotEmpty())
+        withTimeout(5000) { while (JsonCodec.decodeObject(store.pendingRevocations).objects("items").isNotEmpty()) yield() }
+        assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").isEmpty())
     }
     @Test fun queueClearOrdersNewlyAcceptedEvents() = runBlocking {
         var saved: String? = null
@@ -64,6 +65,49 @@ class Round2Test {
         finish.complete(Unit)
         assertEquals("meta", first.await()?.network); assertEquals("meta", second.await()?.network); assertEquals(1, calls)
         scope.cancel()
+    }
+
+    @Test fun goneSessionsAreDroppedAndPollingNeverRevokes() = runBlocking {
+        for (status in listOf(200, 204, 299, 401, 403, 404)) {
+            val store = Store().apply { token = "B"; profile = "{}"; pendingRevocations = "{\"items\":[{\"token\":\"A\",\"key\":\"old-key\",\"push\":\"push-A\"}]}" }
+            var deletes = 0
+            val api = SupportAPI({ "pk_B" }, store, { emptyMap() }, { emptyMap() }, SupportTransport { method, url, headers, bytes ->
+                if (method == "DELETE") {
+                    deletes++; assertTrue(url.endsWith("/session")); assertEquals("old-key", headers["X-AppRefer-Key"]); assertNull(bytes)
+                    SupportResponse(status, "{}")
+                } else SupportResponse(200, "{\"conversations\":[]}")
+            })
+            repeat(3) { api.conversations(); api.thread("chat") }
+            assertEquals(0, deletes)
+            api.revokePending()
+            assertEquals(1, deletes)
+            assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").isEmpty())
+        }
+    }
+    @Test fun ageAndAttemptCapsBoundRetries() = runBlocking {
+        val store = Store().apply { pendingRevocations = JsonCodec.encode(mapOf("items" to listOf(
+            mapOf("token" to "expired", "createdAt" to System.currentTimeMillis() - 401L * 86400000),
+            mapOf("token" to "capped", "attempts" to 20),
+            mapOf("token" to "last", "attempts" to 19)
+        ))) }
+        var calls = 0
+        val api = SupportAPI({ "pk" }, store, { emptyMap() }, { emptyMap() }, SupportTransport { _, _, headers, _ ->
+            calls++; assertEquals("last", headers["X-AppRefer-Support-Session"]); SupportResponse(503, "{}")
+        })
+        api.revokePending(); api.revokePending()
+        assertEquals(1, calls); assertTrue(JsonCodec.decodeObject(store.pendingRevocations).objects("items").isEmpty())
+    }
+    @Test fun overlappingPassesSkipInsteadOfQueueing() = runBlocking {
+        val store = Store().apply { pendingRevocations = "{\"items\":[{\"token\":\"A\"}]}" }
+        val entered = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        var calls = 0
+        val api = SupportAPI({ "pk" }, store, { emptyMap() }, { emptyMap() }, SupportTransport { _, _, _, _ ->
+            calls++; entered.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS)); SupportResponse(503, "{}")
+        })
+        val first = launch(Dispatchers.IO) { api.revokePending() }
+        assertTrue(withContext(Dispatchers.IO) { entered.await(5, java.util.concurrent.TimeUnit.SECONDS) })
+        try { withTimeout(1000) { repeat(10) { api.revokePending() } } } finally { release.countDown() }
+        first.join(); assertEquals(1, calls)
     }
 
 }
