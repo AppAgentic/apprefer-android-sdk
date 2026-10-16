@@ -200,12 +200,16 @@ class SDK091Test {
             // Nothing on the attribution side sends until configure runs again.
             AppRefer.setTrackingConsent(true); AppRefer.trackingConsentDidChange()
             AppRefer.setUserId("B"); AppRefer.setAdvancedMatching(email = "b@example.test")
-            assertEquals(AppReferEventResult.QUEUED, AppRefer.trackEventResult("signed_out"))
+            // Before B consents: dropped, never queued or sent later.
+            assertEquals(AppReferEventResult.DROPPED, AppRefer.trackEventResult("signed_out"))
+            AppRefer.trackEvent("signed_out_fire_and_forget"); delay(50)
+            assertNull(f.storage.pendingEvents)
             f.queue.flush(); delay(100)
             assertEquals(paths, f.paths.size); assertEquals(events, f.calls.size)
-            // Configure again: consent is reported, the queued event is sent, Support links the install.
+            // Configure again: consent is reported, new events flow, Support links the install.
             AppRefer.configure(f.context, "pk_test")
-            withTimeout(2000) { while (f.calls.none { it["event_name"] == "signed_out" }) delay(10) }
+            assertEquals(AppReferEventResult.SENT, AppRefer.trackEventResult("signed_in"))
+            assertTrue(f.calls.none { it["event_name"].toString().startsWith("signed_out") })
             assertTrue(f.paths.size > paths)
             assertEquals("device", AppRefer.supportDeviceId())
             api.conversations()

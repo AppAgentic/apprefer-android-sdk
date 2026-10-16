@@ -282,6 +282,9 @@ object AppRefer {
         revenue: Double? = null, currency: String? = null,
     ): AppReferEventResult {
         val s = state ?: return AppReferEventResult.DROPPED
+        // After reset() nothing is queued until configure runs for the next account: those events
+        // come before the new user consents, so they must never be sent later.
+        if (stoppedByReset) return AppReferEventResult.DROPPED
         val userId = s.storage.getUserId() // captured before dispatcher hop
         val eventEpoch = s.events.generationSnapshot()
         return withContext(Dispatchers.IO) { safely(AppReferEventResult.DROPPED) {
