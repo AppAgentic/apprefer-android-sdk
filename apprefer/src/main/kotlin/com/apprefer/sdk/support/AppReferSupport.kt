@@ -32,19 +32,38 @@ object AppReferSupport {
     @Volatile private var email: String? = null
     @Volatile private var app: Context? = null
     private var client: SupportAPI? = null
+    @Volatile private var supportKey: String? = null
+    internal val resetListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+    fun configure(context: Context, apiKey: String) { supportKey = apiKey; configure(context); resumeRevocations() }
+    internal fun resumeRevocations() { (app ?: com.apprefer.sdk.AppReferContext.context)?.let { c -> scope.launch { runCatching { api(c, initialize = false).resumeRevocations() } } } }
+    internal fun setUserId(userId: String) { (app ?: com.apprefer.sdk.AppReferContext.context)?.let { AppReferStorage(it).setUserId(userId) } }
+    @Volatile internal var accountGeneration = 0
+    suspend fun reset(context: Context? = com.apprefer.sdk.AppReferContext.context) = withContext(Dispatchers.IO) {
+        scope.coroutineContext.cancelChildren()
+        name = null; email = null
+        val c = app ?: context
+        if (c != null) {
+            AppReferStorage(c).clearUser()
+            runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
+            api(c, initialize = false).reset()
+        }
+        accountGeneration++
+        withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Synchronized internal fun configure(context: Context) {
         if (app != null) return
         app = context.applicationContext
+        com.apprefer.sdk.AppReferContext.context = app
         if (Build.VERSION.SDK_INT >= 26) {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
                 NotificationChannel("apprefer_support", "Support replies", NotificationManager.IMPORTANCE_DEFAULT))
         }
     }
-    internal fun api(context: Context): SupportAPI {
-        configure(context)
+    internal fun api(context: Context, initialize: Boolean = true): SupportAPI {
+        if (initialize) configure(context)
         return synchronized(this) {
-            client ?: SupportAPI({ AppRefer.currentApiKey() }, SecureSupportStore(context), {
+            client ?: SupportAPI({ supportKey ?: AppRefer.currentApiKey() }, SecureSupportStore(context), {
                 val storage = AppReferStorage(context)
                 linkedMapOf<String, Any?>("appUserId" to storage.getUserId(), "deviceId" to AppRefer.getDeviceId(), "name" to name, "email" to email).filterValues { it != null }
             }, { deviceContext(context) }).also { client = it }

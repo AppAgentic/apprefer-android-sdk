@@ -11,8 +11,15 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Tokens stay in no-backup storage; the encryption key never leaves Android Keystore. */
-internal class SecureSupportStore(private val context: Context) : SupportStore {
-    private val file = java.io.File(context.noBackupFilesDir, "apprefer-support-session")
+internal class SecureSupportStore(private val context: Context, fileName: String = "apprefer-support-session") : SupportStore {
+    private val file = java.io.File(context.noBackupFilesDir, fileName)
+    private val deferred by lazy { SecureSupportStore(context, "apprefer-support-revocations") }
+    override var pendingRevocations: String?
+        get() = deferred.token
+        set(value) { deferred.token = value }
+    override var lastKey: String?
+        get() = prefs.getString("lastKey", null)
+        set(value) { prefs.edit().putString("lastKey", value).apply() }
     private val prefs = context.getSharedPreferences("apprefer_support", Context.MODE_PRIVATE)
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -27,6 +34,13 @@ internal class SecureSupportStore(private val context: Context) : SupportStore {
             if (!file.exists()) return null
             return try {
                 val saved = file.readText()
+                if (saved.startsWith("rsa-chunks:")) {
+                    val ks = legacyKeyStore()
+                    val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding").apply { init(Cipher.DECRYPT_MODE, ks.getKey("apprefer_support_legacy", null)) }
+                    val output = java.io.ByteArrayOutputStream()
+                    saved.removePrefix("rsa-chunks:").split(".").forEach { output.write(cipher.doFinal(Base64.decode(it, Base64.NO_WRAP))) }
+                    return String(output.toByteArray(), Charsets.UTF_8)
+                }
                 if (saved.startsWith("rsa:")) {
                     val ks = legacyKeyStore()
                     return Cipher.getInstance("RSA/ECB/PKCS1Padding").run {
@@ -43,7 +57,7 @@ internal class SecureSupportStore(private val context: Context) : SupportStore {
             if (android.os.Build.VERSION.SDK_INT < 23) {
                 val ks = legacyKeyStore()
                 val rsa = Cipher.getInstance("RSA/ECB/PKCS1Padding").apply { init(Cipher.ENCRYPT_MODE, ks.getCertificate("apprefer_support_legacy").publicKey) }
-                write("rsa:" + Base64.encodeToString(rsa.doFinal(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP))
+                write("rsa-chunks:" + value.toByteArray(Charsets.UTF_8).toList().chunked(100).joinToString(".") { chunk -> Base64.encodeToString(rsa.doFinal(chunk.toByteArray()), Base64.NO_WRAP) })
                 return
             }
             val c = Cipher.getInstance("AES/GCM/NoPadding"); c.init(Cipher.ENCRYPT_MODE, key())
@@ -68,6 +82,9 @@ internal class SecureSupportStore(private val context: Context) : SupportStore {
         }
         return ks
     }
+    override var pushToken: String?
+        get() = prefs.getString("pushToken", null)
+        set(value) { prefs.edit().putString("pushToken", value).apply() }
     override var profile: String?
         get() = prefs.getString("profile", null)
         set(value) { prefs.edit().putString("profile", value).apply() }

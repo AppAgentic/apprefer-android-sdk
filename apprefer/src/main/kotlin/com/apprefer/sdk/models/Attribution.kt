@@ -16,6 +16,7 @@ data class Attribution(
     val queryParams: Map<String, String> = emptyMap(),
     val customData: Map<String, String> = emptyMap(),
     val createdAt: Long = System.currentTimeMillis(),
+    val trackingDecisionPending: Boolean = false,
 ) {
     companion object {
         fun organic(): Attribution = Attribution(

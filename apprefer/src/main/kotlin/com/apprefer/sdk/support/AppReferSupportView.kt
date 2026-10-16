@@ -55,12 +55,15 @@ import kotlin.math.max
 /** Full-screen host. The view can also be embedded in any native layout. */
 class AppReferSupportActivity : Activity() {
     private lateinit var chat: AppReferSupportView
+    private val resetListener: () -> Unit = { finish() }
+    override fun onDestroy() { AppReferSupport.resetListeners.remove(resetListener); super.onDestroy() }
     private val night get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
     @Suppress("DEPRECATION") // Bar colours and decor fitting are still needed below API 35.
     override fun onCreate(state: Bundle?) {
         setTheme(if (night) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(state)
+        AppReferSupport.resetListeners.add(resetListener)
         chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"))
         chat.onClose = { finish() }
         chat.onPickImages = {
@@ -174,6 +177,23 @@ class AppReferSupportView @JvmOverloads constructor(
     private var homeStash: HomeStash? = null
     private class HomeStash(val draft: String, val images: List<ByteArray>, val topic: AppReferSupportTopic?, val error: String?)
     private var draftFile: java.io.File? = null
+    private var accountReset = false
+    private val resetListener: () -> Unit = {
+        accountReset = true
+        pause(); scope.cancel()
+        timeline.reset(); conversations = emptyList(); pending.clear()
+        images.clear(); draft = ""; homeStash = null; id = null; topic = null
+        draftFile?.delete(); draftFile = null
+        starting = false; sendError = null; loadError = null; route = "home"
+        homeClientMessageId = UUID.randomUUID().toString()
+        shownPersona = null; headerKey = null; shownQuickReplies = null; renderedCount = -1
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        removeAllViews(); render()
+        accountReset = false
+        if (isAttachedToWindow) resume()
+    }
+
+    private val accountLifecycle = SupportAccountLifecycle({ AppReferSupport.accountGeneration }, AppReferSupport.resetListeners, resetListener)
 
     private var insetL = 0; private var insetT = 0; private var insetR = 0; private var insetB = 0
     private lateinit var scroll: SupportScrollView
@@ -904,12 +924,13 @@ class AppReferSupportView @JvmOverloads constructor(
         if (text.isEmpty() && images.isEmpty()) return
         starting = true; sendError = null
         updateSend(); renderAccessories(); saveDraft()
+        val epoch = api.actionGeneration
         val sentDraft = draft; val shots = images.toList(); val about = topic?.title; val clientId = homeClientMessageId
         scope.launch {
             try {
                 // Every attempt uses fresh upload slots but keeps the same send identity.
-                val ids = shots.map { api.upload(it) }
-                val t = api.start(text, ids, clientId, about)
+                val ids = shots.map { api.upload(it, epoch) }
+                val t = api.start(text, ids, clientId, about, epoch)
                 starting = false
                 // Clear only what was sent: anything typed or picked meanwhile stays as the next home draft.
                 if (draft == sentDraft) draft = ""
@@ -945,13 +966,14 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun deliver(message: SupportPending) {
+        val epoch = api.actionGeneration
         val conversation = message.conversationId ?: return
         message.failed = false
         saveDraft(); renderMessages()
         scope.launch {
             try {
-                val ids = message.images.map { api.upload(it) }
-                val m = api.send(conversation, message.text, ids, message.clientMessageId)
+                val ids = message.images.map { api.upload(it, epoch) }
+                val m = api.send(conversation, message.text, ids, message.clientMessageId, epoch)
                 pending.remove(message)
                 if (route == "thread" && id == conversation) timeline.merge(listOf(m))
             } catch (e: CancellationException) { message.failed = true; throw e }
@@ -1082,6 +1104,7 @@ class AppReferSupportView @JvmOverloads constructor(
 
     // Large images stay out of Binder saved-state parcels during Activity recreation.
     internal fun saveDraft(): String? = runCatching {
+        if (accountReset) return@runCatching null
         val file = draftFile ?: java.io.File.createTempFile("apprefer-support-", ".draft", context.cacheDir).also { draftFile = it }
         val atomic = android.util.AtomicFile(file)
         val stream = atomic.startWrite()
@@ -1154,11 +1177,12 @@ class AppReferSupportView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        accountLifecycle.attach()
         if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         resume()
         if (focusOnOpen && route == "home") { focusOnOpen = false; focusField() }
     }
-    override fun onDetachedFromWindow() { pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { accountLifecycle.detach(); pause(); pending.forEach { it.failed = true }; saveDraft(); scope.cancel(); super.onDetachedFromWindow() }
 
     // MARK: - Dates
 

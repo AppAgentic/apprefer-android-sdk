@@ -26,8 +26,18 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
     }
     fun getReportedConsent(): String? = prefs.getString("apprefer_reported_tracking_consent", null)
     fun setReportedConsent(value: String) {
-        check(prefs.edit().putString("apprefer_reported_tracking_consent", value).commit())
+        safely(Unit) { prefs.edit().putString("apprefer_reported_tracking_consent", value).commit() }
     }
+
+    fun clearUser() { safely(Unit) { prefs.edit().remove(KEY_USER_ID).commit() } }
+    fun clearEventQuarantine() { safely(Unit) { prefs.edit().remove("apprefer_pending_events_corrupt").commit() } }
+    fun quarantineEvents(raw: String) { if (!prefs.edit().putString("apprefer_pending_events_corrupt", raw).commit()) throw java.io.IOException("Queue quarantine failed") }
+    var pendingEvents: String?
+        get() = prefs.getString("apprefer_pending_events", null)
+        set(value) { if (!prefs.edit().putString("apprefer_pending_events", value).commit()) throw java.io.IOException("Queue save failed") }
+    var organicConfirmed: Boolean
+        get() = prefs.getBoolean("apprefer_organic_confirmed", false)
+        set(value) { safely(Unit) { prefs.edit().putBoolean("apprefer_organic_confirmed", value).commit() } }
 
     // region device_id
 
@@ -103,6 +113,7 @@ internal class AppReferStorage(context: Context) : DeviceIdStore {
         safely(true) { prefs.getBoolean(KEY_SDK_ENABLED, true) }
 
     fun setSdkEnabled(value: Boolean) {
+        if (!value) safely(Unit) { pendingEvents = null }
         safely(Unit) { prefs.edit().putBoolean(KEY_SDK_ENABLED, value).apply() }
     }
 

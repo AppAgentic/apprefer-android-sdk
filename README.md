@@ -1,10 +1,74 @@
 # AppRefer Android SDK
 
+## 0.9.0: account switching, independent Support and reliable events
+
+Support can start independently of attribution. Its configuration does not configure
+attribution, collect attribution device signals, initialize product analytics, or
+create a device id. Full configuration still enables attribution and analytics as
+before. Opening Support before either configuration reports the existing
+not-configured error.
+
+Await reset() before signing the next account in. Reset cancels outstanding
+attribution, event and Support work, best-effort revokes the old Support session
+and unregisters its push token, clears the session/profile and displayed
+conversations/unread/drafts, removes the user id and transient matching data,
+and drops queued product events. It is idempotent and safe before configuration.
+The key remains configured so the next account can use Support; install device id,
+attribution result, consent and conversion state are retained. Advanced-matching
+hashes are never persisted by this SDK. Billing is separate: also call
+AppReferBilling.logOut() when your app uses Billing, then identify its next user
+through Billing's existing login API.
+
+```kotlin
+AppRefer.support.configure(context, apiKey = "pk_...") // Support only
+AppRefer.setUserId("account-A") // suspending
+AppRefer.support.identify(name = "Alex", email = "alex@example.com")
+AppRefer.reset()
+AppRefer.setUserId("account-B")
+
+when (val result = AppRefer.configureResult(context, apiKey = "pk_...")) {
+    is AppReferAttributionResult.Attributed -> println(result.attribution.network)
+    AppReferAttributionResult.Pending -> Unit
+    AppReferAttributionResult.Organic -> Unit
+    is AppReferAttributionResult.Failed -> println(result.error)
+}
+val delivery = AppRefer.trackEventResult("workout_finished", properties = mapOf("sets" to 4))
+AppRefer.clearPendingEvents()
+// If Billing is configured, also: AppReferBilling.logOut()
+```
+
+The existing configure return value and trackEvent API remain available.
+The new configureResult reports attributed, organic, pending, or failed; organic requires
+a successful server answer (or its confirmed install cache), never a network
+failure or an unclassified empty response. Pending means the server is holding
+the ATT decision; its cached copy remains pending until the server confirms a result.
+A failed consent re-report preserves any previously confirmed attribution.
+
+trackEventResult returns sent, queued or dropped (uppercase enum cases on
+Android). Sent means HTTP 2xx acknowledgement; queued means saved for later
+delivery; dropped covers a disabled/unconfigured SDK, a terminal rejection or
+unpersistable input. Product events are persisted before sending, bounded to
+1,000 events and seven days; expiry and overflow discard the oldest entries.
+Each event keeps one stable eventId. Network failures, HTTP 408/429 and 5xx retry
+with exponential backoff capped at one hour, or longer when Retry-After requires it.
+A retryable failure pauses the drain. HTTP 2xx and other 4xx responses are terminal.
+Awaited event calls wait only for their own single request, never the full backlog.
+This is **at-least-once delivery**: BigQuery's short insert-id deduplication window
+does not provide an exactly-once guarantee.
+
+clearPendingEvents() cancels only product-event requests and erases the queue; call
+it when withdrawing product-event consent. Reset calls it too. The existing SDK
+kill switch also clears queued events and stops sends. ATT/advertising consent
+continues to select the appropriate host; it is not a new product-analytics
+consent switch. Discarded events are never replayed. Await reset/clear before
+starting work for the next account or resuming event collection.
+
+
 Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.8.0 — full attribution flow, event tracking, and Meta
+> **Status:** 0.9.0 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -29,7 +93,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.8.0")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.0")
 }
 ```
 
