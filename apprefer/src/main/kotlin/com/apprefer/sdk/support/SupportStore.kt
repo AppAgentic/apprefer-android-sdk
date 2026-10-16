@@ -21,6 +21,7 @@ internal class SecureSupportStore(private val context: Context, fileName: String
         get() = prefs.getString("lastKey", null)
         set(value) { prefs.edit().putString("lastKey", value).apply() }
     private val prefs = context.getSharedPreferences("apprefer_support", Context.MODE_PRIVATE)
+    @android.annotation.TargetApi(23)
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getKey("apprefer_support", null) as? SecretKey)?.let { return it }
@@ -48,6 +49,7 @@ internal class SecureSupportStore(private val context: Context, fileName: String
                         String(doFinal(Base64.decode(saved.removePrefix("rsa:"), Base64.NO_WRAP)), Charsets.UTF_8)
                     }
                 }
+                if (android.os.Build.VERSION.SDK_INT < 23) { file.delete(); return null }
                 val bytes = Base64.decode(saved, Base64.NO_WRAP)
                 Cipher.getInstance("AES/GCM/NoPadding").run { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12))); String(doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8) }
             } catch (_: Exception) { file.delete(); null }
