@@ -1,5 +1,39 @@
 # AppRefer Android SDK
 
+## 0.9.2: Billing follows the collection choice; Support clearIdentity
+
+**Billing sends no device id while it must not.** AppReferBilling uses the same rule
+Support has used since 0.9.1: the install device id (`appreferId`) and the device
+signals among the customer attributes (`$gpsAdId`, `$fbAnonId`, `$deviceVersion`,
+`$ip`) are sent with customers/purchases requests only after
+`configure`/`configureResult` in this process, never while collection is off
+(including an "off" that could not be saved, or one turned back on but not yet
+configured), and never after `reset()` until configure runs again for the next
+user. A withheld device attribute is dropped, not sent later. While the gate is
+closed Billing also uses `apprefer.com`, never `trk.apprefer.com`. Purchases,
+restore, entitlements and offerings work exactly as before without it. Purchases
+queued earlier keep their device id only if linking is allowed when they are
+resent. A customer registered without the device id is linked once on the next
+customer refresh after configure. Billing-only apps never send it.
+
+**Remove the account from Support without a full reset**, e.g. when the user
+withdraws consent:
+
+```kotlin
+AppRefer.support.clearIdentity() // suspend
+```
+
+This forgets the Support name, email and app user id, revokes the current Support
+session (through the same durable revocation used by reset) and starts a new
+anonymous session that carries no link to the old id. A registered push token moves
+to the new session, and an open help screen closes. **Conversations from the old
+session are no longer visible in the app**; they stay in your team inbox. The app
+user id is not sent to Support again until it changes (another account is stored
+with `setUserId`/`configure(userId = …)`) or `reset()` runs; configuring with the
+same user id on the next launch keeps Support anonymous. Attribution, Billing and the
+stored user id are not changed. Combine it with `setCollectionEnabled(false)` to stop
+attribution as well.
+
 ## 0.9.1: account switching, independent Support and reliable events
 
 Support can start independently of attribution. Its configuration does not configure
@@ -74,7 +108,7 @@ Native Android SDK for [AppRefer](https://apprefer.com) — mobile attribution
 for Play Store apps. Version-locked with the iOS, Flutter, and React Native
 SDKs.
 
-> **Status:** 0.9.1 — full attribution flow, event tracking, and Meta
+> **Status:** 0.9.2 — full attribution flow, event tracking, and Meta
 > Advanced Matching wired. Distributed via JitPack today; Maven Central
 > publish config is ready and will activate once the `com.apprefer`
 > Sonatype namespace is claimed.
@@ -99,7 +133,7 @@ Then add the dependency:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.1")
+    implementation("com.github.AppAgentic:apprefer-android-sdk:0.9.2")
 }
 ```
 
@@ -239,7 +273,7 @@ AppReferBilling.setAttributes(mapOf("\$email" to "a@b.com", "\$displayName" to "
 AppReferBilling.setEmail("a@b.com")  // also setDisplayName / setPhoneNumber
 ```
 
-The AppRefer attribution device id is sent automatically as `appreferId`, so purchases are matched to the ad click without `setUserId`.
+The AppRefer attribution device id is sent automatically as `appreferId`, so purchases are matched to the ad click without `setUserId` (only after `AppRefer.configure`, and not while collection is off or after `reset()` until configure runs again; see 0.9.2).
 
 Java: every suspend call has a callback overload taking `AppReferCallback<T>` (results on the main thread), e.g. `AppReferBilling.customerInfo(callback)`, `purchase(activity, product, null, callback)`, `restorePurchases(callback)`, `logIn(id, callback)`.
 

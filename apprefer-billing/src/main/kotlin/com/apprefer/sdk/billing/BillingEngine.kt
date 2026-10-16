@@ -270,10 +270,11 @@ internal class BillingEngine(
         flushPendingIdentifies()
         val attributes = storage.pendingAttributes
         val deviceId = appreferId()
+        val sent = sendable(attributes, linked = deviceId != null)
         val needsRegister = user !in registeredUsers || attributes.isNotEmpty() ||
             storage.accountToken(user) == null || (user in registeredWithoutDeviceId && deviceId != null)
         val response = api.send(
-            if (needsRegister) BillingEndpoint.CreateCustomer(user, deviceId, attributes)
+            if (needsRegister) BillingEndpoint.CreateCustomer(user, deviceId, sent)
             else BillingEndpoint.GetCustomer(user),
         )
         if (needsRegister) {
@@ -593,7 +594,7 @@ internal class BillingEngine(
         val deviceId = appreferId()
         try {
             val response = api.send(
-                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, attributes, restore, intent?.presentedOfferingContext, intent?.bucketId),
+                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, sendable(attributes, deviceId != null), restore, intent?.presentedOfferingContext, intent?.bucketId),
             )
             if (attributes.isNotEmpty()) storage.clearSentAttributes(attributes)
             resetBackoff()
@@ -911,8 +912,9 @@ internal class BillingEngine(
             for (entry in queue.entries) {
                 try {
                     val response = api.send(
+                        // A queued device id is sent only while linking is allowed now.
                         BillingEndpoint.Purchase(
-                            entry.appUserId, entry.appreferId, entry.purchaseToken, entry.productId, entry.productType,
+                            entry.appUserId, entry.appreferId?.takeIf { appreferId() != null }, entry.purchaseToken, entry.productId, entry.productType,
                             emptyMap(), entry.restore, entry.presentedOfferingContext, entry.bucketId,
                         ),
                     )
@@ -1074,6 +1076,13 @@ internal class BillingEngine(
     // endregion
 
     companion object {
+        /** Attribution and device signals among the customer attributes. */
+        internal val DEVICE_ATTRIBUTE_KEYS = setOf("\$gpsAdId", "\$fbAnonId", "\$deviceVersion", "\$ip", "\$idfa", "\$idfv", "\$attConsentStatus")
+
+        /** While the install may not be linked, device signals are dropped, never sent later. */
+        internal fun sendable(attributes: Map<String, String>, linked: Boolean): Map<String, String> =
+            if (linked) attributes else attributes.filterKeys { it !in DEVICE_ATTRIBUTE_KEYS }
+
         const val MIN_BACKOFF_MS = 30_000L
         const val MAX_BACKOFF_MS = 3600_000L
 

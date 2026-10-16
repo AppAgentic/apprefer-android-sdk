@@ -11,7 +11,7 @@ import org.junit.Test
 import java.lang.reflect.Proxy
 
 class SDK091Test {
-    private class Fixture {
+    internal class Fixture {
         val data = mutableMapOf<String, Any?>()
         @Volatile var commit: () -> Boolean = { true }
         val directory = java.nio.file.Files.createTempDirectory("ar091").toFile()

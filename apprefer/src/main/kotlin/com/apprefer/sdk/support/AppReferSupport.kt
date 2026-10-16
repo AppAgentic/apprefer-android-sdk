@@ -50,6 +50,26 @@ object AppReferSupport {
         accountGeneration++
         withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
     }
+    /**
+     * Removes the account from Support without a full reset, e.g. when the user withdraws consent:
+     * forgets the name, email and app user id, revokes the current Support session and starts a
+     * new anonymous one. Conversations from the old session stay in your team inbox but are no
+     * longer shown in the app. The app user id is not sent to Support again until it changes
+     * (another account signs in) or `AppRefer.reset()` runs. Attribution, Billing and the stored
+     * user id are untouched.
+     */
+    suspend fun clearIdentity(context: Context? = com.apprefer.sdk.AppReferContext.context) = withContext(Dispatchers.IO) {
+        scope.coroutineContext.cancelChildren()
+        name = null; email = null
+        val c = app ?: context
+        if (c != null) {
+            AppReferStorage(c).supportIdentityCleared = true
+            runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
+        }
+        accountGeneration++
+        withContext(Dispatchers.Main) { resetListeners.toList().reversed().forEach { it() } }
+        if (c != null) api(c, initialize = false).clearIdentity()
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Synchronized internal fun configure(context: Context) {
         if (app != null) return
@@ -67,10 +87,14 @@ object AppReferSupport {
                 { deviceContext(context) }).also { client = it }
         }
     }
-    /** The session profile. The device id is left out after reset(), with collection off and in Support-only apps. */
+    /**
+     * The session profile. The device id is left out after reset(), with collection off and in
+     * Support-only apps; the app user id after clearIdentity() until it changes.
+     */
     internal fun profile(context: Context): Map<String, Any?> {
         val storage = AppReferStorage(context)
-        return linkedMapOf<String, Any?>("appUserId" to storage.getUserId(), "deviceId" to AppRefer.supportDeviceId(), "name" to name, "email" to email).filterValues { it != null }
+        val userId = if (storage.supportIdentityCleared) null else storage.getUserId()
+        return linkedMapOf<String, Any?>("appUserId" to userId, "deviceId" to AppRefer.supportDeviceId(), "name" to name, "email" to email).filterValues { it != null }
     }
     fun identify(name: String? = null, email: String? = null) {
         this.name = name?.trim()?.takeIf { it.isNotEmpty() }; this.email = email?.trim()?.takeIf { it.isNotEmpty() }

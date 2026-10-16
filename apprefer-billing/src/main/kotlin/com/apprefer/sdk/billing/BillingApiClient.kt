@@ -205,7 +205,8 @@ internal class BillingApiClient(
             baseUrls = listOf(AppReferInternal.TRACKING_URL, AppReferInternal.FALLBACK_URL),
             apiKey = apiKey,
             transport = HttpUrlConnectionTransport(),
-            consentProvider = { AppReferInternal.trackingConsent(context) },
+            // With collection off or after reset, never the tracking host.
+            consentProvider = { if (AppReferInternal.installLinkAllowed()) AppReferInternal.trackingConsent(context) else "denied" },
         )
 
         fun makeRequest(endpoint: BillingEndpoint, baseUrl: String, apiKey: String): BillingRequest {

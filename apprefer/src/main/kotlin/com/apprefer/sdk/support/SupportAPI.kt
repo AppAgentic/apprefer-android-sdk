@@ -64,22 +64,39 @@ internal class SupportAPI(
     val actionGeneration: Int get() = generation
     private val revokeScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     suspend fun reset() = withContext(Dispatchers.IO) {
-        synchronized(accountLock) {
-            generation++
-            val old = store.token; val push = store.pushToken; val oldKey = key() ?: store.lastKey
-            store.token = null; store.profile = null; store.pushToken = null; persona = null
-            if (old != null) {
-                deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push, "createdAt" to System.currentTimeMillis(), "attempts" to 0))
-                runCatching {
-                    val items = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
-                    store.pendingRevocations = JsonCodec.encode(mapOf("items" to (items + deferredRevocations).distinctBy { it["token"] }))
-                }
-            }
-        }
+        retireSession(keepPushToken = false)
         transport.cancel()
         // Revocation never holds the session mutex or delays local logout / B's session.
         revokeScope.launch { runCatching { revokePending() } }
         Unit
+    }
+    /**
+     * Consent withdrawn: revokes the session through the durable revocation list and starts a
+     * new anonymous one (the profile no longer carries the app user id), keeping no link to the
+     * old one. A registered push token moves to the new session. Old conversations stay in the
+     * team inbox but are no longer shown in the app.
+     */
+    suspend fun clearIdentity() = withContext(Dispatchers.IO) {
+        val push = retireSession(keepPushToken = true)
+        transport.cancel()
+        revokeScope.launch { runCatching { revokePending() } }
+        if (key() != null) runCatching { if (push != null) register(push) else syncIdentity() }
+        Unit
+    }
+    /** Forgets the session locally and queues its revocation; returns its push token. */
+    private fun retireSession(keepPushToken: Boolean): String? = synchronized(accountLock) {
+        generation++
+        val old = store.token; val push = store.pushToken; val oldKey = key() ?: store.lastKey
+        store.token = null; store.profile = null; persona = null
+        if (!keepPushToken) store.pushToken = null
+        if (old != null) {
+            deferredRevocations.add(mapOf("token" to old, "key" to oldKey, "push" to push, "createdAt" to System.currentTimeMillis(), "attempts" to 0))
+            runCatching {
+                val items = JsonCodec.decodeObject(store.pendingRevocations).objects("items")
+                store.pendingRevocations = JsonCodec.encode(mapOf("items" to (items + deferredRevocations).distinctBy { it["token"] }))
+            }
+        }
+        push
     }
     fun resumeRevocations() { revokeScope.launch { runCatching { revokePending() } } }
     private val revocationMutex = Mutex()

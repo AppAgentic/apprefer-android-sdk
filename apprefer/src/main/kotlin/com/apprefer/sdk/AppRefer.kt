@@ -482,13 +482,19 @@ object AppRefer {
     internal fun currentApiKey(): String? = state?.apiKey
 
     /**
-     * The install device id Support may send: only after configure in this process, never after
+     * The install device id Support and AppRefer Billing may send: only after configure in this process, never after
      * reset() (until configure runs again) or while collection is off. Support-only apps never
      * configure attribution, so they never send it.
      */
     internal fun supportDeviceId(): String? = safely<String?>(null) {
         val s = state ?: return@safely null
-        if (stoppedByReset || collectionOffUnsaved || !s.storage.isCollectionEnabled()) null else s.storage.getDeviceId()
+        if (installLinkAllowed()) s.storage.getDeviceId() else null
+    }
+
+    /** Support and AppRefer Billing may link requests to this install (see [supportDeviceId]). */
+    internal fun installLinkAllowed(): Boolean = safely(false) {
+        val s = state ?: return@safely false
+        !stoppedByReset && !collectionOffUnsaved && s.storage.isCollectionEnabled()
     }
 
     private suspend fun ensureState(

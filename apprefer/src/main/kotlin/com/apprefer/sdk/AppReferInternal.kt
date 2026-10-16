@@ -30,4 +30,14 @@ object AppReferInternal {
 
     /** The persisted attribution device id, even before [AppRefer.configure] runs this launch. */
     fun deviceId(context: Context): String? = safely(null) { AppReferStorage(context).getDeviceId() }
+
+    /**
+     * The device id other modules may send, under the rule Support follows: only after
+     * [AppRefer.configure] in this process, never while collection is off (saved or not) and
+     * never after [AppRefer.reset] until configure runs again. Null otherwise.
+     */
+    fun linkableDeviceId(): String? = AppRefer.supportDeviceId()
+
+    /** True while [linkableDeviceId] may be sent. */
+    fun installLinkAllowed(): Boolean = AppRefer.installLinkAllowed()
 }
