@@ -135,16 +135,29 @@ internal class SupportAPI(
     }
     fun resumeRevocations() { revokeScope.launch { runCatching { revokePending() } } }
     private val revocationMutex = Mutex()
+    /** A pass was asked for while one was running: run another once it ends. */
+    private val revokeAgain = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** Tests: runs after a pass's last check for new entries, before the pass lets go. */
+    @Volatile internal var afterRevocationPass: (() -> Unit)? = null
     internal suspend fun revokePending() {
-        // Do not queue foreground/configure passes behind slow network requests.
-        if (!revocationMutex.tryLock()) return
-        try { revokeAll() } finally { revocationMutex.unlock() }
+        // Do not queue foreground/configure passes behind slow network requests: a call while a
+        // pass runs is remembered, and the running pass runs again (same app session) when done.
+        // A re-run picks up sessions retired meanwhile; entries this call already tried wait for
+        // the next launch/foreground/configure, as before.
+        revokeAgain.set(true)
+        val attempted = HashSet<String>()
+        while (revokeAgain.get()) {
+            if (!revocationMutex.tryLock()) return
+            try {
+                while (revokeAgain.getAndSet(false)) revokeAll(attempted)
+                afterRevocationPass?.invoke()
+            } finally { revocationMutex.unlock() }
+        }
     }
     /** Waits for a running pass, then runs one (tests). */
     internal suspend fun drainRevocations() { revocationMutex.withLock { revokeAll() } }
     /** One attempt per entry; sessions retired while the pass runs are picked up before it ends. */
-    private suspend fun revokeAll() {
-        val attempted = HashSet<String>()
+    private suspend fun revokeAll(attempted: MutableSet<String> = HashSet()) {
         while (true) {
             val pending = synchronized(accountLock) { pendingItems() }.filter { (it["token"] as? String)?.let { t -> t !in attempted } == true }
             if (pending.isEmpty()) return
@@ -170,6 +183,8 @@ internal class SupportAPI(
                 if (!remove) { attempts++; remove = attempts >= 20 }
             }
             val move = synchronized(accountLock) {
+                // The current entry: a registerPushToken() since the pass started may have flagged it to move.
+                val current = pendingItems().firstOrNull { it["token"] == token } ?: original
                 val updated = pendingItems().mapNotNull { item ->
                     if (item["token"] != token) item else if (remove) null else item + mapOf("createdAt" to created, "attempts" to attempts)
                 }
@@ -179,16 +194,29 @@ internal class SupportAPI(
                 // Only after a real revocation (never a drop for age or attempts), only while the
                 // token is still this device's (a reset since then cleared it) and once no other
                 // old session waiting for revocation still holds it.
-                val push = original["push"] as? String
-                push.takeIf { revoked && original["move"] == true && it != null && store.pushToken == it &&
+                val push = current["push"] as? String
+                push.takeIf { revoked && current["move"] == true && it != null && store.pushToken == it &&
                     updated.none { other -> other["move"] == true && other["push"] == it } }
             }
             // Failure is swallowed: the app's next registerPushToken fixes it.
             if (move != null) runCatching { postPushToken(move) }
         }
     }
-    /** True while an old session waiting for revocation still holds [token] for a later move. */
-    private fun awaitingMove(token: String) = synchronized(accountLock) { pendingItems().any { it["move"] == true && it["push"] == token } }
+    /**
+     * When an old session waiting for revocation still holds [token] (flagged to move or not, e.g.
+     * after reset() or from an older SDK), flags it to move to the current session once that
+     * revocation succeeds, saves the token and returns true. False when no revocation holds it.
+     */
+    private fun holdForRevocation(token: String): Boolean = synchronized(accountLock) {
+        val items = pendingItems()
+        if (items.none { it["push"] == token }) return@synchronized false
+        val flag = mapOf("move" to true, "environment" to "production")
+        val updated = items.map { if (it["push"] == token) it + flag else it }
+        runCatching { store.pendingRevocations = JsonCodec.encode(mapOf("items" to updated)) }
+        for (i in deferredRevocations.indices) if (deferredRevocations[i]["push"] == token) deferredRevocations[i] = deferredRevocations[i] + flag
+        store.pushToken = token
+        true
+    }
     private val root = "/api/support/v1"
     private fun raw(method: String, path: String, body: Map<String, Any?>?, token: String?, epoch: Int = generation): Map<String, Any?> {
         check(epoch == generation) { "Support reset" }
@@ -262,10 +290,11 @@ internal class SupportAPI(
     suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), generation: Int = this.generation): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId), generation).obj("message"))
     /**
      * Registers the push token on the current session. While an old session that still holds
-     * this token waits for revocation, it is only saved: it moves once that revocation succeeds.
+     * this token waits for revocation (with or without the move flag), it is not posted now: that
+     * revocation is flagged to move it, and the token goes to the current session once it succeeds.
      */
     suspend fun register(token: String) {
-        if (awaitingMove(token)) { synchronized(accountLock) { store.pushToken = token }; resumeRevocations(); return }
+        if (holdForRevocation(token)) { resumeRevocations(); return }
         postPushToken(token)
     }
     private suspend fun postPushToken(token: String) { val epoch = generation; call("POST", "/push-token", mapOf("platform" to "android", "token" to token, "environment" to "production")); synchronized(accountLock) { check(epoch == generation); store.pushToken = token } }

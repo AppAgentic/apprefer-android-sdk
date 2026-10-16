@@ -1,6 +1,6 @@
-# AppRefer Android sample — SDK 0.9.2
+# AppRefer Android sample — SDK 0.9.3
 
-The sample uses the local `apprefer` and `apprefer-billing` modules at version 0.9.2.
+The sample uses the local `apprefer` and `apprefer-billing` modules at version 0.9.3.
 
 ```sh
 ./gradlew test :sample:assembleRelease

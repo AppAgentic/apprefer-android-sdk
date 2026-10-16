@@ -43,4 +43,13 @@ object AppReferInternal {
 
     /** Process-wide counter that advances on every [AppRefer.reset] (and nothing else). */
     fun accountEpoch(): Int = AppRefer.accountEpoch
+
+    /**
+     * AppRefer Billing's logIn/logOut set the user. [freshAnonymousId] is the anonymous id a
+     * logOut minted (null for a logIn): a later [AppRefer.reset] does not mark it as the previous
+     * account. [clearMarker] clears the persisted reset marker; it runs under the lock reset()'s
+     * marker write takes, and a reset() that started before this call writes no marker.
+     */
+    fun billingIdentitySet(freshAnonymousId: String?, clearMarker: () -> Unit) =
+        com.apprefer.sdk.internal.BillingResetMarker.identitySet(freshAnonymousId, clearMarker)
 }

@@ -148,6 +148,18 @@ internal class BillingStorage(
 
     val currentAppUserId: String @Synchronized get() = loggedInAppUserId ?: anonymousId()
 
+    /**
+     * The Billing app user id that was current when `AppRefer.reset()` last ran (written by the
+     * attribution module under [KEY_RESET_USER]), or null. While it equals the current user,
+     * that user gets no install device id, even after a relaunch. Throws if it can't be read.
+     */
+    @get:Synchronized
+    val resetUser: String? get() = store.getString(KEY_RESET_USER)
+
+    /** Forgets the reset() marker; returns whether that reached disk. */
+    @Synchronized
+    fun clearResetUser(): Boolean = store.getString(KEY_RESET_USER) == null || store.putString(KEY_RESET_USER, null)
+
     // endregion
 
     // region Account tokens (Google obfuscatedAccountId per app user)
@@ -422,6 +434,8 @@ internal class BillingStorage(
 
         private const val KEY_ANONYMOUS_ID = "apprefer_billing_anonymous_id"
         private const val KEY_APP_USER_ID = "apprefer_billing_app_user_id"
+        /** Same key the attribution module writes on `AppRefer.reset()`. */
+        const val KEY_RESET_USER = "apprefer_billing_reset_user"
         private const val KEY_ACCOUNT_TOKENS = "apprefer_billing_account_tokens"
         private const val KEY_PENDING_ATTRIBUTES = "apprefer_billing_pending_attributes"
         private const val KEY_LEARNED_ENTITLEMENTS = "apprefer_billing_learned_entitlements"

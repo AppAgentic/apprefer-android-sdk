@@ -2,6 +2,7 @@ package com.apprefer.sdk
 
 import android.content.Context
 import com.apprefer.sdk.internal.AppReferStorage
+import com.apprefer.sdk.internal.BillingResetMarker
 import com.apprefer.sdk.internal.DeviceIdManager
 import com.apprefer.sdk.internal.DeviceInfo
 import com.apprefer.sdk.internal.GaidCollector
@@ -160,6 +161,8 @@ object AppRefer {
 
     @JvmOverloads suspend fun reset(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
         safelyRun {
+            // Billing logIn/logOut from here on win over this reset's marker write.
+            val billingIdentity = BillingResetMarker.generation()
             synchronized(this@AppRefer) { generation++; accountEpoch++; stoppedByReset = true }
             scope.coroutineContext.cancelChildren()
             state?.http?.cancel()
@@ -170,6 +173,8 @@ object AppRefer {
             }
             eventQueue?.clear()
             c?.let { AppReferStorage(it).apply { clearUser(); clearEventQuarantine() } }
+            // Persisted so Billing keeps the previous account unlinked across a relaunch too.
+            c?.let { BillingResetMarker.mark(it, billingIdentity) }
             support.reset(c)
         }
     }
