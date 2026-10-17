@@ -1,3 +1,7 @@
+## 0.10.1 (unreleased)
+
+- Version 0.10.1, for parity with the iOS, Flutter and React Native SDKs (iOS Support push now reads the APNs environment from the app's signing). No Android behaviour change: FCM has no sandbox/production split.
+
 ## 0.10.0 (unreleased)
 
 - Help centre in the Support chat. With published articles, the help home shows a "Help articles" card (search entry, top three, "See all"); a help centre screen lists every article by category with search (instant local filter, then the server's search 300 ms after the last keystroke); an article reader renders markdown with a small pure-Kotlin parser (`SupportMarkdown`: headings, setext headings, ordered/unordered/nested/task lists, quotes, fenced code, rules, https images; inline bold, italic, code, strikethrough, links) turned into Android spans. HTML is stripped (script/style with their content) and links keep only http(s) and mailto, opened with `ACTION_VIEW`. "Still need help? Message us" returns to the message field with the article's title as the subject. No articles: no section. Concierge design, 35 languages, RTL. The help screen on show (and the search) survives Activity recreation.
