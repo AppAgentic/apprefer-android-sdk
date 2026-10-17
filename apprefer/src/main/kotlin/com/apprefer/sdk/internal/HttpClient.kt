@@ -54,7 +54,10 @@ internal class HttpClient(
             connection.setRequestProperty("X-AppRefer-Key", apiKey)
             connection.setRequestProperty("X-SDK-Version", APPREFER_SDK_VERSION)
             connection.setRequestProperty("Content-Type", "application/json")
-            connection.outputStream.use { it.write(JsonCodec.encode(body).toByteArray(StandardCharsets.UTF_8)) }
+            // The engagement stamp never leaves the device; the credential goes only while it is current.
+            val stamp = body[com.apprefer.sdk.AppRefer.ENGAGEMENT_STAMP] as? String
+            com.apprefer.sdk.engagement.AppReferEngagement.headerFor(stamp)?.let { connection.setRequestProperty("X-AppRefer-Install", it) }
+            connection.outputStream.use { it.write(JsonCodec.encode(body - com.apprefer.sdk.AppRefer.ENGAGEMENT_STAMP).toByteArray(StandardCharsets.UTF_8)) }
             val status = connection.responseCode
             val header = connection.getHeaderField("Retry-After")
             EventResponse(if (epoch == eventGeneration) status else null, retryAfter(header))

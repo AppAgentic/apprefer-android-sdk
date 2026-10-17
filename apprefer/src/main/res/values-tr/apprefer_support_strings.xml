@@ -204,4 +204,18 @@
     <string name="apprefer_support_status_sent_notice_in_app">Gönderildi: {time} · ekibin yanıtı burada görünecek</string>
     <!-- support.status.sentNoticeInAppNoTime: Like 'support.status.sentNoticeInApp' when the time is unknown. -->
     <string name="apprefer_support_status_sent_notice_in_app_no_time">Gönderildi · ekibin yanıtı burada görünecek</string>
+    <!-- engagement.action.open: Notification button that opens the app on the notification's screen. One word, very short. -->
+    <string name="apprefer_engagement_action_open">Aç</string>
+    <!-- engagement.action.view: Notification button to look at something in the app. One word, very short. -->
+    <string name="apprefer_engagement_action_view">Görüntüle</string>
+    <!-- engagement.action.start: Notification button to begin an activity in the app (a lesson, a workout, a setup step). One word, very short. -->
+    <string name="apprefer_engagement_action_start">Başla</string>
+    <!-- engagement.action.snooze: Notification button that hides the notification and shows it again later. Short. -->
+    <string name="apprefer_engagement_action_snooze">Daha sonra hatırlat</string>
+    <!-- engagement.channel.marketing: Android notification category name (Settings › Notifications) for the app's offers and news. -->
+    <string name="apprefer_engagement_channel_marketing">Fırsatlar ve haberler</string>
+    <!-- engagement.channel.reminders: Android notification category name for reminders the user chose to receive. -->
+    <string name="apprefer_engagement_channel_reminders">Hatırlatıcılar</string>
+    <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
+    <string name="apprefer_engagement_channel_service">Hesap ve faturalandırma</string>
 </resources>

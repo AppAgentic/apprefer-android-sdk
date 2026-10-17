@@ -1,5 +1,36 @@
 # AppRefer Android SDK
 
+## 0.11.0 (unreleased): lifecycle notifications (engagement)
+
+**Not generally available.** AppRefer turns lifecycle engagement on per app; until then every engagement call answers "disabled" quietly and nothing is stored. The server side is dry-run only in this release: no notification is sent to anyone yet. This version is the client contract (wire schema 1) the live sender will use.
+
+Rules the SDK follows: nothing is registered until your app calls `start`; nothing asks for notification permission or tracking consent; the install secret lives only in secure storage (iOS Keychain / Android Keystore); an account is bound only with an assertion your backend gets from AppRefer (`POST /api/v1/apps/{appId}/engagement/assertions`, `engagement:identity` key), never a plain user id; Support sessions, tokens and `support_reply` pushes never enroll anyone, and Support's handlers ignore engagement pushes; a notification for another install or account, an expired one, or one that fails validation never navigates; each outcome (received, opened, button, snoozed, dismissed) is delivered once, and navigation waits for `setNavigationReady(true)`; a snooze is never a completion; receipts carry the message's own proof and are dropped after any account change; destinations are in-app paths your app maps to screens, never URLs the SDK opens.
+
+```kotlin
+AppRefer.engagement.start(context, options = AppReferEngagementOptions(
+    trackedEvents = setOf("setup_started", "setup_completed"),
+    allowedImageHosts = setOf("assets.example.com"),
+    smallIcon = R.drawable.ic_stat_notify))                  // monochrome; default: app icon
+
+// Your FirebaseMessagingService (AppRefer adds no Firebase dependency):
+override fun onMessageReceived(message: RemoteMessage) {
+    if (AppRefer.engagement.handleMessage(this, message.data)) return
+    if (AppRefer.support.handleNotification(message.data)) return
+    // your own messages
+}
+override fun onNewToken(token: String) { scope.launch { AppRefer.engagement.setPushToken(token) } }
+
+// Launch activity: onCreate and onNewIntent
+AppRefer.engagement.handleIntent(this, intent)
+AppRefer.engagement.onNotificationEvent = { e -> if (e.isNavigation) router.open(e.destination) }
+AppRefer.engagement.setNavigationReady(true)
+
+// After sign-in, with an assertion from your backend:
+AppRefer.engagement.identify(assertion)
+```
+
+Declare `android.permission.POST_NOTIFICATIONS` and ask for it yourself on Android 13+; then call `refreshDeviceState()`. AppRefer sends data-only FCM messages and renders them itself (channels "Offers and news", "Reminders", "Account and billing" in the app's language). FCM limits apply honestly: delivery to a force-stopped app doesn't happen, normal-priority data messages can wait for Doze windows, and `onMessageReceived` has about 20 s (the image download is capped at 8 s, `imageTimeoutMs`). Taps open your launch activity; only intents carrying a nonce the SDK recorded are accepted.
+
 ## 0.10.0 (unreleased): help centre in the chat; the help chat speaks 35 languages
 
 **Help centre.** When your app has published help articles in AppRefer, the help home

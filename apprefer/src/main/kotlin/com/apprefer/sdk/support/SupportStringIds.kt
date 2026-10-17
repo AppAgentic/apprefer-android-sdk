@@ -112,6 +112,13 @@ internal object SupportStringIds {
             "support.status.sentNoticeEmailNoTime" to R.string.apprefer_support_status_sent_notice_email_no_time,
             "support.status.sentNoticeInApp" to R.string.apprefer_support_status_sent_notice_in_app,
             "support.status.sentNoticeInAppNoTime" to R.string.apprefer_support_status_sent_notice_in_app_no_time,
+            "engagement.action.open" to R.string.apprefer_engagement_action_open,
+            "engagement.action.view" to R.string.apprefer_engagement_action_view,
+            "engagement.action.start" to R.string.apprefer_engagement_action_start,
+            "engagement.action.snooze" to R.string.apprefer_engagement_action_snooze,
+            "engagement.channel.marketing" to R.string.apprefer_engagement_channel_marketing,
+            "engagement.channel.reminders" to R.string.apprefer_engagement_channel_reminders,
+            "engagement.channel.service" to R.string.apprefer_engagement_channel_service,
         )
     }
 

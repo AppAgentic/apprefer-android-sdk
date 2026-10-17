@@ -205,4 +205,18 @@
     <string name="apprefer_support_status_sent_notice_in_app">Enviat a les {time} · la resposta de l’equip apareixerà aquí</string>
     <!-- support.status.sentNoticeInAppNoTime: Like 'support.status.sentNoticeInApp' when the time is unknown. -->
     <string name="apprefer_support_status_sent_notice_in_app_no_time">Enviat · la resposta de l’equip apareixerà aquí</string>
+    <!-- engagement.action.open: Notification button that opens the app on the notification's screen. One word, very short. -->
+    <string name="apprefer_engagement_action_open">Obre</string>
+    <!-- engagement.action.view: Notification button to look at something in the app. One word, very short. -->
+    <string name="apprefer_engagement_action_view">Mostra</string>
+    <!-- engagement.action.start: Notification button to begin an activity in the app (a lesson, a workout, a setup step). One word, very short. -->
+    <string name="apprefer_engagement_action_start">Comença</string>
+    <!-- engagement.action.snooze: Notification button that hides the notification and shows it again later. Short. -->
+    <string name="apprefer_engagement_action_snooze">Recorda-m’ho més tard</string>
+    <!-- engagement.channel.marketing: Android notification category name (Settings › Notifications) for the app's offers and news. -->
+    <string name="apprefer_engagement_channel_marketing">Ofertes i novetats</string>
+    <!-- engagement.channel.reminders: Android notification category name for reminders the user chose to receive. -->
+    <string name="apprefer_engagement_channel_reminders">Recordatoris</string>
+    <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
+    <string name="apprefer_engagement_channel_service">Compte i facturació</string>
 </resources>

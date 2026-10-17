@@ -1,3 +1,12 @@
+## 0.11.0 (unreleased)
+
+- Lifecycle engagement client: `AppRefer.engagement` (`start`, `setPushToken`, `refreshDeviceState`, `notificationPermission`, `channelEnabled`, `preferences`/`setPreferences`, `identify(assertion)`, `logout`, `deleteInstall`, `handleMessage(context, data)` for your FirebaseMessagingService, `handleIntent(context, intent)` for your launch activity, `onNotificationEvent`, `setNavigationReady`). Off unless the app starts it and AppRefer enabled it for the app (dry run on the server in this release).
+- The SDK renders AppRefer's FCM data messages itself with platform APIs (no Firebase or AndroidX dependency): one channel per purpose (names in 35 languages), BigText or a BigPicture image from allowlisted HTTPS hosts (no redirects, PNG/JPEG checked against the bytes, size/time/pixel limits, text on any failure), up to two buttons, explicit immutable PendingIntents with a random per-notification nonce (forged intents open nothing), snooze through an inexact alarm, time-out at expiry. Nothing is shown, or reported as received, for another install or account, when expired, when the purpose channel is off, or without notification permission. API 21+ guards; Android 13 permission and channel readback; no permission is requested.
+- Install credential encrypted with an Android Keystore key in no-backup storage (RSA-wrapped on API 21–22).
+- Product events carry `X-AppRefer-Install` only as described for iOS; `AppRefer.reset()` logs engagement out.
+- New strings `engagement.action.*`, `engagement.channel.*` in all 35 languages. Manifest adds a non-exported receiver.
+- Version 0.11.0.
+
 ## 0.10.1 (unreleased)
 
 - Version 0.10.1, for parity with the iOS, Flutter and React Native SDKs (iOS Support push now reads the APNs environment from the app's signing). No Android behaviour change: FCM has no sandbox/production split.
