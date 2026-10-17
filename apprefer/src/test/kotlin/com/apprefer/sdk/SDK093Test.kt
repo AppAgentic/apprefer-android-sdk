@@ -189,5 +189,5 @@ class SDK093Test {
 
     // endregion
 
-    @Test fun versionIs093() { assertEquals("0.9.3", APPREFER_SDK_VERSION) }
+    @Test fun versionIs0100() { assertEquals("0.10.0", APPREFER_SDK_VERSION) }
 }

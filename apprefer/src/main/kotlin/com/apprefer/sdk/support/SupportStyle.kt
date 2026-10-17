@@ -89,22 +89,28 @@ internal object SupportText {
     /** Two-letter tile text for apps without a usable launcher icon. */
     fun initials(appName: String): String = appName.trim().take(2).uppercase().ifEmpty { "?" }
 
-    fun greeting(name: String?): String = firstName(name)?.let { "Hi $it 👋" } ?: "Hi there 👋"
+    fun greeting(name: String?): String =
+        firstName(name)?.let { SupportStrings.text("support.home.greeting.named", "name" to it) } ?: SupportStrings.text("support.home.greeting")
 
     fun presence(teamNames: List<String>, replyTime: String, persona: String? = null): String {
         val first = teamNames.firstOrNull()
         if (persona != null) {
-            return if (first == null) "$persona replies instantly · the team in $replyTime"
-            else "$persona replies instantly · $first and the team in $replyTime"
+            return if (first == null) SupportStrings.text("support.presence.persona", "persona" to persona, "time" to replyTime)
+            else SupportStrings.text("support.presence.personaWithTeam", "persona" to persona, "name" to first, "time" to replyTime)
         }
-        first ?: return "We usually reply in $replyTime"
-        return if (teamNames.size == 1) "$first · usually replies in $replyTime" else "$first and the team · usually $replyTime"
+        first ?: return SupportStrings.text("support.presence.team", "time" to replyTime)
+        return if (teamNames.size == 1) SupportStrings.text("support.presence.one", "name" to first, "time" to replyTime)
+        else SupportStrings.text("support.presence.many", "name" to first, "time" to replyTime)
     }
 
     /** The home field's hint: the picked topic's question, else the AI assistant's name. */
-    fun homeHint(topicPrompt: String?, persona: String?): String = topicPrompt ?: persona?.let { "Message $it…" } ?: "Ask us anything…"
+    fun homeHint(topicPrompt: String?, persona: String?): String = topicPrompt
+        ?: persona?.let { SupportStrings.text("support.composer.placeholder.persona", "name" to it) }
+        ?: SupportStrings.text("support.composer.placeholder.home")
 
-    fun handoff(to: String?, replyTime: String): String = "Passed to ${to ?: "the team"} · usually replies in $replyTime"
+    fun handoff(to: String?, replyTime: String): String =
+        if (to != null) SupportStrings.text("support.thread.handoff.person", "name" to to, "time" to replyTime)
+        else SupportStrings.text("support.thread.handoff.team", "time" to replyTime)
 }
 
 /** Quick-reply chips follow an answer, but not a hand-over: the customer is waiting for a person, not done. */

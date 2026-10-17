@@ -3,9 +3,15 @@ package com.apprefer.sdk.support
 import com.apprefer.sdk.internal.JsonCodec
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 class SupportPersonaTest {
+    // English text comes from the generated string resources.
+    @Before fun strings() = SupportStringsFixture.install()
+    @After fun resetStrings() = SupportStringsFixture.uninstall()
+
     private fun api(vararg bodies: String): SupportAPI {
         val replies = java.util.ArrayDeque(bodies.toList())
         val store = object : SupportStore { override var token: String? = "s1"; override var profile: String? = "{}" }

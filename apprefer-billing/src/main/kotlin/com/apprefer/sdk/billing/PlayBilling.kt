@@ -239,7 +239,8 @@ internal class LivePlayBillingGateway(private val context: Context, private val 
                 lastError = result.billingResult
                 continue
             }
-            result.productDetailsList.orEmpty().forEach { found.putIfAbsent(it.productId, it) }
+            // Not Map.putIfAbsent(): that is API 24+, and billing supports API 23.
+            result.productDetailsList.orEmpty().forEach { if (it.productId !in found) found[it.productId] = it }
         }
         if (found.isEmpty() && lastError != null) {
             throw AppReferBillingException.Store(lastError.responseCode, lastError.debugMessage)

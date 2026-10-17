@@ -31,8 +31,9 @@ internal class HttpClient(
     private val transport: (suspend (String, String, ByteArray) -> Map<String, Any?>?)? = null,
 ) {
 
-    private val connections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
-    private val eventConnections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    // Not ConcurrentHashMap.newKeySet(): that is API 24+, and the SDK supports API 21.
+    private val connections: MutableSet<HttpURLConnection> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<HttpURLConnection, Boolean>())
+    private val eventConnections: MutableSet<HttpURLConnection> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<HttpURLConnection, Boolean>())
     @Volatile private var eventGeneration = 0
     fun cancelEvents() { eventGeneration++; eventConnections.forEach { it.disconnect() }; eventConnections.clear() }
     @Volatile private var generation = 0

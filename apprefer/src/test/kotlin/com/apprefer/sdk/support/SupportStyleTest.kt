@@ -2,9 +2,15 @@ package com.apprefer.sdk.support
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 class SupportStyleTest {
+    // English text comes from the generated string resources.
+    @Before fun strings() = SupportStringsFixture.install()
+    @After fun resetStrings() = SupportStringsFixture.uninstall()
+
     private val white = 0xFFFFFFFF.toInt()
     private val nearBlack = 0xFF141414.toInt()
 
