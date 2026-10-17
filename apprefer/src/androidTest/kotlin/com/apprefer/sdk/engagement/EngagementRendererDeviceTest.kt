@@ -51,7 +51,91 @@ class EngagementRendererDeviceTest {
         EngagementRenderer.configure(context, android.R.drawable.ic_dialog_info, setOf("assets.example.com"), labels, channels, null)
         EngagementRenderer.setIdentity(context, iid, 2)
     }
-    @After fun tearDown() { nm.cancelAll() }
+    @After fun tearDown() {
+        nm.cancelAll()
+        EngagementRenderer.afterDownloadForTesting = null
+        EngagementRenderer.clockOffsetForTesting = 0
+        EngagementRenderer.permissionForTesting = null
+        EngagementRenderer.channelEnabledForTesting = null
+    }
+
+    // --- Review fixes: everything is re-checked after the (possibly 8 s) image step, under the identity lock.
+
+    private fun lateChange(change: () -> Unit): EngagementRenderer.Result {
+        // Runs on another thread while handleMessage is past its first check and the download,
+        // and before its final check: the slow-download window, made deterministic.
+        EngagementRenderer.afterDownloadForTesting = Runnable { val t = Thread { change() }; t.start(); t.join() }
+        return EngagementRenderer.handleMessage(context, payload(mapOf("img" to "https://assets.example.com/push/v1/hero.png")), System.currentTimeMillis(), 300, 300_000)
+    }
+
+    private fun assertNothingShownOrReceived(result: EngagementRenderer.Result) {
+        assertEquals(EngagementRenderer.Result.IGNORED, result)
+        Thread.sleep(300)
+        assertTrue(ours().isEmpty())
+        assertTrue("nothing reported as received", EngagementRenderer.takeEvents(context).isEmpty())
+        assertTrue(EngagementRenderer.recordNonces(context).isEmpty())
+    }
+
+    @Test fun aSignOutDuringTheDownloadPostsNothing() {
+        assertNothingShownOrReceived(lateChange { EngagementRenderer.clearForAccountChange(context) })
+    }
+
+    @Test fun anAccountSwitchDuringTheDownloadPostsNothing() {
+        assertNothingShownOrReceived(lateChange { EngagementRenderer.setIdentity(context, iid, 3) })
+        EngagementRenderer.setIdentity(context, iid, 2)
+        assertNothingShownOrReceived(lateChange { EngagementRenderer.setIdentity(context, "ei_" + "b".repeat(26), 0) })
+    }
+
+    @Test fun expiryDuringTheDownloadUsesTheRealClock() {
+        assertNothingShownOrReceived(lateChange { EngagementRenderer.clockOffsetForTesting = 3_600_000 })
+    }
+
+    @Test fun permissionOrChannelTurnedOffDuringTheDownloadPostsNothing() {
+        assertNothingShownOrReceived(lateChange { EngagementRenderer.permissionForTesting = "denied" })
+        EngagementRenderer.permissionForTesting = null
+        assertNothingShownOrReceived(lateChange { EngagementRenderer.channelEnabledForTesting = false })
+    }
+
+    @Test fun anIdentityChangeAfterPostingCancelsOnlyAppReferNotifications() {
+        val host = Notification.Builder(context, "apprefer_reminders").setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Host").build()
+        nm.notify("host.own", 1, host)
+        EngagementRenderer.handleMessage(context, payload(), System.currentTimeMillis(), 2000, 300_000)
+        EngagementRenderer.handleMessage(context, payload(mapOf("mid" to "sparkly_live_j_b_nudge", "ck" to null)), System.currentTimeMillis(), 2000, 300_000)
+        assertTrue(waitFor { ours().size == 2 })
+        // A posted A notification is withdrawn when B (or anonymous) takes over, so its tap or snooze can't act for B.
+        EngagementRenderer.setIdentity(context, iid, 3)
+        assertTrue(waitFor { ours().isEmpty() })
+        assertTrue(EngagementRenderer.recordNonces(context).isEmpty())
+        assertTrue("the app's own notification stays", nm.activeNotifications.any { it.tag == "host.own" })
+        // Going offline (identity unknown) or mid change cancels nothing; the same identity back cancels nothing.
+        EngagementRenderer.handleMessage(context, payload(mapOf("epoch" to 3)), System.currentTimeMillis(), 2000, 300_000)
+        assertTrue(waitFor { ours().size == 1 })
+        EngagementRenderer.setIdentity(context, null, -1)
+        EngagementRenderer.setIdentity(context, iid, -1)
+        EngagementRenderer.setIdentity(context, iid, 3)
+        Thread.sleep(300)
+        assertEquals(1, ours().size)
+        EngagementRenderer.clearForAccountChange(context)
+        assertTrue(waitFor { ours().isEmpty() })
+    }
+
+    @Test fun expiredTapsButtonsSnoozesAndDismissalsDoNothing() {
+        val exp = System.currentTimeMillis() + 120_000
+        EngagementRenderer.handleMessage(context, payload(mapOf("exp" to exp)), System.currentTimeMillis(), 2000, 300_000)
+        EngagementRenderer.takeEvents(context)
+        val nonce = EngagementRenderer.recordNonces(context).single()
+        val later = exp + 1
+        // Android 7.1 and older keep an expired notification (no time-out): a tap is AppRefer's but opens nothing.
+        assertTrue(EngagementRenderer.handleIntent(context, Intent().putExtra(EngagementRenderer.EXTRA_NONCE, nonce), later))
+        assertTrue(EngagementRenderer.handleIntent(context, Intent().putExtra(EngagementRenderer.EXTRA_NONCE, nonce).putExtra(EngagementRenderer.EXTRA_ACTION, "start"), later))
+        EngagementRenderer.onReceive(context, Intent(EngagementRenderer.ACTION_SNOOZE).putExtra(EngagementRenderer.EXTRA_NONCE, nonce).putExtra(EngagementRenderer.EXTRA_ACTION, "later"), later)
+        EngagementRenderer.onReceive(context, Intent(EngagementRenderer.ACTION_DISMISS).putExtra(EngagementRenderer.EXTRA_NONCE, nonce), later)
+        EngagementRenderer.onReceive(context, Intent(EngagementRenderer.ACTION_SHOW).putExtra(EngagementRenderer.EXTRA_NONCE, nonce), later)
+        assertTrue(EngagementRenderer.takeEvents(context).isEmpty())
+        // The same tap while valid is accepted (the check is the clock, not the record).
+        assertTrue(EngagementRenderer.handleIntent(context, Intent().putExtra(EngagementRenderer.EXTRA_NONCE, nonce), exp - 1))
+        assertEquals(listOf("opened"), EngagementRenderer.takeEvents(context).map { it.getString("kind") })
+    }
 
     private fun waitFor(condition: () -> Boolean): Boolean {
         repeat(40) { if (condition()) return true; Thread.sleep(100) }

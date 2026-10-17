@@ -46,7 +46,12 @@ class EngagementClientTest {
             val id = cred.substringBefore("."); val inst = installs[id]
             if (inst == null || inst.secret != cred.substringAfter(".") || inst.key != key) return err(401, "INVALID_INSTALL")
             fun me() = mapOf<String, Any?>("install" to mapOf("installId" to id, "accountEpoch" to inst.epoch))
-            fun prefs() = mapOf<String, Any?>("purposes" to inst.prefs.mapValues { mapOf("granted" to it.value) })
+            fun prefs() = mapOf<String, Any?>("purposes" to inst.prefs.mapValues { mapOf("granted" to it.value) }, "accountEpoch" to inst.epoch)
+            // Identity mutations must state the epoch they were made under (web/lib/engagement/identity.ts).
+            val mutation = "$method $path" in setOf("PUT /api/engagement/v1/installs/me/preferences", "POST /api/engagement/v1/installs/me/logout", "POST /api/engagement/v1/installs/me/account")
+            val expected = (body["expectedEpoch"] as? Number)?.toInt()
+            if (mutation && expected == null) return err(400, "INVALID_BODY")
+            val stale = err(409, "IDENTITY_CHANGED")
             return when ("$method $path") {
                 "GET /api/engagement/v1/installs/me" -> 200 to me()
                 "PATCH /api/engagement/v1/installs/me" -> { inst.patches.add(body); 200 to me() }
@@ -55,12 +60,13 @@ class EngagementClientTest {
                     val a = body["assertion"] as? String
                     if (a == null || !a.startsWith("ok:")) return err(401, "INVALID_ASSERTION")
                     val user = a.removePrefix("ok:")
+                    if (inst.account != user && expected != inst.epoch) return stale
                     if (inst.account != user) { inst.account = user; inst.epoch++; inst.prefs["marketing"] = false; inst.prefs["reminders"] = false }
                     200 to mapOf("accountEpoch" to inst.epoch)
                 }
-                "POST /api/engagement/v1/installs/me/logout" -> { inst.account = null; inst.epoch++; inst.prefs["marketing"] = false; inst.prefs["reminders"] = false; 200 to mapOf("accountEpoch" to inst.epoch) }
+                "POST /api/engagement/v1/installs/me/logout" -> { if (expected != inst.epoch) return stale; inst.account = null; inst.epoch++; inst.prefs["marketing"] = false; inst.prefs["reminders"] = false; 200 to mapOf("accountEpoch" to inst.epoch) }
                 "GET /api/engagement/v1/installs/me/preferences" -> 200 to prefs()
-                "PUT /api/engagement/v1/installs/me/preferences" -> { body.forEach { (k, v) -> if (v is Boolean) inst.prefs[k] = v }; 200 to prefs() }
+                "PUT /api/engagement/v1/installs/me/preferences" -> { if (expected != inst.epoch) return stale; body.forEach { (k, v) -> if (v is Boolean) inst.prefs[k] = v }; 200 to prefs() }
                 "POST /api/engagement/v1/installs/me/receipts" -> {
                     @Suppress("UNCHECKED_CAST") val items = body["receipts"] as List<Map<String, Any?>>
                     200 to mapOf("results" to items.map { mapOf("messageId" to it["messageId"], "status" to receiptStatus) })
@@ -69,6 +75,8 @@ class EngagementClientTest {
             }
         }
         fun count(method: String, path: String) = calls.count { it.method == method && it.path == path }
+        /** The app's backend binds (null: detaches) directly; the SDK isn't told. */
+        fun backendBind(id: String, account: String?) { installs[id]!!.apply { this.account = account; epoch++; prefs["marketing"] = false; prefs["reminders"] = false } }
     }
 
     internal class MemPrefs : EngagementPrefs {
@@ -271,6 +279,108 @@ class EngagementClientTest {
         val fresh = id(client().start(key, true, AppReferEngagementOptions()))!!
         assertNull(server.installs[installId])
         assertNotEquals(installId, fresh)
+    }
+
+    // --- Review fixes: cold restarts and explicit epochs
+
+    @Test fun aColdRestartAfterABackendChangeNeverReusesTheOldStamp() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        c.identify("ok:user-a")
+        val underA = c.snapshot.get()!!
+        server.backendBind(installId, "user-b") // while the app isn't running
+        val restarted = client().also { it.start(key, true, AppReferEngagementOptions()) }
+        val underB = restarted.snapshot.get()!!
+        assertEquals(2, underB.accountEpoch)
+        assertTrue("the persisted epoch shows the change", underB.serial > underA.serial)
+        assertNotEquals(underA.stamp, underB.stamp)
+        server.backendBind(installId, null) // to anonymous
+        val again = client().also { it.start(key, true, AppReferEngagementOptions()) }
+        assertTrue(again.snapshot.get()!!.serial > underB.serial)
+        assertNotEquals(underB.stamp, again.snapshot.get()!!.stamp)
+        val same = client().also { it.start(key, true, AppReferEngagementOptions()) }
+        assertEquals("nothing changed: same stamp", again.snapshot.get()!!.stamp, same.snapshot.get()!!.stamp)
+        server.installs.remove(installId) // erased: replaced
+        val replaced = client().also { it.start(key, true, AppReferEngagementOptions()) }
+        assertNotEquals(installId, replaced.snapshot.get()!!.installId)
+        assertNotEquals(same.snapshot.get()!!.stamp, replaced.snapshot.get()!!.stamp)
+    }
+
+    @Test fun preferencesStateTheirEpochAndAreRefusedForTheNextAccount() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        c.identify("ok:user-a")
+        c.preferences()
+        server.backendBind(installId, "user-b")
+        try { c.setPreferences(mapOf("marketing" to true)); fail() } catch (e: AppReferEngagementException) { assertEquals(AppReferEngagementException.Reason.IDENTITY_CHANGED, e.reason) }
+        assertEquals(1, server.calls.last { it.method == "PUT" }.body!!["expectedEpoch"])
+        assertEquals("A's cached choice never reaches B", false, server.installs[installId]!!.prefs["marketing"])
+        c.setPreferences(mapOf("marketing" to true))
+        assertEquals(2, server.calls.last { it.method == "PUT" }.body!!["expectedEpoch"])
+        assertEquals(true, server.installs[installId]!!.prefs["marketing"])
+    }
+
+    @Test fun readingPreferencesLearnsTheirEpoch() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        val before = c.snapshot.get()!!.serial
+        server.backendBind(installId, "user-b")
+        c.preferences()
+        assertEquals(1, c.snapshot.get()!!.accountEpoch)
+        assertTrue(c.snapshot.get()!!.serial > before)
+    }
+
+    @Test fun aStaleLogoutNeverDetachesTheNextAccount() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        c.identify("ok:user-a")
+        server.offline = true
+        c.logout() // saved for epoch 1
+        server.offline = false
+        server.backendBind(installId, "user-b")
+        client().start(key, true, AppReferEngagementOptions())
+        assertEquals(1, server.calls.last { it.path.endsWith("/logout") }.body!!["expectedEpoch"])
+        assertEquals("refused (409): B stays bound", "user-b", server.installs[installId]!!.account)
+        assertFalse("settled, not retried forever", client().stateForTesting().third)
+    }
+
+    @Test fun aSignInStartedUnderAnOldIdentityDoesNotReplaceTheNewOne() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        server.backendBind(installId, "user-b")
+        try { c.identify("ok:user-a"); fail() } catch (e: AppReferEngagementException) { assertEquals(AppReferEngagementException.Reason.IDENTITY_CHANGED, e.reason) }
+        assertEquals(0, server.calls.last { it.path.endsWith("/account") }.body!!["expectedEpoch"])
+        assertEquals("user-b", server.installs[installId]!!.account)
+        assertEquals(1, c.snapshot.get()!!.accountEpoch)
+    }
+
+    @Test fun queuedEventsCarryTheEpochTheyWereQueuedUnder() = runBlocking {
+        val c = client()
+        c.start(key, true, AppReferEngagementOptions())
+        AppReferEngagement.client = c
+        try {
+            val stamp = AppReferEngagement.eventStamp("setup_started", key)!!
+            assertEquals(mapOf("X-AppRefer-Install" to c.snapshot.get()!!.header, "X-AppRefer-Install-Epoch" to "0"), AppReferEngagement.headersFor(stamp))
+            c.identify("ok:user-a")
+            assertNull("another identity: the queued event goes without it", AppReferEngagement.headersFor(stamp))
+            val snap = c.snapshot.get()!!
+            assertNotEquals("same serial, another epoch is another stamp", snap.stamp, snap.copy(accountEpoch = 9).stamp)
+        } finally { AppReferEngagement.client = null }
+    }
+
+    @Test fun deferredEventsRecheckTheRealClockAndIdentity() {
+        val now = System.currentTimeMillis()
+        val snap = EngagementSnapshot("s", "ei_" + "a".repeat(26), 2, 1, "h", null)
+        fun raw(exp: Long, epoch: Int = 2) = org.json.JSONObject().put("expiresAt", exp).put("installId", snap.installId).put("accountEpoch", epoch)
+        val open = AppReferEngagementNotificationEvent(AppReferEngagementNotificationEvent.Kind.OPENED, "m", "reminders", "/x", null, null)
+        val dismissed = open.copy(kind = AppReferEngagementNotificationEvent.Kind.DISMISSED, destination = null)
+        assertTrue(AppReferEngagement.stillDeliverable(open, raw(now + 1000), snap, now))
+        assertFalse("tapped while valid, expired while waiting", AppReferEngagement.stillDeliverable(open, raw(now + 1000), snap, now + 1000))
+        assertFalse(AppReferEngagement.stillDeliverable(dismissed, raw(now + 1000), snap, now + 2000))
+        assertFalse("no expiry recorded: never trusted", AppReferEngagement.stillDeliverable(open, org.json.JSONObject().put("installId", snap.installId).put("accountEpoch", 2), snap, now))
+        assertFalse(AppReferEngagement.stillDeliverable(open, raw(now + 1000, epoch = 1), snap, now))
+        assertTrue(AppReferEngagement.stillDeliverable(dismissed, raw(now + 1000, epoch = 1), snap, now))
+        assertFalse(AppReferEngagement.stillDeliverable(open, raw(now + 1000), null, now))
     }
 
     @Test fun aBackendSideAccountChangeMovesTheSerial() = runBlocking {

@@ -24,8 +24,13 @@ internal data class EngagementSnapshot(
     val header: String,
     val trackedEvents: Set<String>?,
 ) {
-    /** Queued events carry this and get the header only while it is current. */
-    val stamp: String get() = "$slot:$installId:$serial"
+    /**
+     * Queued events carry this and get the header only while it is current. The epoch is part of
+     * it (and is sent as `X-AppRefer-Install-Epoch`), so an event queued under one account never
+     * matches after a cold start that learned another, and the server refuses it if the install
+     * moved on before the SDK knew.
+     */
+    val stamp: String get() = "$slot:$installId:$serial:${accountEpoch ?: "-"}"
 }
 
 internal data class EngagementDeviceState(val timezone: String, val locale: String?, val collectionEnabled: Boolean, val permission: String)
@@ -73,7 +78,16 @@ internal class EngagementClient(
     private var started = false
     private var options = AppReferEngagementOptions()
     private var credential: Credential? = null
+    /** Persisted with the install id whenever known, so a cold start sees an epoch the server moved meanwhile. */
     private var accountEpoch: Int? = null
+        set(v) { field = v; val c = credential; if (v != null && c != null) prefs.putString(key("epoch"), "${c.installId}:$v") }
+    private val knownEpoch: Int?
+        get() {
+            accountEpoch?.let { return it }
+            val c = credential ?: return null
+            val parts = prefs.getString(key("epoch"))?.split(":") ?: return null
+            return if (parts.size == 2 && parts[0] == c.installId) parts[1].toIntOrNull() else null
+        }
     private var pushToken: String? = null
     @Volatile private var generation = 0
     private var registrationRetried = false
@@ -95,7 +109,11 @@ internal class EngagementClient(
         set(v) = prefs.putString(key("serial"), v.toString())
     private var pendingLogout: Boolean
         get() = prefs.getString(key("pending_logout")) == "1"
-        set(v) = prefs.putString(key("pending_logout"), if (v) "1" else null)
+        set(v) { prefs.putString(key("pending_logout"), if (v) "1" else null); if (!v) pendingLogoutEpoch = null }
+    /** The epoch a saved logout was made under (null: not known then). */
+    private var pendingLogoutEpoch: Int?
+        get() = prefs.getString(key("pending_logout_epoch"))?.toIntOrNull()
+        set(v) = prefs.putString(key("pending_logout_epoch"), v?.toString())
     private var disabledUntil: Long
         get() = prefs.getString(key("disabled_until"))?.toLongOrNull() ?: 0L
         set(v) = prefs.putString(key("disabled_until"), if (v > 0) v.toString() else null)
@@ -166,13 +184,27 @@ internal class EngagementClient(
         if (gen != generation) return status
         val c = credential ?: return status
         if (prefs.getString(PENDING_LOGOUT_ANY) == "1") {
-            prefs.putString(PENDING_LOGOUT_ANY, null); pendingLogout = true; serial += 1
+            // Saved before this slot started in that process: it signs out of the identity this
+            // slot last knew (persisted), never one the server moved to afterwards.
+            val epoch = knownEpoch
+            prefs.putString(PENDING_LOGOUT_ANY, null); pendingLogout = true; pendingLogoutEpoch = epoch; serial += 1
         }
         if (pendingLogout) {
-            val (code, body) = send("POST", "/api/engagement/v1/installs/me/logout", emptyMap(), key, c)
+            var expected = pendingLogoutEpoch
+            if (expected == null) {
+                // Nothing was known about this install's identity when it was saved: sign out of what is there now.
+                val (code, body) = send("GET", "/api/engagement/v1/installs/me", null, key, c)
+                if (gen != generation) return status
+                @Suppress("UNCHECKED_CAST")
+                expected = if (code == 200) ((body?.get("install") as? Map<String, Any?>)?.get("accountEpoch") as? Number)?.toInt() else null
+                if (expected == null) { if (!handleFailure(code, body)) status = AppReferEngagementStatus.Pending; publish(); return status }
+            }
+            val (code, body) = send("POST", "/api/engagement/v1/installs/me/logout", mapOf("expectedEpoch" to expected), key, c)
             if (gen != generation) return status
             when {
                 code == 200 -> { pendingLogout = false; accountEpoch = (body?.get("accountEpoch") as? Number)?.toInt() }
+                // The install already left that identity (another sign-in or a backend change): done, and the newer one stays.
+                code == 409 -> pendingLogout = false
                 handleFailure(code, body) -> return status
                 else -> { status = AppReferEngagementStatus.Pending; publish(); return status }
             }
@@ -199,6 +231,7 @@ internal class EngagementClient(
 
     private fun forgetCredential() {
         slot?.let { credentials.delete(it) }
+        prefs.putString(key("epoch"), null)
         credential = null; accountEpoch = null; lastSync = null
         serial += 1
         dropReceipts { true }
@@ -231,10 +264,15 @@ internal class EngagementClient(
         return true
     }
 
+    /**
+     * Server-side account changes (backend bind/unbind) also move the epoch. Compared with the last
+     * epoch known for this install, persisted across launches, so a change made while the app
+     * wasn't running still advances the serial and nothing queued for the old identity matches.
+     */
     private fun observeEpoch(epoch: Int?) {
-        if (epoch == null || accountEpoch == epoch) return
-        if (accountEpoch != null) serial += 1
-        accountEpoch = epoch
+        if (epoch == null) return
+        if (knownEpoch != epoch) serial += 1
+        if (accountEpoch != epoch) accountEpoch = epoch
     }
 
     /** True when handled as a terminal state (engagement disabled, invalid install). */
@@ -300,9 +338,12 @@ internal class EngagementClient(
     private suspend fun runIdentify(assertion: String): Result<Unit> {
         val key = apiKey; val c = credential
         if (status !is AppReferEngagementStatus.Active || key == null || c == null) return Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.NOT_STARTED))
+        // The identity this sign-in replaces: the server refuses it (409) if that changed meanwhile.
+        if (knownEpoch == null) reverify(generation)
+        val expected = knownEpoch ?: return Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.UNAVAILABLE))
         beginIdentityChange()
         val gen = generation
-        val (code, body) = send("POST", "/api/engagement/v1/installs/me/account", mapOf("assertion" to assertion), key, c)
+        val (code, body) = send("POST", "/api/engagement/v1/installs/me/account", mapOf("assertion" to assertion, "expectedEpoch" to expected), key, c)
         if (gen != generation) return Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED))
         val epoch = (body?.get("accountEpoch") as? Number)?.toInt()
         if (code == 200 && epoch != null) {
@@ -333,19 +374,26 @@ internal class EngagementClient(
             prefs.putString(PENDING_LOGOUT_ANY, "1"); generation++
             return@withLock
         }
+        // Saved with the identity it signs out of (an older unsent logout keeps its own).
+        val expected = knownEpoch
         beginIdentityChange()
-        pendingLogout = true
-        val key = apiKey; val c = credential
-        if (status !is AppReferEngagementStatus.Active || key == null || c == null) return@withLock
+        if (!pendingLogout || pendingLogoutEpoch == null) { pendingLogout = true; pendingLogoutEpoch = expected }
+        val key = apiKey; val c = credential; val epoch = pendingLogoutEpoch
+        if (status !is AppReferEngagementStatus.Active || key == null || c == null || epoch == null) return@withLock
         val gen = generation
-        val (code, body) = send("POST", "/api/engagement/v1/installs/me/logout", emptyMap(), key, c)
+        val (code, body) = send("POST", "/api/engagement/v1/installs/me/logout", mapOf("expectedEpoch" to epoch), key, c)
         if (gen != generation) return@withLock
-        if (code == 200) {
-            pendingLogout = false
-            accountEpoch = (body?.get("accountEpoch") as? Number)?.toInt()
-            lastSync = null
-            publish()
-        } else handleFailure(code, body)
+        when (code) {
+            200 -> {
+                pendingLogout = false
+                accountEpoch = (body?.get("accountEpoch") as? Number)?.toInt()
+                lastSync = null
+                publish()
+            }
+            // Already signed out of that identity on the server (a newer one is there): done.
+            409 -> { pendingLogout = false; reverify(gen) }
+            else -> handleFailure(code, body)
+        }
     }
 
     suspend fun deleteInstall() = mutex.withLock {
@@ -353,6 +401,7 @@ internal class EngagementClient(
         if (credential == null) (credentials.read(slotFor(key)) as? EngagementCredentialStore.Read.Found)?.let { credential = Credential.decode(it.value) }
         val marked = credential?.copy(pendingDelete = true) ?: return@withLock
         beginIdentityChange()
+        prefs.putString(key("epoch"), null)
         credential = marked
         credentials.write(slotFor(key), marked.encode())
         sendDelete(key)
@@ -382,7 +431,14 @@ internal class EngagementClient(
             val (code, body) = send("GET", "/api/engagement/v1/installs/me/preferences", null, key, c)
             if (gen != generation) return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED))
             val prefs = parsePreferences(body)
-            if (code == 200 && prefs != null) Result.success(prefs) else { handleFailure(code, body); Result.failure(failure(code, body)) }
+            val epoch = (body?.get("accountEpoch") as? Number)?.toInt()
+            if (code == 200 && prefs != null && epoch != null) {
+                // The choices are for the epoch they came with: learn it, so a later change is made for it.
+                val before = serial
+                observeEpoch(epoch)
+                if (before != serial) publish()
+                Result.success(prefs)
+            } else { handleFailure(code, body); Result.failure(failure(code, body)) }
         }
         return result.getOrThrow()
     }
@@ -392,10 +448,11 @@ internal class EngagementClient(
             if (choices.isEmpty()) return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.SERVER, 400, "INVALID_BODY"))
             val key = apiKey; val c = credential
             if (status !is AppReferEngagementStatus.Active || key == null || c == null) return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.NOT_STARTED))
-            // Only for the identity in use now: never mid sign-in or sign-out.
-            if (accountEpoch == null) return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED))
+            // Only for the identity in use now: never mid sign-in or sign-out. The server refuses it
+            // (409) if the install's identity is no longer this epoch.
+            val epoch = accountEpoch ?: return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED))
             val gen = generation
-            val (code, body) = send("PUT", "/api/engagement/v1/installs/me/preferences", choices, key, c)
+            val (code, body) = send("PUT", "/api/engagement/v1/installs/me/preferences", choices + ("expectedEpoch" to epoch), key, c)
             if (gen != generation) return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED))
             if (code == 409) { reverify(gen); return@withLock Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED)) }
             val prefs = parsePreferences(body)

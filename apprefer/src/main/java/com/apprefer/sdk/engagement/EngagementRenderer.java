@@ -57,6 +57,12 @@ import java.util.regex.Pattern;
  * persisted outbox that the SDK layer drains with {@link #takeEvents}, re-checks against the
  * current identity, turns into receipts and delivers to the app (navigation only when the app
  * is ready). Nothing here talks to AppRefer's servers.</li>
+ * <li>Identity changes and posting are ordered by one lock (the class monitor): the identity,
+ * the real clock, the permission and the purpose channel are re-checked immediately before a
+ * notification is posted (after any image download), and an identity change cancels every
+ * notification this renderer posted for the previous identity. A post can't land for A after
+ * a sign-out or switch to B, whichever thread wins the race. Expired notifications never open,
+ * snooze or report anything.</li>
  * </ul>
  */
 public final class EngagementRenderer {
@@ -241,12 +247,26 @@ public final class EngagementRenderer {
         ensureChannels(context);
     }
 
-    /** The install and account epoch notifications must match; epoch -1 = mid change (nothing matches). Null clears. */
-    public static void setIdentity(Context context, String installId, int accountEpoch) {
-        SharedPreferences.Editor e = prefs(context).edit();
-        if (installId == null) e.remove("iid").remove("epoch");
-        else e.putString("iid", installId).putInt("epoch", accountEpoch);
+    /**
+     * The install and account epoch notifications must match; epoch -1 = mid change (nothing
+     * matches). Null clears (e.g. offline before verification) without cancelling anything. A
+     * different install, or a different confirmed epoch, than the last confirmed identity is an
+     * identity change: AppRefer's notifications posted for the old one are cancelled.
+     */
+    public static synchronized void setIdentity(Context context, String installId, int accountEpoch) {
+        SharedPreferences sp = prefs(context);
+        SharedPreferences.Editor e = sp.edit();
+        if (installId == null) {
+            e.remove("iid").remove("epoch").commit();
+            return;
+        }
+        String seenIid = sp.getString("seen_iid", null);
+        int seenEpoch = sp.getInt("seen_epoch", -1);
+        boolean changed = seenIid != null && (!seenIid.equals(installId) || (accountEpoch >= 0 && seenEpoch >= 0 && seenEpoch != accountEpoch));
+        e.putString("iid", installId).putInt("epoch", accountEpoch).putString("seen_iid", installId);
+        if (accountEpoch >= 0) e.putInt("seen_epoch", accountEpoch);
         e.commit();
+        if (changed) cancelPosted(context);
     }
 
     static boolean matchesIdentity(Context context, Payload p) {
@@ -311,8 +331,12 @@ public final class EngagementRenderer {
         }
     }
 
+    /** Tests only: the channel answer (an app can't turn its own channel off). */
+    static volatile Boolean channelEnabledForTesting;
+
     /** Whether the purpose's channel is on (API 26+); null below 26 or when it doesn't exist yet. */
     public static Boolean channelEnabled(Context context, String purpose) {
+        if (channelEnabledForTesting != null) return channelEnabledForTesting;
         if (Build.VERSION.SDK_INT < 26) return null;
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         NotificationChannel ch = nm == null ? null : nm.getNotificationChannel(channelId(purpose));
@@ -334,20 +358,43 @@ public final class EngagementRenderer {
         if (!isEngagement(data)) return Result.NOT_ENGAGEMENT;
         Payload p;
         try { p = parse(data); } catch (InvalidPayload e) { return Result.IGNORED; }
-        // Another install, another account, a sign-out in progress or expired: never shown.
-        if (p == null || p.isExpired(nowMs) || !matchesIdentity(context, p)) return Result.IGNORED;
-        // Not allowed to post: the system would drop it silently, so nothing is shown or reported as received.
-        if ("denied".equals(permission(context))) return Result.IGNORED;
-        // The person turned this purpose's channel off: respect it (the system would drop it too).
-        if (Boolean.FALSE.equals(channelEnabled(context, p.purpose))) return Result.IGNORED;
+        if (p == null || !postable(context, p, nowMs)) return Result.IGNORED;
+        long started = System.nanoTime();
         Bitmap image = null;
         JSONObject cfg = config(context);
         if (p.imageUrl != null && Looper.myLooper() != Looper.getMainLooper() && allowed(cfg, p.imageUrl)) {
             image = download(p.imageUrl, timeoutMs, maxBytes, 2048);
         }
-        post(context, p, image, false, nowMs);
-        recordEvent(context, "received", p, null, nowMs);
+        Runnable hook = afterDownloadForTesting;
+        if (hook != null) hook.run();
+        // The download can take seconds: everything is checked again, with the real clock, under
+        // the lock identity changes take, and posting happens inside it.
+        synchronized (EngagementRenderer.class) {
+            long now = elapsedFrom(nowMs, started);
+            if (!postable(context, p, now)) return Result.IGNORED;
+            post(context, p, image, false, now);
+            recordEvent(context, "received", p, null, now);
+        }
         return image != null ? Result.SHOWN : Result.SHOWN_TEXT_ONLY;
+    }
+
+    /**
+     * Whether this payload may be shown now: this install and account (not mid change), not
+     * expired, notifications allowed (the system would drop it silently, and it must not be
+     * reported as received) and its purpose channel on (the person's choice).
+     */
+    static boolean postable(Context context, Payload p, long nowMs) {
+        return !p.isExpired(nowMs) && matchesIdentity(context, p) && !"denied".equals(permission(context))
+            && !Boolean.FALSE.equals(channelEnabled(context, p.purpose));
+    }
+
+    /** Tests only: added to the measured time since a message started (e.g. a slow download). */
+    static volatile long clockOffsetForTesting = 0;
+    /** Tests only: called after the image download, before the final check (to interleave an identity change). */
+    static volatile Runnable afterDownloadForTesting;
+
+    static long elapsedFrom(long baseMs, long startedNanos) {
+        return baseMs + (System.nanoTime() - startedNanos) / 1_000_000L + clockOffsetForTesting;
     }
 
     static boolean allowed(JSONObject cfg, String url) {
@@ -538,6 +585,9 @@ public final class EngagementRenderer {
         intent.removeExtra(EXTRA_ACTION);
         Payload p = record(context, nonce);
         if (p == null) return false;
+        // Expired (Android 7.1 and older keep it in the shade, no time-out): AppRefer's, but it
+        // opens nothing and reports nothing.
+        if (p.isExpired(nowMs)) return true;
         Action action = null;
         if (actionId != null) {
             for (Action a : p.actions) if (a.id.equals(actionId) && !"snooze".equals(a.kind)) action = a;
@@ -598,9 +648,36 @@ public final class EngagementRenderer {
         return out;
     }
 
-    /** Account changed or reset: what waits for the previous identity is dropped. */
+    /**
+     * Account changed or reset (called before the change is sent): what waits for the previous
+     * identity is dropped, its posted notifications are cancelled (so a snooze or tap can't act
+     * for the next person), and nothing matches until the SDK confirms the new identity.
+     */
     public static synchronized void clearForAccountChange(Context context) {
-        prefs(context).edit().remove("events").remove("records").commit();
+        cancelPosted(context);
+        SharedPreferences sp = prefs(context);
+        SharedPreferences.Editor e = sp.edit().remove("events").remove("records");
+        if (sp.getString("iid", null) != null) e.putInt("epoch", -1);
+        e.commit();
+    }
+
+    /** Cancels every notification this renderer posted (by its records); the app's and Support's stay. */
+    static synchronized void cancelPosted(Context context) {
+        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        JSONObject records = records(context);
+        Iterator<String> it = records.keys();
+        while (it.hasNext()) {
+            JSONObject r = records.optJSONObject(it.next());
+            JSONObject raw = r == null ? null : r.optJSONObject("payload");
+            if (raw == null) continue;
+            String mid = raw.optString("mid", "");
+            String ck = raw.isNull("ck") ? null : raw.optString("ck", null);
+            if (nm != null) {
+                if (ck != null) nm.cancel("apprefer.eng." + ck, 0);
+                else nm.cancel("apprefer.eng", notificationId(mid));
+            }
+        }
+        prefs(context).edit().remove("records").commit();
     }
 
     // ------------------------------------------------------------------------------------
@@ -614,6 +691,15 @@ public final class EngagementRenderer {
         if (p == null) return;
         String action = intent.getAction();
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        // An expired notification is never snoozed, re-shown or reported (its button may still be
+        // tappable on Android 7.1 and older, which have no time-out).
+        if (p.isExpired(nowMs)) {
+            if (ACTION_SNOOZE.equals(action) && nm != null) {
+                if (p.collapseKey != null) nm.cancel("apprefer.eng." + p.collapseKey, 0);
+                else nm.cancel("apprefer.eng", notificationId(p.messageId));
+            }
+            return;
+        }
         if (ACTION_DISMISS.equals(action)) {
             recordEvent(context, "dismissed", p, null, nowMs);
         } else if (ACTION_SNOOZE.equals(action)) {
@@ -630,7 +716,9 @@ public final class EngagementRenderer {
             // Inexact (no exact-alarm permission needed); the notification is re-shown once.
             if (am != null) am.set(AlarmManager.RTC, at, receiverIntent(context, ACTION_SHOW, nonce, null, notificationId(p.messageId) + 7));
         } else if (ACTION_SHOW.equals(action)) {
-            if (!p.isExpired(nowMs) && matchesIdentity(context, p)) post(context, p, null, true, nowMs);
+            synchronized (EngagementRenderer.class) {
+                if (postable(context, p, nowMs) && record(context, nonce) != null) post(context, p, null, true, nowMs);
+            }
         }
     }
 

@@ -253,15 +253,19 @@ object AppReferEngagement {
                 val (go, keep) = pending.partition { !it.first.isNavigation || ready }
                 pending.clear(); pending.addAll(keep); go
             }
-            for ((event, raw) in now) {
-                if (event.isNavigation) {
-                    // Re-checked at delivery: an account change while it waited drops it.
-                    val snap = client?.snapshot?.get() ?: continue
-                    if (snap.installId != raw.optString("installId") || snap.accountEpoch != raw.optInt("accountEpoch", -1)) continue
-                }
-                handler(event)
-            }
+            for ((event, raw) in now) if (stillDeliverable(event, raw, client?.snapshot?.get(), System.currentTimeMillis())) handler(event)
         }
+    }
+
+    /**
+     * Re-checked at delivery, with the real clock: an event whose notification expired while it
+     * waited (navigation not ready, no handler yet) is dropped, and navigation also needs the
+     * same install and account it was tapped under.
+     */
+    internal fun stillDeliverable(event: AppReferEngagementNotificationEvent, raw: JSONObject, snap: EngagementSnapshot?, nowMs: Long): Boolean {
+        if (!raw.has("expiresAt") || nowMs >= raw.optLong("expiresAt")) return false
+        if (!event.isNavigation) return true
+        return snap != null && snap.installId == raw.optString("installId") && snap.accountEpoch == raw.optInt("accountEpoch", -1)
     }
 
     /** The stamp a new product event carries (never the credential). */
@@ -272,10 +276,11 @@ object AppReferEngagement {
         return snap.stamp
     }
 
-    /** The header for a queued event, only while its stamp is current. */
-    internal fun headerFor(stamp: String?): String? {
+    /** The headers for a queued event, only while its stamp is current: the credential and the epoch it was queued under. */
+    internal fun headersFor(stamp: String?): Map<String, String>? {
         val snap = client?.snapshot?.get() ?: return null
-        return if (stamp != null && snap.accountEpoch != null && snap.stamp == stamp) snap.header else null
+        val epoch = snap.accountEpoch ?: return null
+        return if (stamp != null && snap.stamp == stamp) mapOf("X-AppRefer-Install" to snap.header, "X-AppRefer-Install-Epoch" to epoch.toString()) else null
     }
 
     internal fun configurationChanged(apiKey: String) { client?.let { c -> scope.launch { c.configurationChanged(apiKey) } } }

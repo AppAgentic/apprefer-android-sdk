@@ -5,6 +5,8 @@
 - Install credential encrypted with an Android Keystore key in no-backup storage (RSA-wrapped on API 21–22).
 - Product events carry `X-AppRefer-Install` only as described for iOS; `AppRefer.reset()` logs engagement out.
 - New strings `engagement.action.*`, `engagement.channel.*` in all 35 languages. Manifest adds a non-exported receiver.
+- Review fixes (before release): queued events carry the account epoch they were queued under (in their stamp, and as `X-AppRefer-Install-Epoch` with the credential), and the last confirmed epoch is persisted per install, so an event queued under one account never goes out for another after a cold restart, a backend bind or a logout; preference changes, sign-in and logout send the epoch they were made for (`expectedEpoch`, required by the server) and a stale one is refused (`identityChanged`; a stale saved logout is settled, never applied to the next account); reading preferences learns their epoch; an expired notification never navigates, even when its tap waited for `setNavigationReady`; sources shared by copy with the other SDKs are hash-checked by this repo's tests (`shared-sources.json`).
+- The renderer re-checks identity, the real clock, permission and the purpose channel immediately before posting (after any image download), under the same lock identity changes take, and cancels AppRefer's posted notifications when the identity changes. Expired notifications never open, snooze, re-show or report anything (Android 7.1 and older keep them in the shade without a time-out).
 - Version 0.11.0.
 
 ## 0.10.1 (unreleased)

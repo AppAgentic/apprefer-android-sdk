@@ -27,6 +27,20 @@ class EngagementRendererTest {
         fun reason(o: JSONObject): String? = try { EngagementRenderer.parse(o); null } catch (e: EngagementRenderer.InvalidPayload) { e.message }
     }
 
+    /**
+     * The renderer is shared by copy with the Flutter plugin and the React Native module. This
+     * repo's copy must match the hash in shared-sources.json (the parent's
+     * scripts/check-sdk-shared-sources.mjs keeps all copies and manifests equal).
+     */
+    @Test fun sharedRendererMatchesTheManifest() {
+        val source = java.io.File("src/main/java/com/apprefer/sdk/engagement/EngagementRenderer.java").readText()
+        val normalized = source.replace("\r\n", "\n").replaceFirst(Regex("^package [^\n]*\n"), "")
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val manifest = JSONObject(java.io.File("../shared-sources.json").readText())
+        assertEquals("EngagementRenderer.java changed without the shared copies: run node scripts/check-sdk-shared-sources.mjs in the parent repo",
+            manifest.getString("engagementRenderer"), hash)
+    }
+
     @Test fun validPayload() {
         val p = EngagementRenderer.parse(data(payload()))!!
         assertEquals(2, p.accountEpoch); assertEquals(IID, p.installId); assertEquals("/setup", p.destination)
