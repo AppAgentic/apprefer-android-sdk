@@ -40,6 +40,9 @@ import kotlinx.coroutines.withContext
  * ```
  */
 object AppRefer {
+    /** Lifecycle engagement: `AppRefer.engagement.start(context)`. */
+    @JvmStatic val engagement: com.apprefer.sdk.engagement.AppReferEngagement get() = com.apprefer.sdk.engagement.AppReferEngagement
+    internal const val ENGAGEMENT_STAMP = "_apprefer_engagement_stamp"
     /** iOS-only SKAdNetwork / AdAttributionKit conversion values. No-op on Android. */
     @JvmStatic
     fun updateConversionValue() = Unit
@@ -176,6 +179,8 @@ object AppRefer {
             // Persisted so Billing keeps the previous account unlinked across a relaunch too.
             c?.let { BillingResetMarker.mark(it, billingIdentity) }
             support.reset(c)
+            // Lifecycle engagement: the account's queued messages stop, nothing waits to navigate.
+            com.apprefer.sdk.engagement.AppReferEngagement.logout(c)
         }
     }
 
@@ -200,6 +205,8 @@ object AppRefer {
             scope.coroutineContext.cancelChildren()
             clearPendingEvents(context)
         }
+        // Lifecycle engagement keeps sending its own state; the server stops SDK-event journeys.
+        com.apprefer.sdk.engagement.AppReferEngagement.collectionChanged()
     }
 
     @JvmOverloads suspend fun clearPendingEvents(context: Context? = AppReferContext.context) = withContext(Dispatchers.IO) {
@@ -236,6 +243,8 @@ object AppRefer {
         val accountEpoch = generation
         configurations.run(listOf(apiKey, userId, debug, logLevel, accountEpoch)) { safely<Attribution?>(null) {
         val s = ensureState(context, apiKey, debug, logLevel)
+        // Lifecycle engagement started without its own key follows this one.
+        com.apprefer.sdk.engagement.AppReferEngagement.configurationChanged(apiKey)
         synchronized(this) { if (accountEpoch == generation) stoppedByReset = false }
         if (accountEpoch != generation) return@safely null
         // Stored even while collection is off, so Support uses this account, not the last one.
@@ -320,6 +329,8 @@ object AppRefer {
         properties?.let { body["properties"] = it }
         revenue?.let { body["revenue"] = it }
         currency?.let { body["currency"] = it }
+        // Only a stamp is queued with the event; the credential is added at send time while it is current.
+        com.apprefer.sdk.engagement.AppReferEngagement.eventStamp(eventName, s.apiKey)?.let { body[ENGAGEMENT_STAMP] = it }
         s.events.enqueue(body, eventEpoch)
     } }
     }
@@ -555,6 +566,7 @@ object AppRefer {
             override fun onActivityResumed(activity: android.app.Activity) {
                 trackingConsentDidChange()
                 scope.launch { safelyRun { s.events.flush() } }
+                com.apprefer.sdk.engagement.AppReferEngagement.becameActive()
             }
             override fun onActivityCreated(activity: android.app.Activity, bundle: android.os.Bundle?) {}
             override fun onActivityStarted(activity: android.app.Activity) {}

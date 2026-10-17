@@ -1,4 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Lifecycle notification device tests post real notifications (granted by the test). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Like most host apps: right-to-left layouts are on, so the Arabic/Hebrew chat test can see them. -->
-    <application android:supportsRtl="true" />
+    <application android:supportsRtl="true">
+        <!-- A launcher activity, as host apps have: notification taps open it. -->
+        <activity android:name="com.apprefer.sdk.engagement.TapTargetActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>
