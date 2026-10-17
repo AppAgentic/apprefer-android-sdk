@@ -107,13 +107,24 @@ internal class EngagementClient(
     private var serial: Int
         get() = prefs.getString(key("serial"))?.toIntOrNull() ?: 0
         set(v) = prefs.putString(key("serial"), v.toString())
-    private var pendingLogout: Boolean
-        get() = prefs.getString(key("pending_logout")) == "1"
-        set(v) { prefs.putString(key("pending_logout"), if (v) "1" else null); if (!v) pendingLogoutEpoch = null }
-    /** The epoch a saved logout was made under (null: not known then). */
-    private var pendingLogoutEpoch: Int?
-        get() = prefs.getString(key("pending_logout_epoch"))?.toIntOrNull()
-        set(v) = prefs.putString(key("pending_logout_epoch"), v?.toString())
+    /**
+     * An unsent logout: the epoch it signs out of, saved as one value `"<installId>:<epoch>"` in a
+     * single write, so a crash can never leave a logout without its target. It only applies to the
+     * install it was made for. A logout whose epoch was not known is never saved: it could only be
+     * aimed at whatever the server holds later, which may be a newer identity ([adoptUnaimedLogout]).
+     */
+    private val pendingLogoutEpoch: Int?
+        get() {
+            val c = credential ?: return null
+            val parts = prefs.getString(key("pending_logout_target"))?.split(":") ?: return null
+            return if (parts.size == 2 && parts[0] == c.installId) parts[1].toIntOrNull() else null
+        }
+    private val pendingLogout: Boolean get() = pendingLogoutEpoch != null
+    private fun savePendingLogout(epoch: Int) {
+        val c = credential ?: return
+        prefs.putString(key("pending_logout_target"), "${c.installId}:$epoch")
+    }
+    private fun clearPendingLogout() = prefs.putString(key("pending_logout_target"), null)
     private var disabledUntil: Long
         get() = prefs.getString(key("disabled_until"))?.toLongOrNull() ?: 0L
         set(v) = prefs.putString(key("disabled_until"), if (v > 0) v.toString() else null)
@@ -183,28 +194,14 @@ internal class EngagementClient(
         if (credential == null && !register(key, gen)) { publish(); return status }
         if (gen != generation) return status
         val c = credential ?: return status
-        if (prefs.getString(PENDING_LOGOUT_ANY) == "1") {
-            // Saved before this slot started in that process: it signs out of the identity this
-            // slot last knew (persisted), never one the server moved to afterwards.
-            val epoch = knownEpoch
-            prefs.putString(PENDING_LOGOUT_ANY, null); pendingLogout = true; pendingLogoutEpoch = epoch; serial += 1
-        }
-        if (pendingLogout) {
-            var expected = pendingLogoutEpoch
-            if (expected == null) {
-                // Nothing was known about this install's identity when it was saved: sign out of what is there now.
-                val (code, body) = send("GET", "/api/engagement/v1/installs/me", null, key, c)
-                if (gen != generation) return status
-                @Suppress("UNCHECKED_CAST")
-                expected = if (code == 200) ((body?.get("install") as? Map<String, Any?>)?.get("accountEpoch") as? Number)?.toInt() else null
-                if (expected == null) { if (!handleFailure(code, body)) status = AppReferEngagementStatus.Pending; publish(); return status }
-            }
+        adoptUnaimedLogout()
+        pendingLogoutEpoch?.let { expected ->
             val (code, body) = send("POST", "/api/engagement/v1/installs/me/logout", mapOf("expectedEpoch" to expected), key, c)
             if (gen != generation) return status
             when {
-                code == 200 -> { pendingLogout = false; accountEpoch = (body?.get("accountEpoch") as? Number)?.toInt() }
+                code == 200 -> { clearPendingLogout(); accountEpoch = (body?.get("accountEpoch") as? Number)?.toInt() }
                 // The install already left that identity (another sign-in or a backend change): done, and the newer one stays.
-                code == 409 -> pendingLogout = false
+                code == 409 -> clearPendingLogout()
                 handleFailure(code, body) -> return status
                 else -> { status = AppReferEngagementStatus.Pending; publish(); return status }
             }
@@ -229,9 +226,32 @@ internal class EngagementClient(
         return status
     }
 
+    /**
+     * Gives a logout that was saved without its target one: a logout made before this slot started
+     * in that process ([PENDING_LOGOUT_ANY]), or the two separate values an earlier 0.11.0
+     * development build wrote (a crash between them left the flag without its epoch). It signs out
+     * of the identity this install last knew, persisted with its install id. When none is known
+     * (restored credential without its prefs, or the epoch was never learnt here) the logout is
+     * dropped, never aimed at the server's current identity, which a backend bind may already have
+     * replaced: an unsent logout can never detach a newer identity. The app backend's org-key
+     * detach stays authoritative.
+     */
+    private fun adoptUnaimedLogout() {
+        val legacy = prefs.getString(key("pending_logout")) == "1"
+        if (!legacy && prefs.getString(PENDING_LOGOUT_ANY) != "1") return
+        val legacyEpoch = if (legacy) prefs.getString(key("pending_logout_epoch"))?.toIntOrNull() else null
+        if (pendingLogoutEpoch == null) (legacyEpoch ?: knownEpoch)?.let { savePendingLogout(it) }
+        serial += 1
+        // Removed only after the target is saved: a crash in between adopts it again.
+        prefs.putString(key("pending_logout"), null)
+        prefs.putString(key("pending_logout_epoch"), null)
+        prefs.putString(PENDING_LOGOUT_ANY, null)
+    }
+
     private fun forgetCredential() {
         slot?.let { credentials.delete(it) }
         prefs.putString(key("epoch"), null)
+        clearPendingLogout()
         credential = null; accountEpoch = null; lastSync = null
         serial += 1
         dropReceipts { true }
@@ -347,7 +367,7 @@ internal class EngagementClient(
         if (gen != generation) return Result.failure(AppReferEngagementException(AppReferEngagementException.Reason.IDENTITY_CHANGED))
         val epoch = (body?.get("accountEpoch") as? Number)?.toInt()
         if (code == 200 && epoch != null) {
-            pendingLogout = false
+            clearPendingLogout()
             accountEpoch = epoch
             lastSync = null
             publish()
@@ -374,10 +394,12 @@ internal class EngagementClient(
             prefs.putString(PENDING_LOGOUT_ANY, "1"); generation++
             return@withLock
         }
-        // Saved with the identity it signs out of (an older unsent logout keeps its own).
+        // Saved with the identity it signs out of, in one write (an older unsent logout keeps its
+        // own). With no epoch known for this install nothing is saved or sent: the only other
+        // target would be whatever the server holds by then ([adoptUnaimedLogout]).
         val expected = knownEpoch
         beginIdentityChange()
-        if (!pendingLogout || pendingLogoutEpoch == null) { pendingLogout = true; pendingLogoutEpoch = expected }
+        if (!pendingLogout && expected != null) savePendingLogout(expected)
         val key = apiKey; val c = credential; val epoch = pendingLogoutEpoch
         if (status !is AppReferEngagementStatus.Active || key == null || c == null || epoch == null) return@withLock
         val gen = generation
@@ -385,13 +407,13 @@ internal class EngagementClient(
         if (gen != generation) return@withLock
         when (code) {
             200 -> {
-                pendingLogout = false
+                clearPendingLogout()
                 accountEpoch = (body?.get("accountEpoch") as? Number)?.toInt()
                 lastSync = null
                 publish()
             }
             // Already signed out of that identity on the server (a newer one is there): done.
-            409 -> { pendingLogout = false; reverify(gen) }
+            409 -> { clearPendingLogout(); reverify(gen) }
             else -> handleFailure(code, body)
         }
     }
@@ -416,7 +438,8 @@ internal class EngagementClient(
         // 401: already gone. 404 disabled: nothing there can be sent.
         if (code != 200 && code != 401 && code != 404) return false
         credentials.delete(slotFor(key))
-        credential = null; accountEpoch = null; pendingLogout = false; lastSync = null
+        clearPendingLogout()
+        credential = null; accountEpoch = null; lastSync = null
         return true
     }
 

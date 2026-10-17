@@ -344,6 +344,68 @@ class EngagementClientTest {
         assertFalse("settled, not retried forever", client().stateForTesting().third)
     }
 
+    // --- Pending logout target: one atomic value, never inferred later
+
+    private val slot get() = EngagementClient.slotFor(key)
+
+    @Test fun anOfflineLogoutIsSavedAsOneValueForItsInstall() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        c.identify("ok:user-a")
+        server.offline = true
+        c.logout()
+        assertEquals("$installId:1", prefs.map["apprefer_engagement_pending_logout_target_$slot"])
+        assertNull("no separate flag that a crash could strand", prefs.map["apprefer_engagement_pending_logout_$slot"])
+        assertNull(prefs.map["apprefer_engagement_pending_logout_epoch_$slot"])
+        server.offline = false
+        client().start(key, true, AppReferEngagementOptions())
+        assertEquals(1, server.calls.last { it.path.endsWith("/logout") }.body!!["expectedEpoch"])
+        assertNull(server.installs[installId]!!.account)
+        assertNull(prefs.map["apprefer_engagement_pending_logout_target_$slot"])
+    }
+
+    @Test fun anInterruptedTwoValueLogoutSignsOutOnlyThePersistedEpoch() = runBlocking {
+        val c = client()
+        val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
+        c.identify("ok:user-a") // epoch 1, persisted with the install id
+        // An earlier build crashed between its two writes: the flag without its epoch.
+        prefs.map["apprefer_engagement_pending_logout_$slot"] = "1"
+        server.backendBind(installId, "user-b") // epoch 2 while the app wasn't running
+        val restarted = client().also { it.start(key, true, AppReferEngagementOptions()) }
+        assertEquals("aimed at the persisted epoch, never the fresh one", listOf<Any?>(1), server.calls.filter { it.path.endsWith("/logout") }.map { it.body!!["expectedEpoch"] })
+        assertEquals("refused (409): B stays bound", "user-b", server.installs[installId]!!.account)
+        assertEquals(2, restarted.snapshot.get()!!.accountEpoch)
+        assertFalse(restarted.stateForTesting().third)
+        assertNull(prefs.map["apprefer_engagement_pending_logout_$slot"])
+    }
+
+    @Test fun aRetainedCredentialWithoutItsEpochNeverDetachesTheServersIdentity() = runBlocking {
+        val first = client()
+        val installId = id(first.start(key, true, AppReferEngagementOptions()))!!
+        first.identify("ok:user-a")
+        // Restored credential without its prefs (the epoch is gone).
+        prefs.map.clear()
+        server.backendBind(installId, "user-b")
+        val restored = client()
+        restored.logout() // reset() before start
+        restored.start(key, true, AppReferEngagementOptions())
+        assertEquals("no target known: dropped", 0, server.count("POST", "/api/engagement/v1/installs/me/logout"))
+        assertEquals("user-b", server.installs[installId]!!.account)
+        assertEquals(2, restored.snapshot.get()!!.accountEpoch)
+        assertNull(prefs.map["apprefer_engagement_pending_logout_any"])
+        // Started but never verified (offline), then a logout: nothing saved, nothing sent later.
+        prefs.map.clear()
+        server.offline = true
+        val offline = client()
+        assertEquals(AppReferEngagementStatus.Pending, offline.start(key, true, AppReferEngagementOptions()))
+        offline.logout()
+        server.offline = false
+        server.backendBind(installId, "user-c")
+        client().start(key, true, AppReferEngagementOptions())
+        assertEquals(0, server.count("POST", "/api/engagement/v1/installs/me/logout"))
+        assertEquals("user-c", server.installs[installId]!!.account)
+    }
+
     @Test fun aSignInStartedUnderAnOldIdentityDoesNotReplaceTheNewOne() = runBlocking {
         val c = client()
         val installId = id(c.start(key, true, AppReferEngagementOptions()))!!
