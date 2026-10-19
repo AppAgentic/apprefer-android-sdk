@@ -214,6 +214,10 @@ class AppReferSupportView @JvmOverloads constructor(
     private val offerQueue get() = AppReferSupport.offerReceipts(context)
     internal var offerOpener = SupportOfferOpener(AppReferSupport.offerReceipts(context.applicationContext), send = { api.sendOfferReceipt(it) })
     private val billingListener: () -> Unit = { post { scope.launch { refreshOffers() } } }
+    // Review cards: each card's latest state by card id.
+    private val reviewCards = mutableMapOf<String, AppReferSupportReviewCard>()
+    /** Opens a validated Google Play URL (tests swap it); the system URL opener, no extra dependency. */
+    internal var openStorePage: (String) -> Unit = { url -> openPlayListing(url) }
     private val cursor get() = timeline.cursor
     private val messages get() = timeline.messages
     private var threadLoaded = false
@@ -239,7 +243,7 @@ class AppReferSupportView @JvmOverloads constructor(
         accountReset = true
         pause(); scope.cancel()
         timeline.reset(); conversations = emptyList(); pending.clear()
-        offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear()
+        offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear(); reviewCards.clear()
         images.clear(); draft = ""; homeStash = null; id = null; topic = null
         draftFile?.delete(); draftFile = null
         starting = false; sendError = null; loadError = null; route = "home"
@@ -699,10 +703,14 @@ class AppReferSupportView @JvmOverloads constructor(
                 else -> teamBubble(m, last)
             }
             val card = m.offer?.let { offerCards[it.cardId] ?: it }
-            val view = if (card == null) bubble else column().apply {
+            val review = if (card == null) m.review?.let { reviewCards[it.cardId] ?: it } else null
+            val view = if (card != null) column().apply {
                 if (m.text.isNotEmpty() || m.from == "bot") addView(bubble, lp())
                 addView(offerCard(card), lp(top = if (m.text.isNotEmpty()) dp(8) else 0))
-            }
+            } else if (review != null) column().apply {
+                if (m.text.isNotEmpty() || m.from == "bot") addView(bubble, lp())
+                addView(reviewCard(review), lp(top = if (m.text.isNotEmpty()) dp(8) else 0))
+            } else bubble
             body.addView(view, lp(top = if (i > 0 && !timed) (if (sameSide(i - 1, i)) dp(3) else dp(10)) else 0))
         }
         waiting.forEach { body.addView(pendingBubble(it), lp(top = dp(6))) }
@@ -814,8 +822,101 @@ class AppReferSupportView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * A review card under a team message: heading, one neutral line naming the store, and "Write a
+     * review", which opens the app's Google Play listing. No stars, no rating question.
+     */
+    private fun reviewCard(card: AppReferSupportReviewCard): View {
+        val look = SupportReviewLook.of(card)
+        val active = look is SupportReviewLook.Open
+        val store = SupportReviewLink.storeKey(card.store ?: "play_store")
+        val box = column().apply {
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = rounded(c.card, 22, if (active) supportAlpha(p.accent, .22f) else supportAlpha(c.ink, .06f))
+            if (!active) alpha = .85f
+        }
+        shadow(box, 3, .07f)
+        val tint = if (active) p.accent else c.muted
+        box.addView(row().apply {
+            addView(FrameLayout(context).apply {
+                background = oval(supportAlpha(tint, .13f)); addView(icon(R.drawable.apprefer_support_edit, tint, 14))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, lp(dp(26), dp(26)))
+            addView(text(s("support.review.title"), 15f, c.ink, 700).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp(-2, start = dp(8)))
+        }, lp())
+        if (look is SupportReviewLook.Open) {
+            box.addView(text(s("support.review.body.$store"), 14.5f, c.ink), lp(top = dp(12)))
+            val opening = openingCard == card.cardId
+            box.addView(FrameLayout(context).apply {
+                background = gradient(floatArrayOf(dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99)))
+                addView(row().apply {
+                    gravity = Gravity.CENTER
+                    if (opening) addView(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.onAccent) }, lp(dp(18), dp(18), end = dp(8)))
+                    addView(text(s("support.review.open"), 15.5f, p.onAccent, 600), lp(-2))
+                }, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+                minimumHeight = dp(46)
+                isEnabled = !opening
+                pressable("${s("support.review.open")}. ${s("support.review.a11y.hint.$store")}") { openReview(card) }
+            }, lp(top = dp(12), h = dp(46)))
+        } else {
+            box.addView(row().apply {
+                gravity = Gravity.TOP
+                addView(icon(R.drawable.apprefer_support_info, c.muted, 14).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { topMargin = dp(2) }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                })
+                addView(text(s(if (look is SupportReviewLook.Unavailable) "support.review.unavailable" else "support.review.unsupported"), 13.5f, c.muted), lp(-2, start = dp(6)))
+            }, lp(top = dp(12)))
+        }
+        if (shownCards.add(card.cardId)) {
+            offerQueue.enqueue(SupportOfferReceipt(id ?: "", card.cardId, "shown", SupportOfferReceipt.shownId(card.cardId), SupportOfferReceipt.iso(System.currentTimeMillis())))
+            scope.launch { runCatching { api.flushOfferReceipts(offerQueue) } }
+        }
+        return FrameLayout(context).apply {
+            setPaddingRelative(dp(38), 0, 0, 0)
+            addView(box, FrameLayout.LayoutParams(minOf(dp(340), resources.displayMetrics.widthPixels - dp(66)), -2, Gravity.START))
+        }
+    }
+
+    /** "Write a review": checked with the server (at most 3 s), then the listing opens. A refusal redraws instead. */
+    private fun openReview(card: AppReferSupportReviewCard) {
+        val conversation = id ?: return
+        val look = SupportReviewLook.of(card) as? SupportReviewLook.Open ?: return
+        if (openingCard != null) return
+        val epoch = api.actionGeneration
+        openingCard = card.cardId; renderMessages()
+        scope.launch {
+            val outcome = try { offerOpener.check(offerOpener.receipt(card.cardId, conversation)) } finally { openingCard = null }
+            if (epoch != api.actionGeneration || id != conversation) return@launch
+            if (outcome is SupportOfferOpenCheck.Refused) { refreshReviews(); renderMessages(); return@launch }
+            renderMessages()
+            openStorePage(look.url)
+        }
+    }
+
+    /** The Play Store app when it's there, else whatever opens https links. */
+    private fun openPlayListing(url: String) {
+        val uri = android.net.Uri.parse(url)
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { context.startActivity(android.content.Intent(intent).setPackage("com.android.vending")) }
+        catch (_: android.content.ActivityNotFoundException) { runCatching { context.startActivity(intent) } }
+    }
+
+    private fun absorbReviews(incoming: List<AppReferSupportMessage>) { incoming.mapNotNull { it.review }.forEach { reviewCards[it.cardId] = it } }
+
+    private suspend fun refreshReviews() {
+        val conversation = id ?: return
+        if (route != "thread" || reviewCards.isEmpty()) return
+        val cards = try { api.reviewCards(conversation) } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+        if (id != conversation) return
+        val changed = cards.any { reviewCards[it.cardId] != it }
+        cards.forEach { reviewCards[it.cardId] = it }
+        if (changed) renderMessages()
+    }
+
     /** New cards from a read; prices for their offerings come from AppRefer Billing when the app uses it. */
     private fun absorbOffers(incoming: List<AppReferSupportMessage>) {
+        absorbReviews(incoming)
         val cards = incoming.mapNotNull { it.offer }
         if (cards.isEmpty()) return
         cards.forEach { offerCards[it.cardId] = it }
@@ -837,9 +938,11 @@ class AppReferSupportView @JvmOverloads constructor(
      */
     private suspend fun refreshOffers(force: Boolean = true) {
         val conversation = id ?: return
-        if (route != "thread" || offerCards.isEmpty()) return
+        if (route != "thread" || (offerCards.isEmpty() && reviewCards.isEmpty())) return
         if (!force && System.currentTimeMillis() - lastOfferRefresh < 30_000) return
         lastOfferRefresh = System.currentTimeMillis()
+        refreshReviews()
+        if (offerCards.isEmpty()) return
         val cards = try { api.offerCards(conversation) } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
         if (id != conversation) return
         val changed = cards.any { offerCards[it.cardId] != it }

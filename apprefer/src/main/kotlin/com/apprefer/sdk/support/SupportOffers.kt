@@ -142,7 +142,7 @@ internal data class SupportOfferReceipt(
         /** A receipt id from a prefix and a random part (`[A-Za-z0-9_-]{8,64}`). */
         fun eventId(prefix: String): String = prefix + "_" + UUID.randomUUID().toString().replace("-", "").take(24)
         /** The id a card's `shown` receipt always uses, so it is stored once per card. */
-        fun shownId(cardId: String): String = "shown_" + cardId.removePrefix("ofc_")
+        fun shownId(cardId: String): String = "shown_" + if (cardId.startsWith("rvc_")) "r" + cardId.removePrefix("rvc_") else cardId.removePrefix("ofc_")
     }
 }
 
@@ -208,8 +208,9 @@ internal class SupportOfferOpener(
     var send: suspend (SupportOfferReceipt) -> AppReferSupportOfferCard?,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
-    fun receipt(card: AppReferSupportOfferCard, conversationId: String) =
-        SupportOfferReceipt(conversationId, card.cardId, "opened", SupportOfferReceipt.eventId("open"), SupportOfferReceipt.iso(now()))
+    fun receipt(card: AppReferSupportOfferCard, conversationId: String) = receipt(card.cardId, conversationId)
+    fun receipt(cardId: String, conversationId: String) =
+        SupportOfferReceipt(conversationId, cardId, "opened", SupportOfferReceipt.eventId("open"), SupportOfferReceipt.iso(now()))
 
     suspend fun check(r: SupportOfferReceipt): SupportOfferOpenCheck {
         queue.enqueue(r)
@@ -231,8 +232,11 @@ internal class SupportOfferOpener(
 /** Shared state for offer cards: whether the app set `onOffer`, and Billing changes to refresh on. */
 internal object SupportOffers {
     @Volatile var hasHandler = false
-    /** `offers` (this SDK draws cards) and `offer-handler` (the app opens its paywall from them). */
-    val featuresHeader: String get() = if (hasHandler) "offers, offer-handler" else "offers"
+    /**
+     * `offers` (this SDK draws cards), `offer-handler` (the app opens its paywall from them) and
+     * `reviews` (this SDK draws review cards and opens the store page itself).
+     */
+    val featuresHeader: String get() = if (hasHandler) "offers, offer-handler, reviews" else "offers, reviews"
     val billingListeners = CopyOnWriteArraySet<() -> Unit>()
     fun billingChanged() { billingListeners.forEach { runCatching { it() } } }
 }

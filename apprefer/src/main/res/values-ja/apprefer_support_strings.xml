@@ -247,4 +247,20 @@
     <string name="apprefer_support_offer_package_custom">オプション</string>
     <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
     <string name="apprefer_support_offer_a11y_hint">アプリのプランを開きます</string>
+    <!-- support.review.title: Small heading on an optional review card in the chat. Neutral: never ask for stars or a good rating, never promise anything. -->
+    <string name="apprefer_support_review_title">ご感想をお聞かせください</string>
+    <!-- support.review.body.appStore: Text on the review card. Store: App Store (brand name, never translated). -->
+    <string name="apprefer_support_review_body_app_store">よろしければ、App Storeでレビューを書くことができます。</string>
+    <!-- support.review.body.googlePlay: Text on the review card. Store: Google Play (brand name, never translated). -->
+    <string name="apprefer_support_review_body_google_play">よろしければ、Google Playでレビューを書くことができます。</string>
+    <!-- support.review.open: Button on the review card that opens the app's store page. Short. -->
+    <string name="apprefer_support_review_open">レビューを書く</string>
+    <!-- support.review.unavailable: Shown on a review card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_review_unavailable">このレビューのリンクは利用できなくなりました</string>
+    <!-- support.review.unsupported: Shown on a review card when the app has no store page for this platform. -->
+    <string name="apprefer_support_review_unsupported">このデバイス用のストアページはありません</string>
+    <!-- support.review.a11y.hint.appStore: VoiceOver/TalkBack hint on the review card's button. Store: App Store (brand name, never translated). -->
+    <string name="apprefer_support_review_a11y_hint_app_store">App Storeを開きます</string>
+    <!-- support.review.a11y.hint.googlePlay: VoiceOver/TalkBack hint on the review card's button. Store: Google Play (brand name, never translated). -->
+    <string name="apprefer_support_review_a11y_hint_google_play">Google Playを開きます</string>
 </resources>

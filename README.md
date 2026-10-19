@@ -534,6 +534,25 @@ answer calls you anyway (the store is the real gate).
 - `reset()` and `clearIdentity()` drop pending receipts with the old session.
 - Older SDK versions show your text plus a line asking the customer to update the app.
 
+### Review cards (0.12.0)
+
+Your team can attach an optional **Write a review** card to a reply (inbox: ＋ Review link). The card
+says "Share your experience" and opens the app's Google Play listing (`https://play.google.com/store/apps/details?id=<package>`), in the Play Store app when it is installed. There is nothing to set up: AppRefer builds the link
+from the package name your app already has in AppRefer (Billing or the store URL in app settings).
+
+- Neutral and optional: no stars, no "do you like the app?" question, no reward, never sent
+  automatically and never only to happy customers. The AI assistant can only suggest one in a draft
+  for a person to send.
+- The SDK opens only `https://play.google.com/store/apps/details?id=<package>`; any other link from the server is shown as "no store page" and never opened.
+- The SDK never calls the store's in-app review prompt from the card: that prompt is limited by the
+  store and can silently show nothing, so both Apple and Google recommend a link for a button.
+- A tap records an `opened` receipt (same queue as offer cards; dropped by `reset()`/`clearIdentity()`).
+  It is never a review, a rating or a star count, and the chat never says a review was written.
+- A withdrawn, expired or changed card (store page or settings changed) shows "This review link is no
+  longer available"; a device with no store page for the app shows "There's no store page for this
+  device". AppRefer sends at most one card per customer every 120 days (configurable, 30–365).
+- Older SDK versions show your text plus a line asking the customer to update the app.
+
 0.12.0 is unreleased source (not tagged). Once tagged, install it from Git only: JitPack, `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.12.0` (core) and `com.github.AppAgentic.apprefer-android-sdk:apprefer-billing:0.12.0` (billing).
 
 ### Languages and your own wording

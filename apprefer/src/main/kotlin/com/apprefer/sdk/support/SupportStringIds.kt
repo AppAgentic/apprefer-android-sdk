@@ -134,6 +134,14 @@ internal object SupportStringIds {
             "support.offer.package.lifetime" to R.string.apprefer_support_offer_package_lifetime,
             "support.offer.package.custom" to R.string.apprefer_support_offer_package_custom,
             "support.offer.a11y.hint" to R.string.apprefer_support_offer_a11y_hint,
+            "support.review.title" to R.string.apprefer_support_review_title,
+            "support.review.body.appStore" to R.string.apprefer_support_review_body_app_store,
+            "support.review.body.googlePlay" to R.string.apprefer_support_review_body_google_play,
+            "support.review.open" to R.string.apprefer_support_review_open,
+            "support.review.unavailable" to R.string.apprefer_support_review_unavailable,
+            "support.review.unsupported" to R.string.apprefer_support_review_unsupported,
+            "support.review.a11y.hint.appStore" to R.string.apprefer_support_review_a11y_hint_app_store,
+            "support.review.a11y.hint.googlePlay" to R.string.apprefer_support_review_a11y_hint_google_play,
         )
     }
 

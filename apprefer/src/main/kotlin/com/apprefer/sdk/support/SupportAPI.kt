@@ -351,9 +351,15 @@ internal class SupportAPI(
      */
     suspend fun offerCards(id: String): List<AppReferSupportOfferCard> =
         (call("GET", "/conversations/${escape(id)}/offers?platform=android")["offers"] as? List<*>).orEmpty().mapNotNull { AppReferSupportOfferCard.from(it) }
-    /** Sends one receipt. Throws on network or server failure; a 4xx other than 408/429 is final. */
+    /** Every review card in a conversation with its state now (withdrawn, expired, store page changed). */
+    suspend fun reviewCards(id: String): List<AppReferSupportReviewCard> =
+        (call("GET", "/conversations/${escape(id)}/reviews?platform=android")["reviews"] as? List<*>).orEmpty().mapNotNull { AppReferSupportReviewCard.from(it) }
+    /**
+     * Sends one receipt. Throws on network or server failure; a 4xx other than 408/429 is final.
+     * Review cards (`rvc_…`) share this queue and post to their own route.
+     */
     suspend fun sendOfferReceipt(r: SupportOfferReceipt): AppReferSupportOfferCard? =
-        AppReferSupportOfferCard.from(call("POST", "/conversations/${escape(r.conversationId)}/offers/${escape(r.cardId)}/events?platform=android",
+        AppReferSupportOfferCard.from(call("POST", "/conversations/${escape(r.conversationId)}/${if (r.cardId.startsWith("rvc_")) "reviews" else "offers"}/${escape(r.cardId)}/events?platform=android",
             mapOf("kind" to r.kind, "clientEventId" to r.clientEventId, "occurredAt" to r.occurredAt))["offer"])
     /** Sends every queued receipt once; keeps the ones that failed for a transient reason. */
     suspend fun flushOfferReceipts(queue: SupportOfferReceipts) {
@@ -414,8 +420,10 @@ data class AppReferSupportMessage @JvmOverloads constructor(
     val handoff: Boolean? = null,
     /** An offer card sent with this reply: one of the app's offerings, with its state when read. */
     val offer: AppReferSupportOfferCard? = null,
+    /** An optional review card sent with this reply: a link to the app's Google Play listing. */
+    val review: AppReferSupportReviewCard? = null,
 ) {
-    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean, AppReferSupportOfferCard.from(m["offer"]))
+    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean, AppReferSupportOfferCard.from(m["offer"]), AppReferSupportReviewCard.from(m["review"]))
     val isHandoff: Boolean get() = handoff == true
 }
 /**
