@@ -283,20 +283,28 @@
     <string name="apprefer_support_review_a11y_hint_google_play">Otvara Google Play</string>
     <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
     <string name="apprefer_support_testimonial_reward">Za sudjelovanje: {reward}</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
-    <string name="apprefer_support_testimonial_reward_note">Nagrada ne ovisi o tome što podijelite ni o tome hoće li se upotrijebiti.</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">Dobro, loše ili pomiješano: želimo vaše iskreno mišljenje.</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
+    <string name="apprefer_support_testimonial_reward_note">Dobivate je za sudjelovanje, što god rekli i bez obzira na to dopuštate li ponovnu upotrebu.</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">Podijelite fotografiju ili video</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
     <string name="apprefer_support_testimonial_choose">Odaberi iz galerije</string>
     <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
     <string name="apprefer_support_testimonial_camera">Upotrijebi kameru</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">Snimi fotografiju</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">Snimi video</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">Pristup kameri je isključen. Možete odabrati iz svoje biblioteke.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Odaberi drugo</string>
     <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
     <string name="apprefer_support_testimonial_publish">Dopusti javnu upotrebu</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
-    <string name="apprefer_support_testimonial_publish_hint">Neobavezno. Nagradu dobivate u svakom slučaju, a javnu upotrebu možete kasnije zaustaviti.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
+    <string name="apprefer_support_testimonial_publish_hint">Neobavezno i isključeno dok to ne uključite. Nagrada je ista u oba slučaja, a dopuštenje možete kasnije povući.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Podijeli</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
@@ -305,10 +313,16 @@
     <string name="apprefer_support_testimonial_checking">Provjera…</string>
     <!-- support.testimonial.done: Title after a successful share. -->
     <string name="apprefer_support_testimonial_done">Hvala na dijeljenju!</string>
-    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
-    <string name="apprefer_support_testimonial_reward_pending">Vaša nagrada stiže.</string>
-    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
-    <string name="apprefer_support_testimonial_reward_done">Vaša nagrada je dodana.</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">Zaslužili ste je. Ovdje će se prikazati kao potvrđena nakon što bude primijenjena.</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">Vaša je nagrada potvrđena.</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">Vaša je nagrada dodana na vaš račun.</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">Vaša nagrada još nije potvrđena. Podrška to vidi i može je ponovno poslati.</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">Već ste sudjelovali u ovome pa ovaj put nema nove nagrade.</string>
     <!-- support.testimonial.decline: Button to decline the request. -->
     <string name="apprefer_support_testimonial_decline">Ne, hvala</string>
     <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
@@ -321,8 +335,8 @@
     <string name="apprefer_support_testimonial_too_long">Videozapisi mogu trajati do {seconds} s.</string>
     <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
     <string name="apprefer_support_testimonial_too_large">Datoteka je prevelika za dijeljenje.</string>
-    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
-    <string name="apprefer_support_testimonial_failed">Dijeljenje nije uspjelo. Provjerite vezu i pokušajte ponovno.</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">Dijeljenje nije uspjelo i ništa nije poslano. Provjerite vezu i pokušajte ponovno.</string>
     <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
     <string name="apprefer_support_testimonial_withdraw">Zaustavi javnu upotrebu</string>
     <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->

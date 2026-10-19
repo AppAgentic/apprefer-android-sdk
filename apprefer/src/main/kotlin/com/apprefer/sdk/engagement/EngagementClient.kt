@@ -319,7 +319,8 @@ internal class EngagementClient(
 
     suspend fun refreshDeviceState() = mutex.withLock { syncDevice(false) }
 
-    private fun capabilities(): Map<String, Any?> = mapOf("schema" to 1, "images" to options.allowedImageHosts.isNotEmpty(), "actions" to true)
+    /** `testimonials`: this SDK opens Support testimonial invitations (`/apprefer/testimonials/…`) as its own capture screen. */
+    private fun capabilities(): Map<String, Any?> = mapOf("schema" to 1, "images" to options.allowedImageHosts.isNotEmpty(), "actions" to true, "testimonials" to true)
 
     private suspend fun syncDevice(force: Boolean) {
         val key = apiKey ?: return

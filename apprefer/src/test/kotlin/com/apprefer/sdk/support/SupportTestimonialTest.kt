@@ -58,7 +58,7 @@ class SupportTestimonialTest {
         t.failSubmit = java.io.IOException("connection reset")
         flow.submit()
         assertEquals(TestimonialFlow.Phase.FAILED, flow.phase)
-        assertEquals("Couldn't share it. Check your connection and try again.", flow.notice)
+        assertEquals("Couldn't share it, nothing was sent. Check your connection and try again.", flow.notice)
         flow.submit()
         assertEquals(TestimonialFlow.Phase.DONE, flow.phase)
         assertEquals(1, t.slots); assertEquals(1, t.puts)
@@ -102,7 +102,24 @@ class SupportTestimonialTest {
         assertEquals("Videos can be up to 30 seconds.", flow.notice)
         flow.pickFailed("too_large", 0)
         assertEquals("This file is too large to share.", flow.notice)
+        // A camera that went away between the button and the tap is not an error; a declined prompt is explained.
+        flow.pickFailed("unavailable", 0)
+        assertEquals("This file is too large to share.", flow.notice)
+        flow.pickFailed("camera_denied", 0)
+        assertEquals("Camera access is off. You can choose from your library instead.", flow.notice)
         assertEquals(AppReferTestimonialResult(t.current.requestId, "declined", "none", null), flow.decline(true))
+    }
+
+    @Test fun theRewardLineFollowsTheBackendsReceiptAndTheRewardType() {
+        fun line(status: String, type: String) = SupportStrings.text(request(json(status = "submitted", rewardStatus = status)).copy(reward = AppReferTestimonialRequest.Reward(type, "x")).rewardStatusKey)
+        // Earned but unconfirmed: never "added".
+        for (s in listOf("pending", "delivered", "none")) assertEquals("You've earned it. It shows as confirmed here once it has been applied.", line(s, "credits"))
+        for (type in listOf("credits", "coach_usage", "subscription_time")) assertEquals("Your reward has been added to your account.", line("fulfilled", type))
+        // Goods, gifts and discounts are handled by the app: confirmed, no shipping or email promise.
+        for (type in listOf("merch", "gift", "discount", "manual")) assertEquals("Your reward is confirmed.", line("fulfilled", type))
+        assertEquals("Your reward hasn't been confirmed yet. Support can see this and can send it again.", line("failed", "merch"))
+        assertEquals(line("failed", "merch"), line("timed_out", "credits"))
+        assertEquals("You've already taken part in this, so there's no new reward this time.", line("not_eligible", "credits"))
     }
 
     @Test fun rewardUpdatesReachTheAppOncePerChange() {
@@ -160,6 +177,9 @@ class SupportTestimonialTest {
 
     @Test fun everyLanguageHasTheTestimonialStrings() {
         assertEquals("For taking part: 50 bonus credits", SupportStrings.text("support.testimonial.reward", "reward" to "50 bonus credits"))
-        assertEquals("The reward doesn't depend on what you share or whether it's used.", SupportStrings.text("support.testimonial.rewardNote"))
+        assertEquals("You get it for taking part, whatever you say and whether or not you allow reuse.", SupportStrings.text("support.testimonial.rewardNote"))
+        assertEquals("Good, bad or mixed: we want your honest take.", SupportStrings.text("support.testimonial.honest"))
+        assertEquals("Take a photo", SupportStrings.text("support.testimonial.takePhoto"))
+        assertEquals("Record a video", SupportStrings.text("support.testimonial.recordVideo"))
     }
 }

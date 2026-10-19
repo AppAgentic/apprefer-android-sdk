@@ -282,20 +282,28 @@
     <string name="apprefer_support_review_a11y_hint_google_play">Ανοίγει το Google Play</string>
     <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
     <string name="apprefer_support_testimonial_reward">Για τη συμμετοχή σου: {reward}</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
-    <string name="apprefer_support_testimonial_reward_note">Η ανταμοιβή δεν εξαρτάται από το τι μοιράζεσαι ή αν θα χρησιμοποιηθεί.</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">Καλή, κακή ή ανάμεικτη: θέλουμε την ειλικρινή σου γνώμη.</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
+    <string name="apprefer_support_testimonial_reward_note">Την παίρνεις επειδή συμμετέχεις, ό,τι κι αν πεις και είτε επιτρέψεις την επαναχρησιμοποίηση είτε όχι.</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">Μοιράσου μια φωτογραφία ή ένα βίντεο</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
     <string name="apprefer_support_testimonial_choose">Επιλογή από τη βιβλιοθήκη</string>
     <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
     <string name="apprefer_support_testimonial_camera">Χρήση κάμερας</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">Λήψη φωτογραφίας</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">Εγγραφή βίντεο</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">Η πρόσβαση στην κάμερα είναι απενεργοποιημένη. Μπορείς να επιλέξεις από τη βιβλιοθήκη σου.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Επιλογή άλλου</string>
     <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
     <string name="apprefer_support_testimonial_publish">Να επιτρέπεται η δημόσια χρήση</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
-    <string name="apprefer_support_testimonial_publish_hint">Προαιρετικό. Παίρνεις την ανταμοιβή σε κάθε περίπτωση και μπορείς να σταματήσεις τη δημόσια χρήση αργότερα.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
+    <string name="apprefer_support_testimonial_publish_hint">Προαιρετικό και ανενεργό αν δεν το ενεργοποιήσεις. Η ανταμοιβή είναι ίδια σε κάθε περίπτωση και μπορείς να το ανακαλέσεις αργότερα.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Κοινοποίηση</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
@@ -304,10 +312,16 @@
     <string name="apprefer_support_testimonial_checking">Γίνεται έλεγχος…</string>
     <!-- support.testimonial.done: Title after a successful share. -->
     <string name="apprefer_support_testimonial_done">Ευχαριστούμε που το μοιράστηκες!</string>
-    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
-    <string name="apprefer_support_testimonial_reward_pending">Η ανταμοιβή σου έρχεται.</string>
-    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
-    <string name="apprefer_support_testimonial_reward_done">Η ανταμοιβή σου προστέθηκε.</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">Την κέρδισες. Θα εμφανιστεί εδώ ως επιβεβαιωμένη μόλις αποδοθεί.</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">Η ανταμοιβή σου επιβεβαιώθηκε.</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">Η ανταμοιβή σου προστέθηκε στον λογαριασμό σου.</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">Η ανταμοιβή σου δεν έχει επιβεβαιωθεί ακόμη. Η υποστήριξη το βλέπει και μπορεί να τη στείλει ξανά.</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">Έχεις ήδη συμμετάσχει σε αυτό, οπότε αυτή τη φορά δεν υπάρχει νέα ανταμοιβή.</string>
     <!-- support.testimonial.decline: Button to decline the request. -->
     <string name="apprefer_support_testimonial_decline">Όχι, ευχαριστώ</string>
     <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
@@ -320,8 +334,8 @@
     <string name="apprefer_support_testimonial_too_long">Τα βίντεο μπορούν να διαρκούν έως {seconds} δευτερόλεπτα.</string>
     <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
     <string name="apprefer_support_testimonial_too_large">Αυτό το αρχείο είναι πολύ μεγάλο για κοινοποίηση.</string>
-    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
-    <string name="apprefer_support_testimonial_failed">Δεν ήταν δυνατή η κοινοποίηση. Έλεγξε τη σύνδεσή σου και δοκίμασε ξανά.</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">Δεν ήταν δυνατή η κοινοποίηση και δεν στάλθηκε τίποτα. Έλεγξε τη σύνδεσή σου και δοκίμασε ξανά.</string>
     <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
     <string name="apprefer_support_testimonial_withdraw">Διακοπή δημόσιας χρήσης</string>
     <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->

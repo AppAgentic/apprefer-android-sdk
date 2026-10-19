@@ -284,20 +284,28 @@
     <string name="apprefer_support_review_a11y_hint_google_play">Відкриває Google Play</string>
     <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
     <string name="apprefer_support_testimonial_reward">За участь: {reward}</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
-    <string name="apprefer_support_testimonial_reward_note">Винагорода не залежить від того, чим ви поділитеся і чи це буде використано.</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">Добре, погане чи змішане: нам важлива ваша чесна думка.</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
+    <string name="apprefer_support_testimonial_reward_note">Ви отримуєте її за участь, що б ви не сказали і незалежно від того, чи дозволите повторне використання.</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">Поділитися фото чи відео</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
     <string name="apprefer_support_testimonial_choose">Вибрати з медіатеки</string>
     <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
     <string name="apprefer_support_testimonial_camera">Використати камеру</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">Зробити фото</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">Зняти відео</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">Доступ до камери вимкнено. Натомість можна вибрати з медіатеки.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Вибрати інше</string>
     <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
     <string name="apprefer_support_testimonial_publish">Дозволити публічне використання</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
-    <string name="apprefer_support_testimonial_publish_hint">Необов’язково. Винагороду ви отримаєте в будь-якому разі, а публічне використання можна зупинити пізніше.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
+    <string name="apprefer_support_testimonial_publish_hint">Необов’язково й вимкнено, доки ви цього не ввімкнете. Винагорода в обох випадках однакова, а дозвіл можна відкликати пізніше.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Поділитися</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
@@ -306,10 +314,16 @@
     <string name="apprefer_support_testimonial_checking">Перевірка…</string>
     <!-- support.testimonial.done: Title after a successful share. -->
     <string name="apprefer_support_testimonial_done">Дякуємо, що поділилися!</string>
-    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
-    <string name="apprefer_support_testimonial_reward_pending">Ваша винагорода вже в дорозі.</string>
-    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
-    <string name="apprefer_support_testimonial_reward_done">Вашу винагороду додано.</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">Ви її заслужили. Тут вона з’явиться як підтверджена, щойно її нарахують.</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">Вашу винагороду підтверджено.</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">Вашу винагороду додано до вашого облікового запису.</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">Вашу винагороду ще не підтверджено. Підтримка бачить це й може надіслати її повторно.</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">Ви вже брали в цьому участь, тож цього разу нової винагороди немає.</string>
     <!-- support.testimonial.decline: Button to decline the request. -->
     <string name="apprefer_support_testimonial_decline">Ні, дякую</string>
     <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
@@ -322,8 +336,8 @@
     <string name="apprefer_support_testimonial_too_long">Відео може тривати до {seconds} с.</string>
     <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
     <string name="apprefer_support_testimonial_too_large">Файл завеликий, щоб ним поділитися.</string>
-    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
-    <string name="apprefer_support_testimonial_failed">Не вдалося поділитися. Перевірте з’єднання і спробуйте ще раз.</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">Не вдалося поділитися, нічого не надіслано. Перевірте з’єднання та спробуйте ще раз.</string>
     <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
     <string name="apprefer_support_testimonial_withdraw">Зупинити публічне використання</string>
     <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->

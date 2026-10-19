@@ -283,20 +283,28 @@
     <string name="apprefer_support_review_a11y_hint_google_play">Otevře Google Play</string>
     <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
     <string name="apprefer_support_testimonial_reward">Za účast: {reward}</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
-    <string name="apprefer_support_testimonial_reward_note">Odměna nezávisí na tom, co sdílíte, ani na tom, zda se to použije.</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">Dobré, špatné nebo smíšené: chceme váš upřímný názor.</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
+    <string name="apprefer_support_testimonial_reward_note">Dostanete ji za účast, ať řeknete cokoli a ať opětovné použití povolíte, nebo ne.</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">Sdílet fotku nebo video</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
     <string name="apprefer_support_testimonial_choose">Vybrat z knihovny</string>
     <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
     <string name="apprefer_support_testimonial_camera">Použít fotoaparát</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">Vyfotit</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">Natočit video</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">Přístup k fotoaparátu je vypnutý. Můžete vybrat z knihovny.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Vybrat jiné</string>
     <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
     <string name="apprefer_support_testimonial_publish">Povolit veřejné použití</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
-    <string name="apprefer_support_testimonial_publish_hint">Volitelné. Odměnu dostanete tak jako tak a veřejné použití můžete později zastavit.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
+    <string name="apprefer_support_testimonial_publish_hint">Nepovinné a vypnuté, dokud to nezapnete. Odměna je v obou případech stejná a souhlas můžete později odvolat.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Sdílet</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
@@ -305,10 +313,16 @@
     <string name="apprefer_support_testimonial_checking">Kontrola…</string>
     <!-- support.testimonial.done: Title after a successful share. -->
     <string name="apprefer_support_testimonial_done">Díky za sdílení!</string>
-    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
-    <string name="apprefer_support_testimonial_reward_pending">Vaše odměna je na cestě.</string>
-    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
-    <string name="apprefer_support_testimonial_reward_done">Vaše odměna byla přidána.</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">Máte ji zasloužené. Jakmile bude připsána, uvidíte ji tu jako potvrzenou.</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">Vaše odměna je potvrzena.</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">Vaše odměna byla připsána na váš účet.</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">Vaše odměna zatím nebyla potvrzena. Podpora to vidí a může ji poslat znovu.</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">Do této akce jste se už zapojili, takže tentokrát nová odměna není.</string>
     <!-- support.testimonial.decline: Button to decline the request. -->
     <string name="apprefer_support_testimonial_decline">Ne, děkuji</string>
     <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
@@ -321,8 +335,8 @@
     <string name="apprefer_support_testimonial_too_long">Videa mohou mít nejvýše {seconds} s.</string>
     <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
     <string name="apprefer_support_testimonial_too_large">Tento soubor je příliš velký na sdílení.</string>
-    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
-    <string name="apprefer_support_testimonial_failed">Sdílení se nepodařilo. Zkontrolujte připojení a zkuste to znovu.</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">Sdílení se nepodařilo, nic nebylo odesláno. Zkontrolujte připojení a zkuste to znovu.</string>
     <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
     <string name="apprefer_support_testimonial_withdraw">Zastavit veřejné použití</string>
     <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->

@@ -565,7 +565,7 @@ from the package name your app already has in AppRefer (Billing or the store URL
 Ask a signed-in customer for a photo or a short video and give them the reward your campaign sets,
 from your own screens, from your coach/assistant, from a Support reply, or automatically after
 real usage. One native capture screen does it everywhere: what's asked, the reward, the system photo
-picker (Android 13+ photo picker, else the document picker; no storage permission) or the camera app for a video, a preview, an optional **Allow public use** switch with your exact permission
+picker (Android 13+ photo picker, else the document picker; no storage permission) or the camera app for a still photo or a video, a preview, an optional **Allow public use** switch with your exact permission
 text, upload progress, then the result.
 
 1. Your backend registers campaigns (`PUT /api/v1/apps/{appId}/support/testimonials/campaigns`,
@@ -603,10 +603,24 @@ AppRefer.support.testimonials.present(activity, requestId) { result ->
   150 MB per video. The server checks the stored bytes and video length again.
 - Requests from Support show as a card in the chat ("Share a photo or video"); older SDK versions
   show your text and a line asking the customer to update the app.
-- No new permission. Recording a video uses the camera app (`ACTION_VIDEO_CAPTURE`); it is
-  offered only when a camera app exists and your app doesn't declare `CAMERA` without holding it
-  (Android refuses capture intents then). Taking a still photo with the camera isn't offered on
-  Android; photos come from the picker.
+- The Support home shows the newest open request for the verified account as a card each time it
+  opens (never a pop-up). Requests your backend, coach or automation made appear there by
+  themselves; shared, declined, withdrawn or ended ones leave it, and another account's never show.
+- Automated asks (a campaign `automation`, switched on separately in Support): the invitation is that
+  home card. The SDK declares the `testimonials` engagement capability and opens a tapped
+  invitation notification (`/apprefer/testimonials/<requestId>`) as the capture screen itself,
+  never through `onNotificationEvent`. AppRefer only records push invitations as dry runs in this
+  release: no notification is sent yet.
+- The reward line after sharing is honest about who confirms it: "earned" until your backend
+  reports its receipt; then "added to your account" for credits, coach answers and subscription
+  time, or "confirmed" for anything else (no shipping or email promise); a failed or late one says
+  Support can see it and send it again.
+- No new permission. "Take a photo" and "Record a video" use the camera app
+  (`ACTION_IMAGE_CAPTURE` into a private cache file through the SDK's own non-exported provider, and
+  `ACTION_VIDEO_CAPTURE`); the library merges the `<queries>` that let it find a camera app on
+  Android 11+. Each is offered only when the device has a camera and a camera app. If your app
+  itself declares `CAMERA`, Android refuses capture intents until it is granted, so the SDK asks for
+  it with the system prompt at the moment of capture; declining keeps the library and says so.
 
 0.13.0 is unreleased source (not tagged). Once tagged, install it from JitPack only: `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.13.0` (and `apprefer-billing:0.13.0` if you use Billing; keep both on the same version).
 

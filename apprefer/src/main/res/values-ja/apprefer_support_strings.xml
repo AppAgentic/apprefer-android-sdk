@@ -281,20 +281,28 @@
     <string name="apprefer_support_review_a11y_hint_google_play">Google Playを開きます</string>
     <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
     <string name="apprefer_support_testimonial_reward">参加特典：{reward}</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
-    <string name="apprefer_support_testimonial_reward_note">特典は、共有した内容や使用されるかどうかに関係ありません。</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">良い点も悪い点も、どちらとも言えない点も。正直なご意見をお聞かせください。</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
+    <string name="apprefer_support_testimonial_reward_note">内容にかかわらず、また再利用を許可するかどうかにかかわらず、参加いただくと受け取れます。</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">写真や動画を共有</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
     <string name="apprefer_support_testimonial_choose">ライブラリから選択</string>
     <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
     <string name="apprefer_support_testimonial_camera">カメラを使う</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">写真を撮る</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">動画を撮る</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">カメラへのアクセスがオフになっています。代わりにライブラリから選べます。</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">別のものを選ぶ</string>
     <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
     <string name="apprefer_support_testimonial_publish">公開利用を許可</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
-    <string name="apprefer_support_testimonial_publish_hint">任意です。どちらでも特典を受け取れ、公開利用は後から停止できます。</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
+    <string name="apprefer_support_testimonial_publish_hint">任意です。オンにしない限りオフのままです。どちらでも特典は同じで、あとから取り消すこともできます。</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">共有</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
@@ -303,10 +311,16 @@
     <string name="apprefer_support_testimonial_checking">確認中…</string>
     <!-- support.testimonial.done: Title after a successful share. -->
     <string name="apprefer_support_testimonial_done">共有していただきありがとうございます！</string>
-    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
-    <string name="apprefer_support_testimonial_reward_pending">特典をお届けしています。</string>
-    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
-    <string name="apprefer_support_testimonial_reward_done">特典が追加されました。</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">特典の対象です。付与されると、ここに確認済みと表示されます。</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">特典が確認されました。</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">特典がアカウントに追加されました。</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">特典はまだ確認されていません。サポートが状況を確認でき、再送することもできます。</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">すでにご参加いただいているため、今回は新しい特典はありません。</string>
     <!-- support.testimonial.decline: Button to decline the request. -->
     <string name="apprefer_support_testimonial_decline">今回はやめておく</string>
     <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
@@ -319,8 +333,8 @@
     <string name="apprefer_support_testimonial_too_long">動画は最長{seconds}秒です。</string>
     <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
     <string name="apprefer_support_testimonial_too_large">このファイルは大きすぎて共有できません。</string>
-    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
-    <string name="apprefer_support_testimonial_failed">共有できませんでした。接続を確認してもう一度お試しください。</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">共有できませんでした。何も送信されていません。接続を確認して、もう一度お試しください。</string>
     <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
     <string name="apprefer_support_testimonial_withdraw">公開利用を停止</string>
     <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->

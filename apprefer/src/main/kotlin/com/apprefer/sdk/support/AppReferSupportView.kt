@@ -218,6 +218,14 @@ class AppReferSupportView @JvmOverloads constructor(
     private val reviewCards = mutableMapOf<String, AppReferSupportReviewCard>()
     // Photo/video requests: each request's latest state by request id.
     private val testimonialStates = mutableMapOf<String, AppReferTestimonialRequest>()
+    /**
+     * Open photo/video requests for the account verified on this device now (from the app's
+     * backend, its coach, automation or a Support reply), newest first; the home shows the newest.
+     * Read when the home shows (at most once a minute), when the chat comes back and after the
+     * capture screen closes. An account reset clears them before the next account's are read.
+     */
+    private var invitations = emptyList<AppReferTestimonialRequest>()
+    private var invitationsAt = 0L
     /** Opens a validated Google Play URL (tests swap it); the system URL opener, no extra dependency. */
     internal var openStorePage: (String) -> Unit = { url -> openPlayListing(url) }
     private val cursor get() = timeline.cursor
@@ -246,6 +254,7 @@ class AppReferSupportView @JvmOverloads constructor(
         pause(); scope.cancel()
         timeline.reset(); conversations = emptyList(); pending.clear()
         offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear(); reviewCards.clear(); testimonialStates.clear()
+        invitations = emptyList(); invitationsAt = 0L
         images.clear(); draft = ""; homeStash = null; id = null; topic = null
         draftFile?.delete(); draftFile = null
         starting = false; sendError = null; loadError = null; route = "home"
@@ -518,6 +527,7 @@ class AppReferSupportView @JvmOverloads constructor(
         body.removeAllViews()
         val sections = SupportHomeSections(conversations)
         fun add(v: View) = body.addView(v, lp(top = if (body.childCount > 0) dp(24) else 0))
+        invitations.firstOrNull()?.let { add(testimonialCard(it, home = true)) }
         sections.current?.let { add(continueCard(it)) }
         // Hidden entirely when the app has no published articles.
         if (articles.isNotEmpty()) add(helpSection(prominent = sections.current == null))
@@ -887,10 +897,11 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     /**
-     * A photo/video request under a team message: what's asked, the campaign's reward, and "Share a
-     * photo or video", which opens the capture screen. Shared, declined or unavailable requests say so.
+     * A photo/video request under a team message, or (`home`) the invitation card on the Support
+     * home: what's asked, the campaign's reward, and "Share a photo or video", which opens the
+     * capture screen. Shared, declined or unavailable requests say so.
      */
-    private fun testimonialCard(request: AppReferTestimonialRequest): View {
+    private fun testimonialCard(request: AppReferTestimonialRequest, home: Boolean = false): View {
         val active = request.isOpen
         val box = column().apply {
             setPadding(dp(14), dp(14), dp(14), dp(14))
@@ -900,22 +911,45 @@ class AppReferSupportView @JvmOverloads constructor(
         box.addView(text(request.title ?: s("support.testimonial.open"), 15f, c.ink, 700).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp())
         if (active) {
             request.prompt?.let { box.addView(text(it, 14.5f, c.ink), lp(top = dp(8))) }
+            box.addView(text(s("support.testimonial.honest"), 13f, c.muted), lp(top = dp(6)))
             request.reward?.description?.let { box.addView(text(s("support.testimonial.reward", "reward" to it), 13.5f, p.accent, 600), lp(top = dp(8))) }
             box.addView(FrameLayout(context).apply {
                 background = gradient(floatArrayOf(dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99)))
                 addView(text(s("support.testimonial.open"), 15.5f, p.onAccent, 600).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
                 minimumHeight = dp(46)
                 pressable(s("support.testimonial.open")) {
-                    AppReferTestimonials.present(context, request.requestId) { scope.launch { refreshTestimonial(request.requestId) } }
+                    AppReferTestimonials.present(context, request.requestId) {
+                        scope.launch { if (home) invitationClosed(request.requestId) else refreshTestimonial(request.requestId) }
+                    }
                 }
             }, lp(top = dp(12), h = dp(46)))
         } else {
             box.addView(text(s(if (request.status == "submitted") "support.testimonial.done" else "support.testimonial.unavailable"), 13.5f, c.muted), lp(top = dp(8)))
         }
+        if (home) return box
         return FrameLayout(context).apply {
             setPaddingRelative(dp(38), 0, 0, 0)
             addView(box, FrameLayout.LayoutParams(minOf(dp(340), resources.displayMetrics.widthPixels - dp(66)), -2, Gravity.START))
         }
+    }
+
+    /** At most once a minute unless [force]d; offline keeps what is shown. */
+    private suspend fun refreshInvitations(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - invitationsAt < 60_000) return
+        invitationsAt = now
+        val epoch = api.actionGeneration
+        val open = try { api.openTestimonials() } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+        if (!api.isCurrent(epoch)) return
+        val next = open.filter { it.isOpen }
+        if (next != invitations) { invitations = next; if (route == "home") renderHomeContent() }
+    }
+
+    /** The capture screen closed: the request leaves the home now, then the list is re-read. */
+    private suspend fun invitationClosed(requestId: String) {
+        invitations = invitations.filter { it.requestId != requestId }
+        if (route == "home") renderHomeContent()
+        refreshInvitations(force = true)
     }
 
     private suspend fun refreshTestimonial(requestId: String) {
@@ -1842,7 +1876,8 @@ class AppReferSupportView @JvmOverloads constructor(
 
     fun pause() { visible = false; polling?.cancel(); polling = null; SupportOffers.billingListeners.remove(billingListener) }
     fun resume() {
-        visible = true; startPolling()
+        // Coming back re-reads the home's invitations on the next poll.
+        visible = true; invitationsAt = 0L; startPolling()
         // Offer cards follow purchases, restores and sign-ins as Billing reports them, and coming back.
         SupportOffers.billingListeners.add(billingListener)
         scope.launch { refreshOffers(); runCatching { api.flushOfferReceipts(offerQueue) } }
@@ -1856,6 +1891,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 try {
                     if (screen == "home") {
                         refreshArticles()
+                        refreshInvitations()
                         val list = api.conversations()
                         // Re-render only on change, so a poll never resets a press or the scroll.
                         if (route == "home" && (list != conversations || !homeLoaded || loadError != null)) {

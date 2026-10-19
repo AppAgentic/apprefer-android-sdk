@@ -286,20 +286,28 @@
     <string name="apprefer_support_review_a11y_hint_google_play">يفتح Google Play</string>
     <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
     <string name="apprefer_support_testimonial_reward">مقابل مشاركتك: {reward}</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
-    <string name="apprefer_support_testimonial_reward_note">لا تعتمد المكافأة على ما تشاركه أو على استخدامه.</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">جيد أو سيئ أو بين بين: نريد رأيك الصادق.</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
+    <string name="apprefer_support_testimonial_reward_note">تحصل عليها مقابل المشاركة، مهما قلت وسواء سمحت بإعادة الاستخدام أم لا.</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">شارك صورة أو فيديو</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
     <string name="apprefer_support_testimonial_choose">اختر من المكتبة</string>
     <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
     <string name="apprefer_support_testimonial_camera">استخدم الكاميرا</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">التقط صورة</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">سجّل فيديو</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">الوصول إلى الكاميرا متوقف. يمكنك الاختيار من مكتبتك بدلًا من ذلك.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">اختر غيرها</string>
     <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
     <string name="apprefer_support_testimonial_publish">السماح بالاستخدام العام</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
-    <string name="apprefer_support_testimonial_publish_hint">اختياري. تحصل على المكافأة في كل الأحوال، ويمكنك إيقاف الاستخدام العام لاحقًا.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
+    <string name="apprefer_support_testimonial_publish_hint">اختياري ومتوقف ما لم تفعّله. المكافأة نفسها في الحالتين، ويمكنك سحب الإذن لاحقًا.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">مشاركة</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
@@ -308,10 +316,16 @@
     <string name="apprefer_support_testimonial_checking">جارٍ التحقق…</string>
     <!-- support.testimonial.done: Title after a successful share. -->
     <string name="apprefer_support_testimonial_done">شكرًا على المشاركة!</string>
-    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
-    <string name="apprefer_support_testimonial_reward_pending">مكافأتك في الطريق.</string>
-    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
-    <string name="apprefer_support_testimonial_reward_done">أُضيفت مكافأتك.</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">لقد استحققتها. ستظهر هنا مؤكدة بعد تطبيقها.</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">تم تأكيد مكافأتك.</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">أُضيفت مكافأتك إلى حسابك.</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">لم تُؤكَّد مكافأتك بعد. يرى فريق الدعم ذلك ويمكنه إرسالها مجددًا.</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">لقد شاركت في هذا من قبل، لذا لا توجد مكافأة جديدة هذه المرة.</string>
     <!-- support.testimonial.decline: Button to decline the request. -->
     <string name="apprefer_support_testimonial_decline">لا، شكرًا</string>
     <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
@@ -324,8 +338,8 @@
     <string name="apprefer_support_testimonial_too_long">يمكن أن يصل طول الفيديو إلى {seconds} ثانية.</string>
     <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
     <string name="apprefer_support_testimonial_too_large">هذا الملف كبير جدًا لمشاركته.</string>
-    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
-    <string name="apprefer_support_testimonial_failed">تعذّرت المشاركة. تحقق من اتصالك وحاول مرة أخرى.</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">تعذّرت المشاركة ولم يُرسَل شيء. تحقق من اتصالك وحاول مرة أخرى.</string>
     <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
     <string name="apprefer_support_testimonial_withdraw">إيقاف الاستخدام العام</string>
     <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->

@@ -73,6 +73,19 @@ data class AppReferTestimonialRequest(
     val allowsImages: Boolean get() = "image" in media
     val allowsVideos: Boolean get() = "video" in media
 
+    /**
+     * The table key for the reward line after sharing. Confirmed only once the app's backend
+     * reported its receipt (`fulfilled`); in-account rewards say "added to your account", anything
+     * else just "confirmed" (no delivery or email promise).
+     */
+    internal val rewardStatusKey: String
+        get() = when (rewardStatus) {
+            "fulfilled" -> if (reward?.type in setOf("credits", "coach_usage", "subscription_time")) "support.testimonial.rewardDone.account" else "support.testimonial.rewardDone"
+            "failed", "timed_out" -> "support.testimonial.rewardDelayed"
+            "not_eligible" -> "support.testimonial.rewardNotEligible"
+            else -> "support.testimonial.rewardPending"
+        }
+
     internal companion object {
         /** Null when the value isn't a request: no broken card is drawn. */
         fun from(raw: Any?): AppReferTestimonialRequest? {
@@ -158,9 +171,11 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
 
     fun pickFailed(code: String, seconds: Int) {
         notice = when (code) {
-            "cancelled" -> notice
+            // Nothing chosen, or the camera went away between showing the button and the tap.
+            "cancelled", "unavailable" -> notice
             "too_long" -> SupportStrings.text("support.testimonial.tooLong", "seconds" to seconds.toString())
             "too_large" -> SupportStrings.text("support.testimonial.tooLarge")
+            "camera_denied" -> SupportStrings.text("support.testimonial.cameraDenied")
             else -> SupportStrings.text("support.error.imageUnreadable")
         }
         changed()
@@ -239,8 +254,11 @@ object AppReferTestimonials {
     /** Runs the callback on the main thread (tests run it directly). */
     internal var dispatch: (() -> Unit) -> Unit = { r -> Handler(Looper.getMainLooper()).post(r) }
 
-    /** Whether the camera can be offered for a video (the photo picker is always offered). */
+    /** Whether the camera can take a photo or record a video now (the photo picker is always offered). */
     fun cameraAvailable(context: Context): Boolean = TestimonialMedia.cameraAvailable(context)
+
+    /** Whether the camera can take a still photo (`video` false) or record a video (`video` true) now. */
+    fun cameraAvailable(context: Context, video: Boolean): Boolean = TestimonialMedia.cameraAvailable(context, video)
 
     /** Open requests for the verified account (empty when the session isn't verified). */
     suspend fun pending(): List<AppReferTestimonialRequest> = AppReferSupport.configuredApi().openTestimonials()
@@ -276,13 +294,21 @@ object AppReferTestimonials {
     init { AppReferSupport.resetListeners.add { reset() } }
 }
 
-/** The capture screen: what's asked, the reward, pick or record, preview, optional public use, progress, result. */
+/**
+ * The capture screen: what's asked, the reward, pick, take a photo or record, preview, optional
+ * public use, progress, result. The camera app takes the photo or video: no camera permission is
+ * declared, and only when the host app itself declares CAMERA is it asked for, right before capture.
+ */
 class AppReferTestimonialActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var flow: TestimonialFlow
     private lateinit var body: LinearLayout
     private var token: String? = null
     private var finished = false
+    /** The private file the camera app is writing a still photo to (kept across recreation). */
+    private var capturePath: String? = null
+    /** The capture waiting for the CAMERA prompt's answer: "image" or "video". */
+    private var awaitingPermission: String? = null
     private val resetListener: () -> Unit = { finish() }
     private val dark get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
     private val c by lazy { SupportColors(dark) }
@@ -295,6 +321,8 @@ class AppReferTestimonialActivity : Activity() {
         super.onCreate(state)
         AppReferSupport.resetListeners.add(resetListener)
         token = intent.getStringExtra("token")
+        capturePath = state?.getString(STATE_CAPTURE)
+        awaitingPermission = state?.getString(STATE_PERMISSION)
         val requestId = intent.getStringExtra("requestId") ?: return finish()
         // Upload progress arrives on a background thread: views are only touched on the main one.
         flow = TestimonialFlow(requestId, LiveTestimonialTransport(AppReferSupport.configuredApi())) { runOnUiThread { render() } }
@@ -304,9 +332,18 @@ class AppReferTestimonialActivity : Activity() {
         scope.launch { flow.load() }
     }
 
+    override fun onSaveInstanceState(out: Bundle) {
+        super.onSaveInstanceState(out)
+        // The camera app may outlive this activity's process: its target file and a pending
+        // permission question come back with the recreated screen.
+        out.putString(STATE_CAPTURE, capturePath)
+        out.putString(STATE_PERMISSION, awaitingPermission)
+    }
+
     override fun onDestroy() {
         AppReferSupport.resetListeners.remove(resetListener)
         scope.cancel()
+        if (isFinishing) capturePath?.let { TestimonialMedia.discardCapture(this, it) }
         if (::flow.isInitialized) {
             flow.file?.let { TestimonialMedia.discard(this, it.path) }
             if (!finished) deliver(flow.result)
@@ -325,12 +362,21 @@ class AppReferTestimonialActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != PICK && requestCode != CAMERA) return
+        // A still photo arrives in our own capture file (the camera app returns no URI for EXTRA_OUTPUT).
+        val shot = if (requestCode == CAMERA) capturePath else null
+        capturePath = null
         val uri = data?.data
-        val r = flow.request ?: return
-        if (resultCode != RESULT_OK || uri == null) return
+        val r = flow.request
+        if (resultCode != RESULT_OK || r == null || (shot == null && uri == null)) {
+            shot?.let { TestimonialMedia.discardCapture(this, it) }
+            return
+        }
         scope.launch {
             try {
-                val picked = withContext(Dispatchers.IO) { TestimonialMedia.normalize(this@AppReferTestimonialActivity, uri, r.allowsImages, r.allowsVideos, r.maxVideoSeconds ?: 30) }
+                val picked = withContext(Dispatchers.IO) {
+                    if (shot != null) TestimonialMedia.finishPhotoCapture(this@AppReferTestimonialActivity, shot)
+                    else TestimonialMedia.normalize(this@AppReferTestimonialActivity, uri!!, r.allowsImages, r.allowsVideos, r.maxVideoSeconds ?: 30)
+                }
                 flow.file?.let { TestimonialMedia.discard(this@AppReferTestimonialActivity, it.path) }
                 flow.picked(picked)
             } catch (e: TestimonialMedia.MediaException) {
@@ -339,11 +385,44 @@ class AppReferTestimonialActivity : Activity() {
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun pick(camera: Boolean) {
+    /** null: the photo picker; "image": a still photo; "video": a video, both in the camera app. */
+    private fun pick(source: String?) {
         val r = flow.request ?: return
-        val intent = if (camera) TestimonialMedia.videoCaptureIntent(r.maxVideoSeconds ?: 30) else TestimonialMedia.libraryIntent(r.allowsImages, r.allowsVideos)
-        try { startActivityForResult(intent, if (camera) CAMERA else PICK) } catch (_: Exception) { flow.pickFailed("unreadable", 0) }
+        if (source == null) { launch(TestimonialMedia.libraryIntent(r.allowsImages, r.allowsVideos), PICK); return }
+        if (!TestimonialMedia.cameraAvailable(this, source == "video")) { flow.pickFailed("unavailable", 0); return }
+        if (Build.VERSION.SDK_INT >= 23 && TestimonialMedia.cameraPermissionNeeded(this)) {
+            // The app declares CAMERA: Android refuses capture intents until it is granted.
+            awaitingPermission = source
+            requestPermissions(arrayOf(android.Manifest.permission.CAMERA), PERMISSION)
+            return
+        }
+        capture(source)
+    }
+
+    private fun capture(kind: String) {
+        val r = flow.request ?: return
+        if (kind == "video") { launch(TestimonialMedia.videoCaptureIntent(r.maxVideoSeconds ?: 30), CAMERA); return }
+        val shot = try { TestimonialMedia.photoCapture(this) } catch (e: TestimonialMedia.MediaException) { flow.pickFailed(e.code, 0); return }
+        capturePath = shot.path
+        launch(shot.intent, CAMERA)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun launch(intent: Intent, requestCode: Int) {
+        try { startActivityForResult(intent, requestCode) } catch (_: Exception) {
+            capturePath?.let { TestimonialMedia.discardCapture(this, it) }
+            capturePath = null
+            flow.pickFailed("unavailable", 0)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        if (requestCode != PERMISSION) return
+        val kind = awaitingPermission ?: return
+        awaitingPermission = null
+        // Declined (or the prompt was dismissed): nothing is captured; the library stays offered.
+        if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) capture(kind)
+        else flow.pickFailed("camera_denied", 0)
     }
 
     private fun text(value: String, size: Float, color: Int = c.ink, bold: Boolean = false) = TextView(this).apply {
@@ -381,7 +460,7 @@ class AppReferTestimonialActivity : Activity() {
             TestimonialFlow.Phase.DONE -> {
                 body.addView(text(s("support.testimonial.done"), 26f, bold = true).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp(dp(12)))
                 r?.reward?.description?.let { body.addView(rewardBox(it), lp(dp(14))) }
-                if (r?.reward != null) body.addView(text(s(if (r.rewardStatus == "fulfilled") "support.testimonial.rewardDone" else "support.testimonial.rewardPending"), 15f), lp(dp(10)))
+                if (r?.reward != null) body.addView(text(s(r.rewardStatusKey), 15f), lp(dp(10)))
                 body.addView(button(s("support.a11y.close"), true) { close() }, lp(dp(20)))
                 if (!following) { following = true; scope.launch { flow.followReward() } }
             }
@@ -401,11 +480,12 @@ class AppReferTestimonialActivity : Activity() {
     private fun form(r: AppReferTestimonialRequest, busy: Boolean) {
         body.addView(text(r.title ?: s("support.testimonial.open"), 26f, bold = true).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp(dp(8)))
         r.prompt?.let { body.addView(text(it, 16f), lp(dp(8))) }
+        body.addView(text(s("support.testimonial.honest"), 14f, c.muted), lp(dp(6)))
         r.reward?.description?.let { body.addView(rewardBox(it), lp(dp(14))) }
         val f = flow.file
         if (f != null) {
             body.addView(preview(f), LinearLayout.LayoutParams(-1, dp(280)).apply { topMargin = dp(14) })
-            if (!busy) body.addView(button(s("support.testimonial.retake"), false) { pick(false) }, lp(dp(10)))
+            if (!busy) body.addView(button(s("support.testimonial.retake"), false) { pick(null) }, lp(dp(10)))
             r.permission?.let { permission ->
                 body.addView(card().apply {
                     addView(Switch(this@AppReferTestimonialActivity).apply {
@@ -417,8 +497,10 @@ class AppReferTestimonialActivity : Activity() {
                 }, lp(dp(14)))
             }
         } else {
-            body.addView(button(s("support.testimonial.choose"), true) { pick(false) }, lp(dp(16)))
-            if (r.allowsVideos && TestimonialMedia.cameraAvailable(this)) body.addView(button(s("support.testimonial.camera"), false) { pick(true) }, lp(dp(10)))
+            body.addView(button(s("support.testimonial.choose"), true) { pick(null) }, lp(dp(16)))
+            // The camera app takes one kind at a time: a still photo, or a video.
+            if (r.allowsImages && TestimonialMedia.cameraAvailable(this, false)) body.addView(button(s("support.testimonial.takePhoto"), false) { pick("image") }, lp(dp(10)))
+            if (r.allowsVideos && TestimonialMedia.cameraAvailable(this, true)) body.addView(button(s("support.testimonial.recordVideo"), false) { pick("video") }, lp(dp(10)))
             if (r.allowsVideos) r.maxVideoSeconds?.let { body.addView(text(s("support.testimonial.tooLong", "seconds" to it.toString()), 13f, c.muted), lp(dp(8))) }
         }
         flow.notice?.let { body.addView(text(it, 14f, c.muted), lp(dp(12))) }
@@ -451,5 +533,8 @@ class AppReferTestimonialActivity : Activity() {
     private companion object {
         const val PICK = 8051
         const val CAMERA = 8052
+        const val PERMISSION = 8053
+        const val STATE_CAPTURE = "apprefer_capture_path"
+        const val STATE_PERMISSION = "apprefer_capture_permission"
     }
 }

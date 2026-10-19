@@ -1,10 +1,17 @@
 package com.apprefer.sdk.testimonial;
 
 import android.Manifest;
+import android.content.ClipData;
+import android.content.ComponentName;
+import android.content.ContentProvider;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
+import android.database.Cursor;
+import android.database.MatrixCursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
@@ -16,10 +23,13 @@ import android.media.MediaMetadataRetriever;
 import android.media.MediaMuxer;
 import android.net.Uri;
 import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -29,16 +39,23 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Photo/video capture for Support testimonials, shared by copy by the Android SDK (canonical), the
  * Flutter plugin and the React Native module (only the package line differs; keep them identical).
  *
- * Pickers: the system photo picker (Android 13+, no permission) or the document picker, and the
- * camera app for a video with a length limit. Photos are re-encoded as JPEG (at most 2048 px on the
- * long side, orientation applied, no EXIF/GPS). Videos are re-muxed into MP4 without the source's
- * metadata (no location) and refused when longer than the request allows. The server checks the
- * uploaded bytes again; it never trusts the duration sent from here.
+ * Pickers: the system photo picker (Android 13+, no permission) or the document picker, the camera
+ * app for a still photo (written straight into a private cache file through {@link CaptureProvider},
+ * no storage permission and no androidx dependency), and the camera app for a video with a length
+ * limit. No camera permission is declared: the system camera app takes the picture. Only when the
+ * host app itself declares CAMERA does Android require it to be granted first
+ * ({@link #cameraPermissionNeeded}); the caller then asks at the moment of capture.
+ *
+ * Photos are re-encoded as JPEG (at most 2048 px on the long side, orientation applied, no
+ * EXIF/GPS). Videos are re-muxed into MP4 without the source's metadata (no location) and refused
+ * when longer than the request allows. The server checks the uploaded bytes again; it never trusts
+ * the duration sent from here.
  */
 public final class TestimonialMedia {
     private TestimonialMedia() {}
@@ -92,16 +109,137 @@ public final class TestimonialMedia {
     }
 
     /**
-     * The camera can be offered: a camera and a camera app exist, and the app doesn't declare the
-     * CAMERA permission without holding it (Android then refuses capture intents).
+     * A still photo or a video can be taken now: the device has a camera, a camera app answers the
+     * capture intent (the library manifest declares the package-visibility queries), and for photos
+     * this copy's {@link CaptureProvider} is in the merged manifest. A CAMERA permission the app
+     * declares but doesn't hold doesn't make it unavailable: ask first ({@link #cameraPermissionNeeded}).
      */
-    public static boolean cameraAvailable(Context context) {
+    public static boolean cameraAvailable(Context context, boolean video) {
         PackageManager pm = context.getPackageManager();
         if (!pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) return false;
-        if (videoCaptureIntent(30).resolveActivity(pm) == null) return false;
-        if (declares(context, Manifest.permission.CAMERA) && Build.VERSION.SDK_INT >= 23
-            && context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return false;
-        return true;
+        Intent probe = video ? videoCaptureIntent(30) : new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        if (probe.resolveActivity(pm) == null) return false;
+        return video || captureAuthority(context) != null;
+    }
+
+    /** A photo or a video can be taken (see {@link #cameraAvailable(Context, boolean)}). */
+    public static boolean cameraAvailable(Context context) {
+        return cameraAvailable(context, false) || cameraAvailable(context, true);
+    }
+
+    /**
+     * The app itself declares CAMERA and hasn't been granted it: Android then refuses capture
+     * intents, so the caller asks for it (with the platform prompt) right before capturing.
+     */
+    public static boolean cameraPermissionNeeded(Context context) {
+        return Build.VERSION.SDK_INT >= 23 && declares(context, Manifest.permission.CAMERA)
+            && context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED;
+    }
+
+    // --- Still photo capture ---
+
+    private static final Pattern CAPTURE_NAME = Pattern.compile("^apprefer-capture-[0-9a-f-]{36}\\.jpg$");
+
+    static File captureDir(Context context) {
+        return new File(context.getCacheDir(), "apprefer-capture");
+    }
+
+    /** The authority this copy's provider has in the merged manifest, or null when it isn't there. */
+    public static String captureAuthority(Context context) {
+        try {
+            ProviderInfo info = context.getPackageManager().getProviderInfo(new ComponentName(context, CaptureProvider.class), 0);
+            return info.authority;
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** A camera intent for one still photo, and the private file the camera app writes it to. */
+    public static final class PhotoCapture {
+        public final Intent intent;
+        public final String path;
+        PhotoCapture(Intent intent, String path) { this.intent = intent; this.path = path; }
+    }
+
+    /**
+     * Prepares a still photo capture: a new file name in this SDK's cache folder, handed to the
+     * camera app as a content URI with a one-off write grant. Start `intent` for a result; then
+     * call {@link #finishPhotoCapture} on success or {@link #discardCapture} otherwise.
+     */
+    public static PhotoCapture photoCapture(Context context) throws MediaException {
+        String authority = captureAuthority(context);
+        File dir = captureDir(context);
+        if (authority == null || (!dir.isDirectory() && !dir.mkdirs())) throw new MediaException("unavailable", 0);
+        File out = new File(dir, "apprefer-capture-" + UUID.randomUUID() + ".jpg");
+        Uri uri = new Uri.Builder().scheme("content").authority(authority).appendPath(out.getName()).build();
+        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            .putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.setClipData(ClipData.newRawUri("", uri));
+        return new PhotoCapture(intent, out.getPath());
+    }
+
+    /** The camera app returned OK: its photo, normalised like a picked one. The raw file is always deleted. */
+    public static Picked finishPhotoCapture(Context context, String path) throws MediaException {
+        File raw = new File(path == null ? "" : path);
+        try {
+            if (!isCapture(context, raw) || !raw.isFile() || raw.length() == 0) throw new MediaException("unreadable", 0);
+            return normalizeImage(context, raw);
+        } finally {
+            discardCapture(context, path);
+        }
+    }
+
+    /** Deletes a capture file this class handed to the camera app (cancelled, failed or done). */
+    public static void discardCapture(Context context, String path) {
+        if (path == null) return;
+        File f = new File(path);
+        //noinspection ResultOfMethodCallIgnored
+        if (isCapture(context, f)) f.delete();
+    }
+
+    private static boolean isCapture(Context context, File f) {
+        try {
+            return f.getCanonicalFile().getParentFile() != null
+                && f.getCanonicalFile().getParentFile().equals(captureDir(context).getCanonicalFile())
+                && CAPTURE_NAME.matcher(f.getName()).matches();
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Lets the camera app write exactly one capture file it was handed through the intent's
+     * temporary grant, inside this SDK's capture folder. Not exported: nothing else can reach it,
+     * and only file names this class made are served.
+     */
+    public static final class CaptureProvider extends ContentProvider {
+        @Override public boolean onCreate() { return true; }
+
+        private File fileFor(Uri uri) throws FileNotFoundException {
+            Context context = getContext();
+            String name = uri.getLastPathSegment();
+            if (context == null || name == null || uri.getPathSegments().size() != 1 || !CAPTURE_NAME.matcher(name).matches()) throw new FileNotFoundException();
+            return new File(captureDir(context), name);
+        }
+
+        @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+            return ParcelFileDescriptor.open(fileFor(uri), ParcelFileDescriptor.parseMode(mode));
+        }
+
+        @Override public String getType(Uri uri) { return "image/jpeg"; }
+
+        @Override public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+            File f;
+            try { f = fileFor(uri); } catch (FileNotFoundException e) { return null; }
+            MatrixCursor cursor = new MatrixCursor(new String[] { OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE });
+            cursor.addRow(new Object[] { f.getName(), f.length() });
+            return cursor;
+        }
+
+        @Override public Uri insert(Uri uri, ContentValues values) { return null; }
+        @Override public int delete(Uri uri, String selection, String[] selectionArgs) { return 0; }
+        @Override public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) { return 0; }
     }
 
     private static boolean declares(Context context, String permission) {
