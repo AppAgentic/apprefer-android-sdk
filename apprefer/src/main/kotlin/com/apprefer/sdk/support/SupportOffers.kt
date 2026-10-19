@@ -270,7 +270,7 @@ internal object SupportOffers {
      * `offers` (this SDK draws cards), `offer-handler` (the app opens its paywall from them) and
      * `reviews` (this SDK draws review cards and opens the store page itself).
      */
-    val featuresHeader: String get() = if (hasHandler) "offers, offer-handler, reviews" else "offers, reviews"
+    val featuresHeader: String get() = if (hasHandler) "offers, offer-handler, reviews, testimonials" else "offers, reviews, testimonials"
     val billingListeners = CopyOnWriteArraySet<() -> Unit>()
     fun billingChanged() { billingListeners.forEach { runCatching { it() } } }
 }

@@ -182,6 +182,15 @@ object AppReferSupport {
         if (pendingClearIdentity) applyPendingClear(context)
         return api
     }
+    /** The Support client for calls made outside the chat screen (testimonials). */
+    internal fun configuredApi(): SupportAPI = api(app ?: com.apprefer.sdk.AppReferContext.context ?: error("Configure AppRefer first"))
+
+    /**
+     * Photo/video testimonials: show a request your backend (or its coach tool) made with
+     * `present(context, requestId)`, list open ones with `pending()`, and refresh credits in
+     * `onRewardUpdate` once your backend confirms the reward.
+     */
+    val testimonials: AppReferTestimonials get() = AppReferTestimonials
     /**
      * The session profile. The device id is left out after reset(), with collection off and in
      * Support-only apps; the app user id and the device id after clearIdentity() until the user

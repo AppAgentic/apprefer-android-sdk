@@ -279,4 +279,50 @@
     <string name="apprefer_support_review_a11y_hint_app_store">打开 App Store</string>
     <!-- support.review.a11y.hint.googlePlay: VoiceOver/TalkBack hint on the review card's button. Store: Google Play (brand name, never translated). -->
     <string name="apprefer_support_review_a11y_hint_google_play">打开 Google Play</string>
+    <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
+    <string name="apprefer_support_testimonial_reward">参与奖励：{reward}</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. Honest participation earns the reward. -->
+    <string name="apprefer_support_testimonial_reward_note">奖励与你分享的内容以及是否被使用无关。</string>
+    <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
+    <string name="apprefer_support_testimonial_open">分享照片或视频</string>
+    <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
+    <string name="apprefer_support_testimonial_choose">从图库选择</string>
+    <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
+    <string name="apprefer_support_testimonial_camera">使用相机</string>
+    <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
+    <string name="apprefer_support_testimonial_retake">换一个</string>
+    <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
+    <string name="apprefer_support_testimonial_publish">允许公开使用</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch. -->
+    <string name="apprefer_support_testimonial_publish_hint">可选。无论如何你都会获得奖励，之后也可以停止公开使用。</string>
+    <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
+    <string name="apprefer_support_testimonial_submit">分享</string>
+    <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
+    <string name="apprefer_support_testimonial_uploading">正在上传… {percent}%</string>
+    <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->
+    <string name="apprefer_support_testimonial_checking">正在检查…</string>
+    <!-- support.testimonial.done: Title after a successful share. -->
+    <string name="apprefer_support_testimonial_done">感谢分享！</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. -->
+    <string name="apprefer_support_testimonial_reward_pending">你的奖励正在发放。</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward. -->
+    <string name="apprefer_support_testimonial_reward_done">你的奖励已添加。</string>
+    <!-- support.testimonial.decline: Button to decline the request. -->
+    <string name="apprefer_support_testimonial_decline">不用了，谢谢</string>
+    <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
+    <string name="apprefer_support_testimonial_dont_ask">不再询问</string>
+    <!-- support.testimonial.cancel: Closes the capture screen without sharing. -->
+    <string name="apprefer_support_testimonial_cancel">取消</string>
+    <!-- support.testimonial.unavailable: Shown on a request card or screen that expired, was withdrawn or belongs to another account. -->
+    <string name="apprefer_support_testimonial_unavailable">此请求已不可用</string>
+    <!-- support.testimonial.tooLong: Error when the chosen video is too long. {seconds} = a whole number. -->
+    <string name="apprefer_support_testimonial_too_long">视频最长 {seconds} 秒。</string>
+    <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
+    <string name="apprefer_support_testimonial_too_large">此文件太大，无法分享。</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared. -->
+    <string name="apprefer_support_testimonial_failed">无法分享。请检查网络连接后重试。</string>
+    <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
+    <string name="apprefer_support_testimonial_withdraw">停止公开使用</string>
+    <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->
+    <string name="apprefer_support_testimonial_a11y_preview">你选择的照片或视频</string>
 </resources>

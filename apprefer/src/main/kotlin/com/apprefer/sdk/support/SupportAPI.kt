@@ -71,7 +71,11 @@ class AppReferSupportException(val status: Int, message: String) : Exception(mes
     internal enum class Reason { SERVER, UPLOAD, UNAVAILABLE }
     internal var reason: Reason = Reason.SERVER
         private set
+    /** The server's error code when it sent one (e.g. `IDENTITY_REQUIRED`, `VIDEO_TOO_LONG`). */
+    var code: String? = null
+        internal set
     internal constructor(status: Int, message: String, reason: Reason) : this(status, message) { this.reason = reason }
+    internal constructor(status: Int, message: String, code: String?) : this(status, message) { this.code = code }
 }
 
 internal class SupportAPI(
@@ -250,7 +254,7 @@ internal class SupportAPI(
         val r = transport.request(method, base + path, headers, bytes)
         check(epoch == generation) { "Support reset" }
         val obj = JsonCodec.decodeObject(r.body)
-        if (r.status !in 200..299) throw AppReferSupportException(r.status, obj["error"] as? String ?: obj["message"] as? String ?: "Something went wrong (${r.status})")
+        if (r.status !in 200..299) throw AppReferSupportException(r.status, obj["error"] as? String ?: obj["message"] as? String ?: "Something went wrong (${r.status})", obj["code"] as? String)
         return obj
     }
     private fun dropToken() = synchronized(accountLock) { store.token = null; store.profile = null; store.clearedSession = false }
@@ -399,6 +403,26 @@ internal class SupportAPI(
             slot["attachmentId"] as String
         }
     }
+    // Photo/video testimonials (SupportTestimonials.kt). Every call is pinned to an account generation.
+    suspend fun testimonialRequest(id: String, generation: Int = this.generation): AppReferTestimonialRequest =
+        AppReferTestimonialRequest.from(call("GET", "/testimonials/${escape(id)}", null, generation)["request"]) ?: throw AppReferSupportException(0, "Unreadable request")
+    suspend fun openTestimonials(): List<AppReferTestimonialRequest> =
+        (call("GET", "/testimonials")["requests"] as? List<*>).orEmpty().mapNotNull { AppReferTestimonialRequest.from(it) }
+    suspend fun testimonialSlot(id: String, contentType: String, size: Long, generation: Int): TestimonialSlot {
+        val slot = call("POST", "/testimonials/${escape(id)}/uploads", mapOf("contentType" to contentType, "size" to size), generation)
+        val url = slot["uploadUrl"] as? String ?: throw AppReferSupportException(0, "Bad upload address", AppReferSupportException.Reason.UPLOAD)
+        return TestimonialSlot(slot["uploadId"] as? String ?: "", url, slot.obj("headers").mapValues { it.value.toString() })
+    }
+    suspend fun submitTestimonial(id: String, uploadId: String, clientSubmissionId: String, publication: Boolean, version: String, generation: Int): AppReferTestimonialRequest =
+        AppReferTestimonialRequest.from(call("POST", "/testimonials/${escape(id)}/submit", mapOf("uploadId" to uploadId, "clientSubmissionId" to clientSubmissionId, "publication" to publication, "permissionVersion" to version), generation)["request"])
+            ?: throw AppReferSupportException(0, "Unreadable request")
+    suspend fun declineTestimonial(id: String, dontAskAgain: Boolean, generation: Int): AppReferTestimonialRequest? =
+        AppReferTestimonialRequest.from(call("POST", "/testimonials/${escape(id)}/decline", mapOf("dontAskAgain" to dontAskAgain), generation)["request"])
+    suspend fun revokeTestimonialPublication(id: String): AppReferTestimonialRequest? =
+        AppReferTestimonialRequest.from(call("POST", "/testimonials/${escape(id)}/permission", mapOf("publication" to "revoked"))["request"])
+    /** True while no reset or account switch happened since [epoch]. */
+    fun isCurrent(epoch: Int): Boolean = epoch == generation
+
     private fun messageBody(text: String, ids: List<String>, clientMessageId: String): Map<String, Any?> {
         require(clientMessageId.matches(Regex("[A-Za-z0-9_-]{8,64}"))); require(ids.size <= 4); require(text.isNotBlank() || ids.isNotEmpty())
         return mapOf("text" to text, "clientMessageId" to clientMessageId) + if (ids.isEmpty()) emptyMap() else mapOf("attachmentIds" to ids)
@@ -422,8 +446,10 @@ data class AppReferSupportMessage @JvmOverloads constructor(
     val offer: AppReferSupportOfferCard? = null,
     /** An optional review card sent with this reply: a link to the app's Google Play listing. */
     val review: AppReferSupportReviewCard? = null,
+    /** A photo/video request sent with this reply (0.13.0), with its state when read. */
+    val testimonial: AppReferTestimonialRequest? = null,
 ) {
-    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean, AppReferSupportOfferCard.from(m["offer"]), AppReferSupportReviewCard.from(m["review"]))
+    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean, AppReferSupportOfferCard.from(m["offer"]), AppReferSupportReviewCard.from(m["review"]), AppReferTestimonialRequest.from(m["testimonial"]))
     val isHandoff: Boolean get() = handoff == true
 }
 /**

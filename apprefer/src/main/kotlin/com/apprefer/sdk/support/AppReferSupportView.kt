@@ -216,6 +216,8 @@ class AppReferSupportView @JvmOverloads constructor(
     private val billingListener: () -> Unit = { post { scope.launch { refreshOffers() } } }
     // Review cards: each card's latest state by card id.
     private val reviewCards = mutableMapOf<String, AppReferSupportReviewCard>()
+    // Photo/video requests: each request's latest state by request id.
+    private val testimonialStates = mutableMapOf<String, AppReferTestimonialRequest>()
     /** Opens a validated Google Play URL (tests swap it); the system URL opener, no extra dependency. */
     internal var openStorePage: (String) -> Unit = { url -> openPlayListing(url) }
     private val cursor get() = timeline.cursor
@@ -243,7 +245,7 @@ class AppReferSupportView @JvmOverloads constructor(
         accountReset = true
         pause(); scope.cancel()
         timeline.reset(); conversations = emptyList(); pending.clear()
-        offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear(); reviewCards.clear()
+        offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear(); reviewCards.clear(); testimonialStates.clear()
         images.clear(); draft = ""; homeStash = null; id = null; topic = null
         draftFile?.delete(); draftFile = null
         starting = false; sendError = null; loadError = null; route = "home"
@@ -704,9 +706,13 @@ class AppReferSupportView @JvmOverloads constructor(
             }
             val card = m.offer?.let { offerCards[it.cardId] ?: it }
             val review = if (card == null) m.review?.let { reviewCards[it.cardId] ?: it } else null
+            val request = if (card == null && review == null) m.testimonial?.let { testimonialStates[it.requestId] ?: it } else null
             val view = if (card != null) column().apply {
                 if (m.text.isNotEmpty() || m.from == "bot") addView(bubble, lp())
                 addView(offerCard(card), lp(top = if (m.text.isNotEmpty()) dp(8) else 0))
+            } else if (request != null) column().apply {
+                if (m.text.isNotEmpty() || m.from == "bot") addView(bubble, lp())
+                addView(testimonialCard(request), lp(top = if (m.text.isNotEmpty()) dp(8) else 0))
             } else if (review != null) column().apply {
                 if (m.text.isNotEmpty() || m.from == "bot") addView(bubble, lp())
                 addView(reviewCard(review), lp(top = if (m.text.isNotEmpty()) dp(8) else 0))
@@ -880,6 +886,43 @@ class AppReferSupportView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * A photo/video request under a team message: what's asked, the campaign's reward, and "Share a
+     * photo or video", which opens the capture screen. Shared, declined or unavailable requests say so.
+     */
+    private fun testimonialCard(request: AppReferTestimonialRequest): View {
+        val active = request.isOpen
+        val box = column().apply {
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = rounded(c.card, 22, if (active) supportAlpha(p.accent, .22f) else supportAlpha(c.ink, .06f))
+        }
+        shadow(box, 3, .07f)
+        box.addView(text(request.title ?: s("support.testimonial.open"), 15f, c.ink, 700).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp())
+        if (active) {
+            request.prompt?.let { box.addView(text(it, 14.5f, c.ink), lp(top = dp(8))) }
+            request.reward?.description?.let { box.addView(text(s("support.testimonial.reward", "reward" to it), 13.5f, p.accent, 600), lp(top = dp(8))) }
+            box.addView(FrameLayout(context).apply {
+                background = gradient(floatArrayOf(dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99)))
+                addView(text(s("support.testimonial.open"), 15.5f, p.onAccent, 600).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+                minimumHeight = dp(46)
+                pressable(s("support.testimonial.open")) {
+                    AppReferTestimonials.present(context, request.requestId) { scope.launch { refreshTestimonial(request.requestId) } }
+                }
+            }, lp(top = dp(12), h = dp(46)))
+        } else {
+            box.addView(text(s(if (request.status == "submitted") "support.testimonial.done" else "support.testimonial.unavailable"), 13.5f, c.muted), lp(top = dp(8)))
+        }
+        return FrameLayout(context).apply {
+            setPaddingRelative(dp(38), 0, 0, 0)
+            addView(box, FrameLayout.LayoutParams(minOf(dp(340), resources.displayMetrics.widthPixels - dp(66)), -2, Gravity.START))
+        }
+    }
+
+    private suspend fun refreshTestimonial(requestId: String) {
+        val fresh = try { api.testimonialRequest(requestId) } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+        if (testimonialStates[requestId] != fresh) { testimonialStates[requestId] = fresh; if (route == "thread") renderMessages() }
+    }
+
     /** "Write a review": checked with the server (at most 3 s), then the listing opens. A refusal redraws instead. */
     private fun openReview(card: AppReferSupportReviewCard) {
         val conversation = id ?: return
@@ -919,6 +962,7 @@ class AppReferSupportView @JvmOverloads constructor(
     /** New cards from a read; prices for their offerings come from AppRefer Billing when the app uses it. */
     private fun absorbOffers(incoming: List<AppReferSupportMessage>) {
         absorbReviews(incoming)
+        incoming.mapNotNull { it.testimonial }.forEach { testimonialStates[it.requestId] = it }
         val cards = incoming.mapNotNull { it.offer }
         if (cards.isEmpty()) return
         cards.forEach { offerCards[it.cardId] = it }

@@ -560,6 +560,56 @@ from the package name your app already has in AppRefer (Billing or the store URL
 
 0.12.0 is unreleased source (not tagged). Once tagged, install it from Git only: JitPack, `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.12.0` (core) and `com.github.AppAgentic.apprefer-android-sdk:apprefer-billing:0.12.0` (billing).
 
+### Photo and video testimonials (0.13.0)
+
+Ask a signed-in customer for a photo or a short video and give them the reward your campaign sets,
+from your own screens, from your coach/assistant, from a Support reply, or automatically after
+real usage. One native capture screen does it everywhere: what's asked, the reward, the system photo
+picker (Android 13+ photo picker, else the document picker; no storage permission) or the camera app for a video, a preview, an optional **Allow public use** switch with your exact permission
+text, upload progress, then the result.
+
+1. Your backend registers campaigns (`PUT /api/v1/apps/{appId}/support/testimonials/campaigns`,
+   private key with `support:testimonials`). A company admin switches each one on in AppRefer
+   Support; nothing reaches customers before that.
+2. Your backend asks for one user: `POST /api/v1/apps/{appId}/support/testimonials/requests`
+   `{ campaignId, appUserId, idempotencyKey, source: "host" | "coach" }`. It returns `requestId`.
+   The reward comes from the campaign; the call can't set one.
+3. The app shows it:
+
+```kotlin
+AppRefer.support.testimonials.onRewardUpdate = { update ->
+    if (update.rewardStatus == "fulfilled") lifecycleScope.launch { credits.refresh() }
+}
+val open = AppRefer.support.testimonials.pending()                 // requests waiting for this account
+AppRefer.support.testimonials.present(activity, requestId) { result ->
+    Log.d("App", "${result.outcome} ${result.rewardStatus}")     // submitted, declined, cancelled, unavailable
+}
+```
+
+4. Your backend applies the reward: `POST …/support/testimonials/rewards/claim` (2-minute leases),
+   applies each `fulfillmentId` at most once in your own system (credits, coach usage,
+   subscription time, a discount, a gift, or a merch order you collect the address for yourself),
+   then `POST …/rewards/{fulfillmentId}/complete` with `status: "fulfilled"` and your own
+   `receiptId`. Only then does the SDK report `fulfilled`.
+
+- The customer's Support session must be verified for the same account
+  (`verifyIdentity`); otherwise requests read as unavailable. A reset or account switch
+  cancels a capture in progress; nothing is shared for another account.
+- Taking part earns the reward whatever the customer says and whether or not the media is ever
+  used. Public use is a separate, optional yes/no, revocable later
+  (`withdrawPublication(requestId)`); the reward is never taken back.
+- Photos are re-encoded as JPEG (≤ 2048 px, no location or other metadata); videos are exported as
+  MP4 without metadata and refused when longer than the campaign allows. Limits: 15 MB per photo,
+  150 MB per video. The server checks the stored bytes and video length again.
+- Requests from Support show as a card in the chat ("Share a photo or video"); older SDK versions
+  show your text and a line asking the customer to update the app.
+- No new permission. Recording a video uses the camera app (`ACTION_VIDEO_CAPTURE`); it is
+  offered only when a camera app exists and your app doesn't declare `CAMERA` without holding it
+  (Android refuses capture intents then). Taking a still photo with the camera isn't offered on
+  Android; photos come from the picker.
+
+0.13.0 is unreleased source (not tagged). Once tagged, install it from JitPack only: `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.13.0` (and `apprefer-billing:0.13.0` if you use Billing; keep both on the same version).
+
 ### Languages and your own wording
 
 The chat ships in 35 languages: ar, ca, cs, da, de, el, en, es, es-MX, fi, fr, he, hi, hr, hu, id, it, ja, ko, ms, nb, nl, pl, pt-BR, pt-PT, ro, ru, sk, sv, th, tr, uk, vi, zh-Hans, zh-Hant. They are ordinary string resources (`res/values-xx/apprefer_support_strings.xml`, plurals included). Nothing to set up.

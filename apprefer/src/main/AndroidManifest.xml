@@ -9,5 +9,7 @@
         <!-- Lifecycle notifications: snooze, dismiss and re-show. Not exported: only the SDK's own PendingIntents reach it. -->
         <receiver android:name="com.apprefer.sdk.engagement.EngagementRenderer$Receiver" android:exported="false" />
         <activity android:name="com.apprefer.sdk.support.AppReferSupportActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <!-- Photo/video testimonial capture: the system photo picker or the camera app; no storage or camera permission is requested. -->
+        <activity android:name="com.apprefer.sdk.support.AppReferTestimonialActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>
