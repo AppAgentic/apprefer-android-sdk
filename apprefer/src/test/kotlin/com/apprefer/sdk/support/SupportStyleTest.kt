@@ -90,4 +90,68 @@ class SupportStyleTest {
         assertEquals("Report a bug", com.apprefer.sdk.internal.JsonCodec.decodeObject(bodies[0])["subject"])
         assertFalse(com.apprefer.sdk.internal.JsonCodec.decodeObject(bodies[1]).containsKey("subject"))
     }
+
+    // MARK: - Header style (0.11.1)
+
+    private fun isNeutral(c: Int) = ((c shr 16) and 0xff) == ((c shr 8) and 0xff) && ((c shr 8) and 0xff) == (c and 0xff)
+
+    @Test fun headerStyleDefaultsToAccent() {
+        assertEquals(AppReferSupportHeaderStyle.ACCENT, AppReferSupport.headerStyle)
+    }
+
+    @Test fun accentHeaderKeepsTheExistingLook() {
+        listOf(0xFF7852FF.toInt(), 0xFFFFFFFF.toInt(), 0xFFFFD60A.toInt()).forEach { accent ->
+            val p = SupportPalette(accent)
+            listOf(true, false).forEach { dark ->
+                val h = SupportHeaderLook(AppReferSupportHeaderStyle.ACCENT, p, dark)
+                assertFalse(h.plain)
+                assertTrue(h.glows)
+                assertEquals(p.accent, h.background)
+                assertEquals(p.onAccent, h.foreground)
+                assertEquals(p.onAccentIsDark, h.foregroundIsDark)
+                assertEquals(supportAlpha(p.onAccent, .2f), h.closeFill)
+                assertEquals(supportAlpha(p.onAccent, .35f), h.closeStroke)
+                assertEquals(supportAlpha(0xFF000000.toInt(), if (p.onAccentIsDark) .06f else .16f), h.pillFill)
+                assertEquals(supportAlpha(p.onAccent, .3f), h.pillStroke)
+                assertNull(h.avatars)
+                assertEquals(0xE6FFFFFF.toInt(), h.avatarRing)
+                assertEquals(p.light, h.iconText)
+            }
+        }
+    }
+
+    @Test fun whiteAccentStillGlowsColouredInAccentStyle() {
+        // Why PLAIN exists: a white accent's neighbours are tinted (the green/lavender glow).
+        val p = SupportPalette(white)
+        assertFalse(isNeutral(p.hot) && isNeutral(p.warm))
+    }
+
+    @Test fun plainHeaderIsNeutralWithReadableText() {
+        listOf(0xFF7852FF.toInt(), white, 0xFFFFD60A.toInt(), 0xFF1FB866.toInt()).forEach { accent ->
+            val p = SupportPalette(accent)
+            listOf(true, false).forEach { dark ->
+                val h = SupportHeaderLook(AppReferSupportHeaderStyle.PLAIN, p, dark)
+                assertTrue(h.plain)
+                assertFalse("no glow overlays", h.glows)
+                assertTrue(isNeutral(h.background))
+                assertEquals(SupportHeaderLook.plainBackground(dark), h.background)
+                assertEquals(SupportHeaderLook.plainInk(dark), h.foreground)
+                assertTrue(isNeutral(h.foreground))
+                assertEquals(!dark, h.foregroundIsDark)
+                listOf(h.closeFill, h.closeStroke, h.pillFill, h.pillStroke, h.avatarRing, h.iconText).forEach { assertTrue(isNeutral(it)) }
+                h.avatars!!.forEach { assertTrue(isNeutral(it)) }
+                h.iconTile.forEach { assertTrue(isNeutral(it)) }
+                // Text on the header: WCAG AA (4.5:1) or better.
+                assertTrue(contrast(h.foreground, h.background) >= 4.5)
+                h.avatars!!.forEach { assertTrue(contrast(white, it) >= 4.5) }
+            }
+        }
+    }
+
+    private fun contrast(a: Int, b: Int): Double {
+        fun lin(v: Int): Double { val c = v / 255.0; return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4) }
+        fun lum(c: Int) = 0.2126 * lin((c shr 16) and 0xff) + 0.7152 * lin((c shr 8) and 0xff) + 0.0722 * lin(c and 0xff)
+        val (x, y) = lum(a) to lum(b)
+        return (maxOf(x, y) + 0.05) / (minOf(x, y) + 0.05)
+    }
 }
