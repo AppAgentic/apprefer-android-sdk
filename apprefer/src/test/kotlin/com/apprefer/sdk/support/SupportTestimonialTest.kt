@@ -55,6 +55,7 @@ class SupportTestimonialTest {
         flow.load()
         assertEquals(TestimonialFlow.Phase.READY, flow.phase)
         flow.picked(photo)
+        flow.publish = false
         t.failSubmit = java.io.IOException("connection reset")
         flow.submit()
         assertEquals(TestimonialFlow.Phase.FAILED, flow.phase)
@@ -67,6 +68,32 @@ class SupportTestimonialTest {
         assertEquals(false, t.submits[1][2])
         assertEquals("0123456789abcdef", t.submits[1][3])
         assertEquals(AppReferTestimonialResult(t.current.requestId, "submitted", "pending", "declined"), flow.result)
+    }
+
+    @Test fun publicUseStartsOnButOnlyTheFinalShareRecordsIt() = runBlocking {
+        val t = Fake(request())
+        val flow = TestimonialFlow(t.current.requestId, t)
+        assertTrue("public use starts on", flow.publish)
+        flow.load(); flow.picked(photo)
+        assertEquals("the app's registered text is what the switch shows", "You may show this in the app.", flow.request?.permission?.text)
+        assertTrue("opening and picking record nothing", t.submits.isEmpty())
+        flow.submit()
+        assertEquals(listOf(true, "0123456789abcdef"), t.submits.single().subList(2, 4))
+        assertEquals(AppReferTestimonialResult(t.current.requestId, "submitted", "pending", "granted"), flow.result)
+        val declined = TestimonialFlow("tsr_x", Fake(request()))
+        declined.load(); declined.picked(photo)
+        assertNull("declining sends no permission answer", declined.decline(false).publication)
+    }
+
+    @Test fun aRequestWithoutPermissionTextIsNeverSubmittedWithAnAssumedAnswer() = runBlocking {
+        val old = json().replace(""""permission":{"text":"You may show this in the app.","scopes":["in_app"],"version":"0123456789abcdef"},""", "")
+        val t = Fake(request(old))
+        val flow = TestimonialFlow(t.current.requestId, t)
+        flow.load()
+        assertNull(flow.request?.permission)
+        flow.picked(photo); flow.submit()
+        assertTrue("no permission text means no answer is sent or inferred", t.submits.isEmpty())
+        assertEquals(0, t.slots)
     }
 
     @Test fun aRefusedFileIsUploadedAgainAndAClosedRequestEndsTheFlow() = runBlocking {

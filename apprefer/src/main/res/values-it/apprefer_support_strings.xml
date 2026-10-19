@@ -301,10 +301,10 @@
     <string name="apprefer_support_testimonial_camera_denied">L’accesso alla fotocamera è disattivato. Puoi scegliere dalla tua libreria.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Scegline un altro</string>
-    <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
+    <!-- support.testimonial.publish: Label of the public-use switch, which starts on; the customer can turn it off. The app's own permission text is shown under it. -->
     <string name="apprefer_support_testimonial_publish">Consenti l’uso pubblico</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
-    <string name="apprefer_support_testimonial_publish_hint">Facoltativo e disattivato finché non lo attivi. La ricompensa è la stessa in entrambi i casi e potrai revocarlo in seguito.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch, which starts on. Must say it is on unless turned off, that the reward is the same either way and that permission can be withdrawn later. -->
+    <string name="apprefer_support_testimonial_publish_hint">Attivo finché non lo disattivi. La ricompensa è la stessa in entrambi i casi e potrai revocarlo in seguito.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Condividi</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->

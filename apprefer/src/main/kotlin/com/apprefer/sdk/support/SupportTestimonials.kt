@@ -41,7 +41,8 @@ import java.util.concurrent.ConcurrentHashMap
 // app's policy, or automation); this SDK only answers one, for the account the support session is
 // verified for (`AppRefer.support.verifyIdentity`). The reward and the publication permission text
 // come from the request: the SDK never chooses a reward and never ties it to what is said. Taking
-// part earns the reward; allowing public use is a separate, optional switch.
+// part earns the reward; public use is a separate switch that starts on and the customer can turn
+// off. Only the final Share sends its value, with the permission version shown.
 
 /** A photo/video request as the server sends it. */
 data class AppReferTestimonialRequest(
@@ -145,7 +146,12 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
     var progress = 0.0; private set
     var request: AppReferTestimonialRequest? = null; private set
     var file: TestimonialMedia.Picked? = null; private set
-    var publish = false
+    /**
+     * Public use starts on; the customer can turn it off. Nothing is recorded until [submit]
+     * (opening, picking or cancelling sends no answer), and a request without permission text
+     * (an older server) can't be submitted, so no permission is ever assumed.
+     */
+    var publish = true
     /** The localized message for the last problem (null when none). */
     var notice: String? = null; private set
     /** The same on every retry: a lost answer never shares twice. */
@@ -295,8 +301,8 @@ object AppReferTestimonials {
 }
 
 /**
- * The capture screen: what's asked, the reward, pick, take a photo or record, preview, optional
- * public use, progress, result. The camera app takes the photo or video: no camera permission is
+ * The capture screen: what's asked, the reward, pick, take a photo or record, preview, public
+ * use (on unless the customer turns it off), progress, result. The camera app takes the photo or video: no camera permission is
  * declared, and only when the host app itself declares CAMERA is it asked for, right before capture.
  */
 class AppReferTestimonialActivity : Activity() {
@@ -326,6 +332,8 @@ class AppReferTestimonialActivity : Activity() {
         val requestId = intent.getStringExtra("requestId") ?: return finish()
         // Upload progress arrives on a background thread: views are only touched on the main one.
         flow = TestimonialFlow(requestId, LiveTestimonialTransport(AppReferSupport.configuredApi())) { runOnUiThread { render() } }
+        // A switch the customer turned off stays off when the screen comes back from the camera.
+        flow.publish = state?.getBoolean(STATE_PUBLISH, true) ?: true
         body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(28)) }
         setContentView(ScrollView(this).apply { setBackgroundColor(c.background); isFillViewport = true; addView(body) })
         render()
@@ -338,6 +346,7 @@ class AppReferTestimonialActivity : Activity() {
         // permission question come back with the recreated screen.
         out.putString(STATE_CAPTURE, capturePath)
         out.putString(STATE_PERMISSION, awaitingPermission)
+        if (::flow.isInitialized) out.putBoolean(STATE_PUBLISH, flow.publish)
     }
 
     override fun onDestroy() {
@@ -536,5 +545,6 @@ class AppReferTestimonialActivity : Activity() {
         const val PERMISSION = 8053
         const val STATE_CAPTURE = "apprefer_capture_path"
         const val STATE_PERMISSION = "apprefer_capture_permission"
+        const val STATE_PUBLISH = "apprefer_capture_publish"
     }
 }

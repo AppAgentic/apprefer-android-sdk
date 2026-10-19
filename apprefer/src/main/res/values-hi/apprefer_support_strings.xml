@@ -300,10 +300,10 @@
     <string name="apprefer_support_testimonial_camera_denied">कैमरा ऐक्सेस बंद है। आप इसके बजाय अपनी लाइब्रेरी से चुन सकते हैं।</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">कोई और चुनें</string>
-    <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
+    <!-- support.testimonial.publish: Label of the public-use switch, which starts on; the customer can turn it off. The app's own permission text is shown under it. -->
     <string name="apprefer_support_testimonial_publish">सार्वजनिक उपयोग की अनुमति दें</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
-    <string name="apprefer_support_testimonial_publish_hint">वैकल्पिक है और जब तक आप चालू न करें, बंद रहता है। इनाम दोनों हालात में एक जैसा है, और आप बाद में यह अनुमति वापस ले सकते हैं।</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch, which starts on. Must say it is on unless turned off, that the reward is the same either way and that permission can be withdrawn later. -->
+    <string name="apprefer_support_testimonial_publish_hint">जब तक आप बंद न करें, यह चालू रहता है। इनाम दोनों हालात में एक जैसा है, और आप बाद में यह अनुमति वापस ले सकते हैं।</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">शेयर करें</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->

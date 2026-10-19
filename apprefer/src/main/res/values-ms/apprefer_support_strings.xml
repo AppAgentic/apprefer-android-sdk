@@ -299,10 +299,10 @@
     <string name="apprefer_support_testimonial_camera_denied">Akses kamera dimatikan. Anda boleh memilih daripada pustaka anda.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Pilih yang lain</string>
-    <!-- support.testimonial.publish: Label of the optional switch that allows the app to use the photo/video publicly (the app's own permission text is shown under it). -->
+    <!-- support.testimonial.publish: Label of the public-use switch, which starts on; the customer can turn it off. The app's own permission text is shown under it. -->
     <string name="apprefer_support_testimonial_publish">Benarkan penggunaan awam</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch (which starts off). -->
-    <string name="apprefer_support_testimonial_publish_hint">Pilihan dan dimatikan melainkan anda menghidupkannya. Ganjarannya sama dalam kedua-dua keadaan, dan anda boleh menariknya balik kemudian.</string>
+    <!-- support.testimonial.publishHint: Hint under the public-use switch, which starts on. Must say it is on unless turned off, that the reward is the same either way and that permission can be withdrawn later. -->
+    <string name="apprefer_support_testimonial_publish_hint">Dihidupkan melainkan anda mematikannya. Ganjarannya sama dalam kedua-dua keadaan, dan anda boleh menariknya balik kemudian.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Kongsi</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
