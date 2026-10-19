@@ -502,10 +502,10 @@ A refusal comes back as `verified: false` with a `reason` (`expired`, `already_u
 verifies, the AI assistant gets no account data at all, and your team sees the claimed account
 marked "Not verified". `identify` is unchanged.
 
-### Offer cards (0.12.0)
+### Option cards (0.12.0)
 
 Your team or AI assistant can attach one of your AppRefer Billing offerings to a reply. Tapping
-**View offer** on the card calls your code (on the main thread) with the offering, so you open
+**See options** on the card calls your code (on the main thread) with the offering, so you open
 **your own** paywall:
 
 ```kotlin
@@ -514,6 +514,11 @@ AppReferSupport.onOffer = { offer ->
     PaywallActivity.start(context, offer.offeringId, offer.packageId)
 }
 ```
+
+The card reads "Options for you" (never "offer"): it can hold ordinary full-price plans, credit packs
+or one-off purchases. Each price shows the store's own billing period ("£29.99/year"), never a
+free-trial or introductory price; an owned one-off is tagged "Purchased", a current subscription
+"Current plan".
 
 The card lists the offering's packages with the store's own formatted prices (Google Play's regular recurring or one-time `formattedPrice` from `apprefer-billing`, when it is configured; otherwise no prices) and
 tags the customer's current plan; switching plans is never blocked. The SDK never shows a paywall,
@@ -525,7 +530,7 @@ whether the card can still be opened: a withdrawn, expired or changed card redra
 answer calls you anyway (the store is the real gate).
 
 - `closesChatOnOffer` (default `true`) closes the chat Activity before `onOffer` runs.
-- Without `onOffer`, cards say "This offer can't be opened in this version of the app".
+- Without `onOffer`, cards say "Update the app to open this".
 - Cards refresh when the chat opens, every 30 seconds while it is open, after a purchase, restore or
   sign-in reported by AppRefer Billing, and when the app comes back to the foreground.
 - Your team sends cards from the inbox (＋ Offer); the AI assistant can attach one only for a

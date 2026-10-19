@@ -51,10 +51,17 @@ object AppReferInternal {
      * marker write takes, and a reset() that started before this call writes no marker.
      */
     /**
-     * AppRefer Billing's store prices for Support offer cards: offering id -> package id ->
-     * (formatted store price, store product name). Set by AppRefer Billing's configure.
+     * One package's store price for Support offer cards: the store's formatted regular price
+     * (never a trial or introductory phase), product name, the store's billing period of a
+     * subscription (ISO 8601, e.g. `P1Y`; null for one-time purchases) and whether it is one-time.
      */
-    @Volatile var supportOfferPrices: (suspend (Set<String>) -> Map<String, Map<String, Pair<String, String?>>>)? = null
+    data class SupportStorePrice(val price: String, val name: String?, val period: String?, val oneTime: Boolean)
+
+    /**
+     * AppRefer Billing's store prices for Support offer cards: offering id -> package id -> price.
+     * Set by AppRefer Billing's configure.
+     */
+    @Volatile var supportOfferPrices: (suspend (Set<String>) -> Map<String, Map<String, SupportStorePrice>>)? = null
 
     /** AppRefer Billing's entitlements changed (purchase, restore, sign-in): offer cards refresh. */
     fun billingChanged() = com.apprefer.sdk.support.SupportOffers.billingChanged()

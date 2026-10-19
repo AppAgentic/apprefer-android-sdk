@@ -38,10 +38,10 @@ class SupportOfferTest {
     @Test fun lookFollowsServerStateAndHandler() {
         assertEquals(SupportOfferLook.OPEN, SupportOfferLook.of(card(), true))
         assertEquals(SupportOfferLook.UNSUPPORTED, SupportOfferLook.of(card(), false))
-        assertEquals("This offer can't be opened in this version of the app", SupportOfferLook.UNSUPPORTED.notice)
+        assertEquals("Update the app to open this", SupportOfferLook.UNSUPPORTED.notice)
         assertEquals(SupportOfferLook.OWNED, SupportOfferLook.of(withStatus("owned"), true))
         assertEquals(SupportOfferLook.UNAVAILABLE, SupportOfferLook.of(withStatus("unavailable"), true))
-        assertEquals("This offer is no longer available", SupportOfferLook.UNAVAILABLE.notice)
+        assertEquals("These options are no longer available", SupportOfferLook.UNAVAILABLE.notice)
         assertEquals(SupportOfferLook.UNAVAILABLE, SupportOfferLook.of(withStatus("paused"), true))
     }
 
@@ -54,8 +54,44 @@ class SupportOfferTest {
         assertEquals("Option", SupportOfferText.label(custom, null))
         SupportStrings.forcedLanguage = "de"
         assertEquals("Jährlich", SupportOfferText.label(c.packages[0], null))
-        assertEquals("Angebot ansehen", SupportStrings.text("support.offer.open"))
+        assertEquals("Optionen ansehen", SupportStrings.text("support.offer.open"))
         assertEquals(listOf("${'$'}ar_annual"), card(cardJson.replace("\"packageId\":null", "\"packageId\":\"${'$'}ar_annual\"")).shownPackages.map { it.id })
+    }
+
+    /** Ordinary full-price cards never read like a deal, in any language. */
+    @Test fun cardCopyIsNeutralInEveryLanguage() {
+        val deal = listOf("offer", "angebot", "offre", "oferta", "offerta", "deal", "discount", "rabatt", "скидк", "предложени", "オファー", "優惠", "优惠", "折扣", "할인", "割引")
+        for (language in listOf("en", "de", "fr", "es", "it", "pt-BR", "nl", "ru", "ja", "ko", "zh-Hans", "zh-Hant")) {
+            SupportStrings.forcedLanguage = language
+            for (key in listOf("support.offer.title", "support.offer.open", "support.offer.unavailable", "support.offer.unsupported", "support.offer.a11y.hint")) {
+                val text = SupportStrings.text(key).lowercase()
+                assertTrue("$language $key: $text", deal.none { text.contains(it) })
+            }
+        }
+    }
+
+    /** The price carries the store's own billing period; one-time purchases and unusual periods show the bare store price. */
+    @Test fun priceShowsTheStoresOwnPeriod() {
+        assertEquals("£29.99/year", SupportOfferText.price(SupportOfferPrice("£29.99", null, "P1Y")))
+        assertEquals("£4.99/month", SupportOfferText.price(SupportOfferPrice("£4.99", null, "P1M")))
+        assertEquals("£2.99/week", SupportOfferText.price(SupportOfferPrice("£2.99", null, "P1W")))
+        assertEquals("£9.99 every 3 months", SupportOfferText.price(SupportOfferPrice("£9.99", null, "P3M")))
+        assertEquals("£9.99 every 4 weeks", SupportOfferText.price(SupportOfferPrice("£9.99", null, "P4W")))
+        assertEquals("£4.99", SupportOfferText.price(SupportOfferPrice("£4.99", null, null, oneTime = true)))
+        assertEquals("£1.99", SupportOfferText.price(SupportOfferPrice("£1.99", null, "P3D")))
+        assertEquals("£1.99", SupportOfferText.price(SupportOfferPrice("£1.99", null, "nonsense")))
+        SupportStrings.forcedLanguage = "de"
+        assertEquals("29,99 €/Jahr", SupportOfferText.price(SupportOfferPrice("29,99 €", null, "P1Y")))
+    }
+
+    /** An owned subscription is the current plan; an owned one-off (credit pack, lifetime) is purchased. */
+    @Test fun ownedTagFitsWhatWasBought() {
+        val sub = AppReferSupportOfferCard.Package("${'$'}ar_annual", "annual", null, "p", true)
+        assertEquals("Current plan", SupportOfferText.ownedTag(sub, SupportOfferPrice("£29.99", null, "P1Y")))
+        assertEquals("Current plan", SupportOfferText.ownedTag(sub, null))
+        assertEquals("Purchased", SupportOfferText.ownedTag(AppReferSupportOfferCard.Package("${'$'}ar_lifetime", "lifetime", null, "l", true), null))
+        assertEquals("Purchased", SupportOfferText.ownedTag(AppReferSupportOfferCard.Package("gold", "custom", null, "g", true), SupportOfferPrice("£4.99", null, null, true)))
+        assertNull(SupportOfferText.ownedTag(AppReferSupportOfferCard.Package("m", "monthly", null, "m", false), null))
     }
 
     @Test fun receiptQueuePersistsDedupesAndDropsOldOrRetriedTooOften() {

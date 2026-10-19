@@ -113,10 +113,44 @@ internal object SupportOfferText {
         storeName?.takeIf { it.isNotBlank() }?.let { return it }
         return SupportStrings.text("support.offer.package.custom")
     }
+
+    /**
+     * The `support.offer.price.*` key for a store billing period (ISO 8601, e.g. `P1Y`), or null
+     * for one-time purchases and periods the table doesn't word (the bare store price is shown).
+     */
+    fun periodKey(iso: String?): String? {
+        val m = Regex("^P(\\d+)([DWMY])$").matchEntire(iso?.uppercase() ?: return null) ?: return null
+        val n = m.groupValues[1].toIntOrNull() ?: return null
+        return when (m.groupValues[2] to n) {
+            "D" to 7, "W" to 1 -> "week"
+            "D" to 28, "W" to 4 -> "fourWeeks"
+            "M" to 1 -> "month"
+            "M" to 2 -> "twoMonths"
+            "M" to 3 -> "threeMonths"
+            "M" to 6 -> "sixMonths"
+            "M" to 12, "Y" to 1 -> "year"
+            else -> null
+        }
+    }
+
+    /** The store's own regular price with the store's own billing period, e.g. "£29.99/year". */
+    fun price(p: SupportOfferPrice): String =
+        periodKey(p.period)?.let { SupportStrings.text("support.offer.price.$it", "price" to p.price) } ?: p.price
+
+    /** The tag on a row the customer already has: "Purchased" for a one-off, "Current plan" for a subscription. */
+    fun ownedTag(p: AppReferSupportOfferCard.Package, price: SupportOfferPrice?): String? {
+        if (!p.current) return null
+        val oneOff = price?.oneTime ?: (p.packageType == "lifetime")
+        return SupportStrings.text(if (oneOff) "support.offer.purchased" else "support.offer.current")
+    }
 }
 
-/** A store price and product name for one package, from AppRefer Billing. */
-internal data class SupportOfferPrice(val price: String, val name: String?)
+/**
+ * A store price and product name for one package, from AppRefer Billing: the regular price
+ * (never a trial or introductory phase) with the store's billing period (ISO 8601; null for
+ * one-time purchases).
+ */
+internal data class SupportOfferPrice(val price: String, val name: String?, val period: String? = null, val oneTime: Boolean = false)
 
 /** A receipt the server hasn't confirmed yet. Same id on every retry, so it's stored once. */
 internal data class SupportOfferReceipt(

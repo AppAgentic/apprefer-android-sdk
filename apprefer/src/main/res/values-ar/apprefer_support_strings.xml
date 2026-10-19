@@ -222,18 +222,20 @@
     <string name="apprefer_engagement_channel_reminders">التذكيرات</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">الحساب والفوترة</string>
-    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
-    <string name="apprefer_support_offer_title">عرض لك</string>
-    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
-    <string name="apprefer_support_offer_open">عرض العرض</string>
+    <!-- support.offer.title: Small heading on a card in the chat holding one or more of the app's plans, credit packs or one-off purchases the team or assistant attached. Neutral: these are normal prices, so never imply a discount, deal or special offer. -->
+    <string name="apprefer_support_offer_title">خيارات لك</string>
+    <!-- support.offer.open: Button on that card that opens the app's own screen listing these options. Short. Never imply a discount. -->
+    <string name="apprefer_support_offer_open">عرض الخيارات</string>
     <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
     <string name="apprefer_support_offer_current">خطتك الحالية</string>
+    <!-- support.offer.purchased: Tag next to a one-off purchase on the card that the customer already owns (subscriptions use 'Current plan'). -->
+    <string name="apprefer_support_offer_purchased">تم الشراء</string>
     <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
     <string name="apprefer_support_offer_owned">لديك هذا بالفعل</string>
-    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
-    <string name="apprefer_support_offer_unavailable">لم يعد هذا العرض متاحًا</string>
-    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
-    <string name="apprefer_support_offer_unsupported">لا يمكن فتح هذا العرض في هذا الإصدار من التطبيق</string>
+    <!-- support.offer.unavailable: Shown on the card when it was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">لم تعد هذه الخيارات متاحة</string>
+    <!-- support.offer.unsupported: Shown on the card when this version of the app can't open it yet. -->
+    <string name="apprefer_support_offer_unsupported">حدّث التطبيق لفتح هذا</string>
     <!-- support.offer.package.weekly: Plan length label on an offer card. -->
     <string name="apprefer_support_offer_package_weekly">أسبوعي</string>
     <!-- support.offer.package.monthly: Plan length label on an offer card. -->
@@ -250,8 +252,22 @@
     <string name="apprefer_support_offer_package_lifetime">مدى الحياة</string>
     <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
     <string name="apprefer_support_offer_package_custom">خيار</string>
-    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
-    <string name="apprefer_support_offer_a11y_hint">يفتح خطط التطبيق</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">يفتح هذه الخيارات في التطبيق</string>
+    <!-- support.offer.price.week: Regular store price of a weekly subscription. {price} = the store's formatted price, e.g. £2.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_week">{price}/أسبوع</string>
+    <!-- support.offer.price.fourWeeks: Regular store price of a subscription billed every 4 weeks. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_four_weeks">{price} كل 4 أسابيع</string>
+    <!-- support.offer.price.month: Regular store price of a monthly subscription. {price} = the store's formatted price, e.g. £4.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_month">{price}/شهر</string>
+    <!-- support.offer.price.twoMonths: Regular store price of a subscription billed every 2 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_two_months">{price} كل شهرين</string>
+    <!-- support.offer.price.threeMonths: Regular store price of a subscription billed every 3 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_three_months">{price} كل 3 أشهر</string>
+    <!-- support.offer.price.sixMonths: Regular store price of a subscription billed every 6 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_six_months">{price} كل 6 أشهر</string>
+    <!-- support.offer.price.year: Regular store price of a yearly subscription. {price} = the store's formatted price, e.g. £29.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_year">{price}/سنة</string>
     <!-- support.review.title: Small heading on an optional review card in the chat. Neutral: never ask for stars or a good rating, never promise anything. -->
     <string name="apprefer_support_review_title">شارك تجربتك</string>
     <!-- support.review.body.appStore: Text on the review card. Store: App Store (brand name, never translated). -->

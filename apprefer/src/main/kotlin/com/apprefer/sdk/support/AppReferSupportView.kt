@@ -759,12 +759,14 @@ class AppReferSupportView @JvmOverloads constructor(
                 list.addView(row().apply {
                     setPadding(0, dp(11), 0, dp(11))
                     addView(text(name, 15f, c.ink, 500, 2), lp(0, weight = 1f))
-                    if (pkg.current) addView(text(s("support.offer.current"), 11.5f, p.accent, 600).apply {
+                    val tag = SupportOfferText.ownedTag(pkg, price)
+                    val priceText = price?.let { SupportOfferText.price(it) }
+                    if (tag != null) addView(text(tag, 11.5f, p.accent, 600).apply {
                         setPadding(dp(8), dp(3), dp(8), dp(3)); background = rounded(supportAlpha(p.accent, .12f), 99)
                     }, lp(-2, start = dp(8)))
-                    price?.let { addView(text(it.price, 15f, c.ink, 600).apply { fontFeatureSettings = "tnum" }, lp(-2, start = dp(8))) }
+                    priceText?.let { addView(text(it, 15f, c.ink, 600).apply { fontFeatureSettings = "tnum" }, lp(-2, start = dp(8))) }
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-                    contentDescription = listOfNotNull(name, if (pkg.current) s("support.offer.current") else null, price?.price).joinToString(", ")
+                    contentDescription = listOfNotNull(name, tag, priceText).joinToString(", ")
                 }, lp())
             }
             box.addView(list, lp(top = dp(12)))
@@ -923,11 +925,11 @@ class AppReferSupportView @JvmOverloads constructor(
         scope.launch { loadOfferPrices() }
     }
 
+    @OptIn(com.apprefer.sdk.InternalAppReferApi::class)
     private suspend fun loadOfferPrices() {
-        @OptIn(com.apprefer.sdk.InternalAppReferApi::class)
         val source = com.apprefer.sdk.AppReferInternal.supportOfferPrices ?: return
         val ids = offerCards.values.map { it.offeringId }.toSet()
-        val loaded = try { source(ids).mapValues { (_, m) -> m.mapValues { SupportOfferPrice(it.value.first, it.value.second) } } }
+        val loaded = try { source(ids).mapValues { (_, m) -> m.mapValues { SupportOfferPrice(it.value.price, it.value.name, it.value.period, it.value.oneTime) } } }
             catch (e: CancellationException) { throw e } catch (_: Exception) { return }
         if (loaded != offerPrices) { offerPrices = loaded; if (route == "thread") renderMessages() }
     }

@@ -30,8 +30,10 @@ class SupportOfferPricesTest {
         val offerings = AppReferOfferings(offering, mapOf("main" to offering), OfferingContext(), emptyMap())
         val prices = AppReferBilling.offerPrices(offerings, setOf("main", "missing"))
         assertEquals(setOf("main"), prices.keys)
-        assertEquals("£29.99" to "Pro", prices["main"]!!["\$ar_annual"])
-        assertEquals("£49.99" to "Lifetime", prices["main"]!!["\$ar_lifetime"])
+        // The recurring phase's own period, never the free week before it.
+        assertEquals(com.apprefer.sdk.AppReferInternal.SupportStorePrice("£29.99", "Pro", "P1Y", false), prices["main"]!!["\$ar_annual"])
+        assertEquals(com.apprefer.sdk.AppReferInternal.SupportStorePrice("£49.99", "Lifetime", null, true), prices["main"]!!["\$ar_lifetime"])
+        assertEquals("P1M", AppReferBilling.storePrice(pkg("\$ar_monthly", pro, "tok_month", "monthly"))!!.period)
         assertNull(prices["main"]!!["\$ar_weekly"])
     }
 }

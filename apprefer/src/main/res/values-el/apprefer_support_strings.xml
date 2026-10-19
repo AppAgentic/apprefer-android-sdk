@@ -218,18 +218,20 @@
     <string name="apprefer_engagement_channel_reminders">Υπενθυμίσεις</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">Λογαριασμός και χρεώσεις</string>
-    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
-    <string name="apprefer_support_offer_title">Μια προσφορά για σένα</string>
-    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
-    <string name="apprefer_support_offer_open">Δες την προσφορά</string>
+    <!-- support.offer.title: Small heading on a card in the chat holding one or more of the app's plans, credit packs or one-off purchases the team or assistant attached. Neutral: these are normal prices, so never imply a discount, deal or special offer. -->
+    <string name="apprefer_support_offer_title">Επιλογές για σένα</string>
+    <!-- support.offer.open: Button on that card that opens the app's own screen listing these options. Short. Never imply a discount. -->
+    <string name="apprefer_support_offer_open">Δες τις επιλογές</string>
     <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
     <string name="apprefer_support_offer_current">Τρέχον πρόγραμμα</string>
+    <!-- support.offer.purchased: Tag next to a one-off purchase on the card that the customer already owns (subscriptions use 'Current plan'). -->
+    <string name="apprefer_support_offer_purchased">Αγοράστηκε</string>
     <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
     <string name="apprefer_support_offer_owned">Το έχεις ήδη</string>
-    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
-    <string name="apprefer_support_offer_unavailable">Αυτή η προσφορά δεν είναι πλέον διαθέσιμη</string>
-    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
-    <string name="apprefer_support_offer_unsupported">Αυτή η προσφορά δεν ανοίγει σε αυτή την έκδοση της εφαρμογής</string>
+    <!-- support.offer.unavailable: Shown on the card when it was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">Αυτές οι επιλογές δεν είναι πλέον διαθέσιμες</string>
+    <!-- support.offer.unsupported: Shown on the card when this version of the app can't open it yet. -->
+    <string name="apprefer_support_offer_unsupported">Ενημέρωσε την εφαρμογή για να το ανοίξεις</string>
     <!-- support.offer.package.weekly: Plan length label on an offer card. -->
     <string name="apprefer_support_offer_package_weekly">Εβδομαδιαίο</string>
     <!-- support.offer.package.monthly: Plan length label on an offer card. -->
@@ -246,8 +248,22 @@
     <string name="apprefer_support_offer_package_lifetime">Εφ’ όρου ζωής</string>
     <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
     <string name="apprefer_support_offer_package_custom">Επιλογή</string>
-    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
-    <string name="apprefer_support_offer_a11y_hint">Ανοίγει τα προγράμματα της εφαρμογής</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">Ανοίγει αυτές τις επιλογές στην εφαρμογή</string>
+    <!-- support.offer.price.week: Regular store price of a weekly subscription. {price} = the store's formatted price, e.g. £2.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_week">{price}/εβδομάδα</string>
+    <!-- support.offer.price.fourWeeks: Regular store price of a subscription billed every 4 weeks. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_four_weeks">{price} κάθε 4 εβδομάδες</string>
+    <!-- support.offer.price.month: Regular store price of a monthly subscription. {price} = the store's formatted price, e.g. £4.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_month">{price}/μήνα</string>
+    <!-- support.offer.price.twoMonths: Regular store price of a subscription billed every 2 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_two_months">{price} κάθε 2 μήνες</string>
+    <!-- support.offer.price.threeMonths: Regular store price of a subscription billed every 3 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_three_months">{price} κάθε 3 μήνες</string>
+    <!-- support.offer.price.sixMonths: Regular store price of a subscription billed every 6 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_six_months">{price} κάθε 6 μήνες</string>
+    <!-- support.offer.price.year: Regular store price of a yearly subscription. {price} = the store's formatted price, e.g. £29.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_year">{price}/έτος</string>
     <!-- support.review.title: Small heading on an optional review card in the chat. Neutral: never ask for stars or a good rating, never promise anything. -->
     <string name="apprefer_support_review_title">Μοιράσου την εμπειρία σου</string>
     <!-- support.review.body.appStore: Text on the review card. Store: App Store (brand name, never translated). -->

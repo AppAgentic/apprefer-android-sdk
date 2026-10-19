@@ -167,22 +167,30 @@ object AppReferBilling {
         AppReferInternal.supportOfferPrices = { ids -> offerPrices(created.offerings(), ids) }
     }
 
-    /** Offering id -> package id -> (Google Play's formatted price, product name) for Support offer cards. */
-    internal fun offerPrices(offerings: AppReferOfferings, ids: Set<String>): Map<String, Map<String, Pair<String, String?>>> =
+    /** Offering id -> package id -> Google Play's price, product name and billing period for Support offer cards. */
+    internal fun offerPrices(offerings: AppReferOfferings, ids: Set<String>): Map<String, Map<String, AppReferInternal.SupportStorePrice>> =
         ids.mapNotNull { id ->
             val offering = offerings.all[id] ?: return@mapNotNull null
-            id to offering.availablePackages.mapNotNull { p -> playPrice(p)?.let { p.identifier to (it to p.storeProduct.name.takeIf { n -> n.isNotBlank() }) } }.toMap()
+            id to offering.availablePackages.mapNotNull { p -> storePrice(p)?.let { p.identifier to it } }.toMap()
         }.toMap()
 
     /** The regular (recurring) price of the package's base plan or offer, or the one-time price. */
-    internal fun playPrice(p: AppReferPackage): String? {
+    internal fun playPrice(p: AppReferPackage): String? = storePrice(p)?.price
+
+    /**
+     * The one-time price, or the last (recurring) pricing phase of the package's base plan or offer
+     * with that phase's own billing period: a free-trial or introductory phase is never shown.
+     */
+    internal fun storePrice(p: AppReferPackage): AppReferInternal.SupportStorePrice? {
         val details = p.storeProduct
-        details.oneTimePurchaseOfferDetails?.formattedPrice?.let { return it }
+        val name = details.name.takeIf { it.isNotBlank() }
+        details.oneTimePurchaseOfferDetails?.formattedPrice?.let { return AppReferInternal.SupportStorePrice(it, name, null, true) }
         val offers = details.subscriptionOfferDetails.orEmpty()
         val offer = offers.firstOrNull { p.offerToken != null && it.offerToken == p.offerToken }
             ?: offers.firstOrNull { p.basePlanId != null && it.basePlanId == p.basePlanId && it.offerId == null }
             ?: offers.firstOrNull()
-        return offer?.pricingPhases?.pricingPhaseList?.lastOrNull()?.formattedPrice
+        val phase = offer?.pricingPhases?.pricingPhaseList?.lastOrNull() ?: return null
+        return AppReferInternal.SupportStorePrice(phase.formattedPrice, name, phase.billingPeriod.takeIf { it.isNotBlank() }, false)
     }
 
     private fun publish(info: AppReferCustomerInfo) {
