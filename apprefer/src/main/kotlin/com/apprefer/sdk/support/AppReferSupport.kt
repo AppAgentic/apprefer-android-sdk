@@ -217,6 +217,19 @@ object AppReferSupport {
      */
     suspend fun status(): AppReferSupportStatus = api(app ?: error("Configure AppRefer first")).help.status()
 
+    /**
+     * Confirms who the customer is, so your team and the AI assistant may use the account's
+     * private details (plan, orders, credits). Your backend, after signing the user in, asks
+     * AppRefer for a short-lived single-use token (`POST /api/v1/apps/{appId}/support/identity-tokens`
+     * with your private key; never ship that key in the app) and passes it here. It verifies the
+     * current Support session, so conversations already started on it count too. Call it after
+     * `AppRefer.setUserId` with the same user; `reset()`, `clearIdentity()` or another account
+     * ends it. Network failures are retried with the same token and then thrown (retrying the
+     * same token later is safe); a refusal returns `verified = false` with a reason.
+     */
+    suspend fun verifyIdentity(identityToken: String): AppReferSupportIdentityVerification =
+        api(app ?: error("Configure AppRefer first")).verifyIdentity(identityToken)
+
     /** The customer's email from identify(), for the "we'll email you" line. */
     internal val customerEmail: String? get() = email
     suspend fun registerPushToken(token: String) { val c = app ?: error("Configure AppRefer first"); api(c).register(token) }

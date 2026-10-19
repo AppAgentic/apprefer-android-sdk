@@ -294,6 +294,43 @@ internal class SupportAPI(
             dropToken(); session()
         }
     }; Unit }
+    /** Waits between verification attempts after a network or server failure (tests shorten it). */
+    @Volatile internal var verifyRetryDelaysMs: List<Long> = listOf(500L, 1_500L)
+    /**
+     * Verifies the current Support session for the app user id the app's backend vouched for with
+     * [identityToken] (single use, from the backend's `support/identity-tokens` call). The token is
+     * sent once per attempt and never stored or logged. A network or server failure is retried
+     * with the same token (the server acknowledges a retry from the same session), then thrown;
+     * a reset(), clearIdentity() or a different stored user id while it runs answers
+     * `account_changed`, never a verification for the new account.
+     */
+    suspend fun verifyIdentity(identityToken: String): AppReferSupportIdentityVerification {
+        if (identityToken.isBlank() || identityToken.length > 2048) return AppReferSupportIdentityVerification(false, "malformed", null)
+        if (identityCleared()) return AppReferSupportIdentityVerification(false, "identity_cleared", null)
+        val epoch = generation
+        val user = identity()["appUserId"] as? String
+        val changed = AppReferSupportIdentityVerification(false, "account_changed", null)
+        var attempt = 0
+        while (true) {
+            val response = try {
+                call("POST", "/session/identity", mapOf("identityToken" to identityToken), epoch)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (epoch != generation) return changed
+                val transient = e is java.io.IOException || (e is AppReferSupportException && (e.status == 0 || e.status == 408 || e.status == 429 || e.status >= 500))
+                if (!transient || attempt >= verifyRetryDelaysMs.size) {
+                    throw if (e is AppReferSupportException) e else AppReferSupportException(0, e.message ?: "Network error", AppReferSupportException.Reason.UNAVAILABLE)
+                }
+                kotlinx.coroutines.delay(verifyRetryDelaysMs[attempt++])
+                continue
+            }
+            if (epoch != generation || identityCleared() || (identity()["appUserId"] as? String) != user) return changed
+            val result = response.obj("identity")
+            val verified = result["verified"] == true
+            return AppReferSupportIdentityVerification(verified, if (verified) null else result["reason"] as? String ?: "unknown", result["appUserId"] as? String)
+        }
+    }
     /** The app's AI assistant, from the latest list or conversation read (null when the app has none). */
     @Volatile var persona: AppReferSupportPersona? = null
         private set
@@ -357,6 +394,16 @@ data class AppReferSupportMessage @JvmOverloads constructor(
     internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean)
     val isHandoff: Boolean get() = handoff == true
 }
+/**
+ * The answer of `AppRefer.support.verifyIdentity`. [verified] true: Support may use this account's
+ * private details (plan, orders, credits) for this session. Otherwise [reason] says why:
+ * the server's `malformed`, `bad_signature`, `other_app`, `other_environment`, `expired`,
+ * `bad_times`, `already_used`, `user_mismatch`, `session_replaced`, `session_gone` (ask your
+ * backend for a new token), or the SDK's `account_changed` (the account changed while it ran)
+ * and `identity_cleared` (after `clearIdentity()`).
+ */
+data class AppReferSupportIdentityVerification(val verified: Boolean, val reason: String?, val appUserId: String?)
+
 /** The app's AI support assistant, set in AppRefer. Every message from it is tagged "AI". */
 data class AppReferSupportPersona(
     val name: String,
