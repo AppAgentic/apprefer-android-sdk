@@ -534,7 +534,7 @@ answer calls you anyway (the store is the real gate).
 - `reset()` and `clearIdentity()` drop pending receipts with the old session.
 - Older SDK versions show your text plus a line asking the customer to update the app.
 
-0.12.0 is unreleased source (not tagged). Once tagged, install it from Git only: JitPack, `com.github.AppAgentic:apprefer-android-sdk:0.12.0` (and `apprefer-billing` from the same tag).
+0.12.0 is unreleased source (not tagged). Once tagged, install it from Git only: JitPack, `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.12.0` (core) and `com.github.AppAgentic.apprefer-android-sdk:apprefer-billing:0.12.0` (billing).
 
 ### Languages and your own wording
 
