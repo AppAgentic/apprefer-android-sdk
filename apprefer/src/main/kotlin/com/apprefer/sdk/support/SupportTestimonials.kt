@@ -42,7 +42,8 @@ import java.util.concurrent.ConcurrentHashMap
 // verified for (`AppRefer.support.verifyIdentity`). The reward and the publication permission text
 // come from the request: the SDK never chooses a reward and never ties it to what is said. Taking
 // part earns the reward; public use is a separate switch that starts on and the customer can turn
-// off. Only the final Share sends its value, with the permission version shown.
+// off. Only the final button sends its value ("Send and allow sharing" / "Send privately"), with
+// the permission version shown.
 
 /** A photo/video request as the server sends it. */
 data class AppReferTestimonialRequest(
@@ -152,6 +153,17 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
      * (an older server) can't be submitted, so no permission is ever assumed.
      */
     var publish = true
+    /**
+     * The final button says what it sends: "Send and allow sharing" while the switch is on,
+     * "Send privately" while it is off (also on retry). Without permission text there is no
+     * switch and nothing can be submitted, so it keeps the plain label.
+     */
+    val submitLabelKey: String
+        get() = when {
+            request?.permission == null -> "support.testimonial.submit"
+            publish -> "support.testimonial.submitPublic"
+            else -> "support.testimonial.submitPrivate"
+        }
     /** The localized message for the last problem (null when none). */
     var notice: String? = null; private set
     /** The same on every retry: a lost answer never shares twice. */
@@ -492,6 +504,8 @@ class AppReferTestimonialActivity : Activity() {
         body.addView(text(s("support.testimonial.honest"), 14f, c.muted), lp(dp(6)))
         r.reward?.description?.let { body.addView(rewardBox(it), lp(dp(14))) }
         val f = flow.file
+        // Built below the switch; the switch relabels it in place (no rebuild mid-toggle).
+        var submit: Button? = null
         if (f != null) {
             body.addView(preview(f), LinearLayout.LayoutParams(-1, dp(280)).apply { topMargin = dp(14) })
             if (!busy) body.addView(button(s("support.testimonial.retake"), false) { pick(null) }, lp(dp(10)))
@@ -499,7 +513,7 @@ class AppReferTestimonialActivity : Activity() {
                 body.addView(card().apply {
                     addView(Switch(this@AppReferTestimonialActivity).apply {
                         text = s("support.testimonial.publish"); textSize = 15f; setTextColor(c.ink); isChecked = flow.publish; isEnabled = !busy
-                        setOnCheckedChangeListener { _, on -> flow.publish = on }
+                        setOnCheckedChangeListener { _, on -> flow.publish = on; submit?.text = s(flow.submitLabelKey) }
                     }, lp())
                     addView(text(permission.text, 13.5f), lp(dp(6)))
                     addView(text(s("support.testimonial.publishHint"), 12.5f, c.muted), lp(dp(6)))
@@ -520,7 +534,7 @@ class AppReferTestimonialActivity : Activity() {
             }
             TestimonialFlow.Phase.CHECKING -> body.addView(text(s("support.testimonial.checking"), 14f, c.muted), lp(dp(14)))
             else -> {
-                if (f != null) body.addView(button(s(if (flow.phase == TestimonialFlow.Phase.FAILED) "support.action.tryAgain" else "support.testimonial.submit"), true) { scope.launch { flow.submit() } }, lp(dp(16)))
+                if (f != null) body.addView(button(s(flow.submitLabelKey), true) { scope.launch { flow.submit() } }.also { submit = it }, lp(dp(16)))
                 body.addView(LinearLayout(this).apply {
                     gravity = Gravity.CENTER
                     addView(text(s("support.testimonial.decline"), 14f, c.muted, true).apply { setPadding(dp(10), dp(10), dp(10), dp(10)); setOnClickListener { scope.launch { close(flow.decline(false)) } } })

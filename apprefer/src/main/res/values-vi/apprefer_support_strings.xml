@@ -305,6 +305,10 @@
     <string name="apprefer_support_testimonial_publish_hint">Bật trừ khi bạn tắt. Phần thưởng như nhau trong cả hai trường hợp, và bạn có thể rút lại sau.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Chia sẻ</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">Gửi và cho phép chia sẻ</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">Gửi riêng tư</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">Đang tải lên… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

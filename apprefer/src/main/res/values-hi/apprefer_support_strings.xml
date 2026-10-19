@@ -306,6 +306,10 @@
     <string name="apprefer_support_testimonial_publish_hint">जब तक आप बंद न करें, यह चालू रहता है। इनाम दोनों हालात में एक जैसा है, और आप बाद में यह अनुमति वापस ले सकते हैं।</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">शेयर करें</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">भेजें और शेयर करने की अनुमति दें</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">निजी रूप से भेजें</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">अपलोड हो रहा है… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

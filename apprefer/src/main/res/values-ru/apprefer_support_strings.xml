@@ -308,6 +308,10 @@
     <string name="apprefer_support_testimonial_publish_hint">Включено, пока вы это не выключите. Награда в обоих случаях одинаковая, а разрешение можно отозвать позже.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Поделиться</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">Отправить и разрешить публикацию</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">Отправить приватно</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">Загрузка… {percent} %</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

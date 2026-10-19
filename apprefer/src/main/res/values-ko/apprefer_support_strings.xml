@@ -305,6 +305,10 @@
     <string name="apprefer_support_testimonial_publish_hint">직접 끄지 않으면 켜져 있어요. 어느 쪽이든 보상은 같고, 나중에 철회할 수도 있어요.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">공유</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">보내고 공유 허용</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">비공개로 보내기</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">업로드 중… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

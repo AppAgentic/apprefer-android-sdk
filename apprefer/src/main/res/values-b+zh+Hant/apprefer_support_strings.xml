@@ -305,6 +305,10 @@
     <string name="apprefer_support_testimonial_publish_hint">預設開啟，你可以關閉。兩種情況下獎勵相同，之後也可以撤回。</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">分享</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">傳送並允許分享</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">私密傳送</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">正在上傳… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

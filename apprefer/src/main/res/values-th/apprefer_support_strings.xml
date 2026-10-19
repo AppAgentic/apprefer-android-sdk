@@ -305,6 +305,10 @@
     <string name="apprefer_support_testimonial_publish_hint">เปิดไว้จนกว่าคุณจะปิด รางวัลเท่ากันทั้งสองกรณี และคุณถอนความยินยอมได้ภายหลัง</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">แชร์</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">ส่งและอนุญาตให้แชร์</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">ส่งแบบส่วนตัว</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">กำลังอัปโหลด… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

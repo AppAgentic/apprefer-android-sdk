@@ -85,12 +85,32 @@ class SupportTestimonialTest {
         assertNull("declining sends no permission answer", declined.decline(false).publication)
     }
 
+    @Test fun theSubmitButtonSaysWhetherItAllowsSharing() = runBlocking {
+        val t = Fake(request())
+        val flow = TestimonialFlow(t.current.requestId, t)
+        flow.load(); flow.picked(photo)
+        assertEquals("support.testimonial.submitPublic", flow.submitLabelKey)
+        assertEquals("Send and allow sharing", SupportStrings.text(flow.submitLabelKey))
+        flow.publish = false
+        assertEquals("Send privately", SupportStrings.text(flow.submitLabelKey))
+        t.failSubmit = java.io.IOException("connection reset")
+        flow.submit()
+        assertEquals(TestimonialFlow.Phase.FAILED, flow.phase)
+        assertEquals("a retry still names what it sends", "Send privately", SupportStrings.text(flow.submitLabelKey))
+        flow.submit()
+        assertEquals("the label matches the answer sent", listOf(false, false), t.submits.map { it[2] })
+        SupportStrings.forcedLanguage = "de"
+        assertEquals("Senden und Teilen erlauben", SupportStrings.text("support.testimonial.submitPublic"))
+        assertEquals("Privat senden", SupportStrings.text("support.testimonial.submitPrivate"))
+    }
+
     @Test fun aRequestWithoutPermissionTextIsNeverSubmittedWithAnAssumedAnswer() = runBlocking {
         val old = json().replace(""""permission":{"text":"You may show this in the app.","scopes":["in_app"],"version":"0123456789abcdef"},""", "")
         val t = Fake(request(old))
         val flow = TestimonialFlow(t.current.requestId, t)
         flow.load()
         assertNull(flow.request?.permission)
+        assertEquals("no switch, so the button claims neither sharing nor privacy", "support.testimonial.submit", flow.submitLabelKey)
         flow.picked(photo); flow.submit()
         assertTrue("no permission text means no answer is sent or inferred", t.submits.isEmpty())
         assertEquals(0, t.slots)

@@ -310,6 +310,10 @@
     <string name="apprefer_support_testimonial_publish_hint">مفعّل ما لم تُوقفه. المكافأة نفسها في الحالتين، ويمكنك سحب الإذن لاحقًا.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">مشاركة</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">إرسال مع السماح بالمشاركة</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">إرسال بشكل خاص</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">جارٍ الرفع… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

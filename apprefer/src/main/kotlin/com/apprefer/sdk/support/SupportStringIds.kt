@@ -163,6 +163,8 @@ internal object SupportStringIds {
             "support.testimonial.publish" to R.string.apprefer_support_testimonial_publish,
             "support.testimonial.publishHint" to R.string.apprefer_support_testimonial_publish_hint,
             "support.testimonial.submit" to R.string.apprefer_support_testimonial_submit,
+            "support.testimonial.submitPublic" to R.string.apprefer_support_testimonial_submit_public,
+            "support.testimonial.submitPrivate" to R.string.apprefer_support_testimonial_submit_private,
             "support.testimonial.uploading" to R.string.apprefer_support_testimonial_uploading,
             "support.testimonial.checking" to R.string.apprefer_support_testimonial_checking,
             "support.testimonial.done" to R.string.apprefer_support_testimonial_done,

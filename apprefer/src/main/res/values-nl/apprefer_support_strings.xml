@@ -306,6 +306,10 @@
     <string name="apprefer_support_testimonial_publish_hint">Aan, tenzij je het uitzet. De beloning is in beide gevallen hetzelfde, en je kunt dit later intrekken.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Delen</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">Versturen en delen toestaan</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">Privé versturen</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">Uploaden… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

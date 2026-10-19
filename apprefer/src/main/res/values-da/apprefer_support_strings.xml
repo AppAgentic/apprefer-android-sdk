@@ -306,6 +306,10 @@
     <string name="apprefer_support_testimonial_publish_hint">Slået til, medmindre du slår det fra. Belønningen er den samme uanset hvad, og du kan trække det tilbage senere.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Del</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">Send og tillad deling</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">Send privat</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">Uploader… {percent} %</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

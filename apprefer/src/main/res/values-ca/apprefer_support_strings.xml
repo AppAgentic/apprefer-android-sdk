@@ -307,6 +307,10 @@
     <string name="apprefer_support_testimonial_publish_hint">Activat tret que el desactivis. La recompensa és la mateixa en tots dos casos, i pots retirar-ho més endavant.</string>
     <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
     <string name="apprefer_support_testimonial_submit">Comparteix</string>
+    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
+    <string name="apprefer_support_testimonial_submit_public">Envia i permet compartir</string>
+    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
+    <string name="apprefer_support_testimonial_submit_private">Envia en privat</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">S’està pujant… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->
