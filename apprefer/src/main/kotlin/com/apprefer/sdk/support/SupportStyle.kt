@@ -76,6 +76,42 @@ internal class SupportColors(dark: Boolean) {
     val error = 0xFFE5383B.toInt()
 }
 
+/**
+ * How the home header is drawn for [AppReferSupportHeaderStyle] (pure, so JVM tests cover it).
+ * ACCENT is the accent with three soft glows and text that follows the accent. PLAIN is one flat
+ * neutral grey surface with the page's ink colour: no accent, glow or coloured avatar in the header.
+ */
+internal class SupportHeaderLook(style: AppReferSupportHeaderStyle, p: SupportPalette, dark: Boolean) {
+    val plain = style == AppReferSupportHeaderStyle.PLAIN
+    /** The header's base fill; ACCENT draws its glows on top. */
+    val background: Int = if (plain) plainBackground(dark) else p.accent
+    val glows: Boolean = !plain
+    /** Title, greeting, subtitle, presence text and the close icon. */
+    val foreground: Int = if (plain) plainInk(dark) else p.onAccent
+    /** Whether [foreground] is dark (status bar icons over the header follow it). */
+    val foregroundIsDark: Boolean = if (plain) !dark else p.onAccentIsDark
+    val closeFill: Int = supportAlpha(foreground, if (plain) .08f else .2f)
+    val closeStroke: Int = supportAlpha(foreground, if (plain) .16f else .35f)
+    val pillFill: Int = if (plain) supportAlpha(foreground, .06f) else supportAlpha(0xFF000000.toInt(), if (p.onAccentIsDark) .06f else .16f)
+    val pillStroke: Int = supportAlpha(foreground, if (plain) .16f else .3f)
+    /** Avatars in the presence pill: the accent's neighbours, or neutral greys. Null keeps the per-person colours. */
+    val avatars: IntArray? = if (plain) PLAIN_AVATAR.copyOf() else null
+    /** The ring that separates overlapping avatars. */
+    val avatarRing: Int = if (plain) background else 0xE6FFFFFF.toInt()
+    /** The initials tile shown when the app has no usable icon. */
+    val iconTile: IntArray = if (plain) intArrayOf(0xFF3D3D3D.toInt(), 0xFF1C1C1C.toInt()) else intArrayOf(0xFF29205C.toInt(), 0xFF0F0A1F.toInt())
+    val iconText: Int = if (plain) 0xFFFFFFFF.toInt() else p.light
+
+    companion object {
+        /** Neutral (R = G = B) greys: a step up from the page in dark mode, a step down in light. */
+        fun plainBackground(dark: Boolean): Int = if (dark) 0xFF1C1C1C.toInt() else 0xFFEBEBEB.toInt()
+        /** White, or a neutral near-black (the page's ink has a faint tint the plain header avoids). */
+        fun plainInk(dark: Boolean): Int = if (dark) 0xFFFFFFFF.toInt() else 0xFF121212.toInt()
+        /** White initials on these read at 5:1 or better. */
+        val PLAIN_AVATAR = intArrayOf(0xFF6B6B6B.toInt(), 0xFF3A3A3A.toInt())
+    }
+}
+
 internal object SupportText {
     /** First name only; never shows an email address. */
     fun firstName(name: String?): String? {

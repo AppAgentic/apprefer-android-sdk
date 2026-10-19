@@ -14,10 +14,25 @@ import com.apprefer.sdk.internal.AppReferStorage
 import kotlinx.coroutines.*
 import java.util.Locale
 
+/** How [AppReferSupport.headerStyle] draws the home screen's header. */
+enum class AppReferSupportHeaderStyle {
+    /** The accent with soft coloured glows (the default). */
+    ACCENT,
+    /** A flat neutral grey surface with the page's text colour: no accent, glow or colour. */
+    PLAIN,
+}
+
 /** In-app support. Configure AppRefer before opening. Network methods are suspending. */
 object AppReferSupport {
     /** Hero, bubble and button colour. Text on it turns dark automatically when the colour is bright. */
     var accentColor: Int = Color.rgb(120, 82, 255)
+    /**
+     * The home screen's header. [AppReferSupportHeaderStyle.ACCENT] (default) fills it with the
+     * accent and soft coloured glows; [AppReferSupportHeaderStyle.PLAIN] is a flat neutral grey
+     * with the page's text colour, for apps whose design has no colour accents. Bubbles and
+     * buttons keep [accentColor] either way.
+     */
+    var headerStyle: AppReferSupportHeaderStyle = AppReferSupportHeaderStyle.ACCENT
     /** Line above the greeting. Defaults to "<App name> support" in the chat's language. */
     var title: String? = null
     /**

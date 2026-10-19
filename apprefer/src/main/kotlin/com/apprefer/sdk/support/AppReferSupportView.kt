@@ -163,6 +163,7 @@ class AppReferSupportView @JvmOverloads constructor(
     private val c = SupportColors(dark)
     val backgroundColor: Int = c.background
     private var p = SupportPalette(AppReferSupport.accentColor)
+    private var h = SupportHeaderLook(AppReferSupport.headerStyle, p, dark)
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var polling: Job? = null
     private var visible = false
@@ -324,8 +325,8 @@ class AppReferSupportView @JvmOverloads constructor(
         isClickable = true; isFocusable = true; setOnClickListener { action() }
         layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
     }
-    private fun avatar(name: String?, size: Number, colors: IntArray, icon: Int? = null, ring: Boolean = false, imageUrl: String? = null) =
-        SupportAvatarView(context, colors, name?.let { SupportText.initial(it) }, icon, ring).apply {
+    private fun avatar(name: String?, size: Number, colors: IntArray, icon: Int? = null, ring: Boolean = false, imageUrl: String? = null, ringColor: Int = 0xE6FFFFFF.toInt()) =
+        SupportAvatarView(context, colors, name?.let { SupportText.initial(it) }, icon, ring, ringColor).apply {
             layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
             imageUrl?.let { url -> portrait(url) { image = it } }
         }
@@ -373,6 +374,7 @@ class AppReferSupportView @JvmOverloads constructor(
 
     private fun render() {
         p = SupportPalette(AppReferSupport.accentColor)
+        h = SupportHeaderLook(AppReferSupport.headerStyle, p, dark)
         // Arabic and Hebrew lay the chat out right to left (needs android:supportsRtl in the app).
         layoutDirection = if (rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         removeAllViews(); hero = null; header = null; headerLabels = null; headerAvatar = null; headerKey = null; presenceHolder = null; shownQuickReplies = null; renderedCount = -1; lastStatusDark = null
@@ -407,19 +409,19 @@ class AppReferSupportView @JvmOverloads constructor(
     }
 
     private fun buildHero(): View {
-        val box = column().apply { background = SupportHeroDrawable(p, resources.displayMetrics.density) }
+        val box = column().apply { background = SupportHeroDrawable(p, h, resources.displayMetrics.density) }
         val top = row().apply { gravity = Gravity.TOP }
         top.addView(appIconView())
         top.addView(Space(context), lp(0, 1, weight = 1f))
-        top.addView(circleButton(R.drawable.apprefer_support_close, s("support.a11y.close"), 40, 18, p.onAccent,
-            oval(supportAlpha(p.onAccent, .2f), supportAlpha(p.onAccent, .35f))) { if (!goBack()) onClose() })
+        top.addView(circleButton(R.drawable.apprefer_support_close, s("support.a11y.close"), 40, 18, h.foreground,
+            oval(h.closeFill, h.closeStroke)) { if (!goBack()) onClose() })
         box.addView(top, lp())
-        box.addView(text(title(), 15f, supportAlpha(p.onAccent, .85f), 600, 1), lp(top = dp(20)))
-        box.addView(text(SupportText.greeting(AppReferSupport.name), 38f, p.onAccent, 800).apply {
+        box.addView(text(title(), 15f, supportAlpha(h.foreground, .85f), 600, 1), lp(top = dp(20)))
+        box.addView(text(SupportText.greeting(AppReferSupport.name), 38f, h.foreground, 800).apply {
             letterSpacing = -0.026f; maxLines = 1
             if (Build.VERSION.SDK_INT >= 26) setAutoSizeTextTypeUniformWithConfiguration(22, 38, 1, TypedValue.COMPLEX_UNIT_SP) else ellipsize = TextUtils.TruncateAt.END
         }, lp(top = dp(4)))
-        box.addView(text(s("support.home.subtitle"), 19f, supportAlpha(p.onAccent, .92f), 500), lp(top = dp(6)))
+        box.addView(text(s("support.home.subtitle"), 19f, supportAlpha(h.foreground, .92f), 500), lp(top = dp(6)))
         presenceHolder = FrameLayout(context).apply { clipChildren = false; addView(presence()) }.also { box.addView(it, lp(-2, top = dp(18))) }
         return box
     }
@@ -443,9 +445,9 @@ class AppReferSupportView @JvmOverloads constructor(
                 override fun getOutline(view: View, outline: Outline) { outline.setRoundRect(0, 0, view.width, view.height, dpf(13)) }
             }
             clipToOutline = true
-        } else text(SupportText.initials(appName()), 15f, p.light, 800).apply {
+        } else text(SupportText.initials(appName()), 15f, h.iconText, 800).apply {
             gravity = Gravity.CENTER
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF29205C.toInt(), 0xFF0F0A1F.toInt())).apply { cornerRadius = dpf(13) }
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, h.iconTile).apply { cornerRadius = dpf(13) }
         }
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         view.elevation = dpf(6)
@@ -470,20 +472,21 @@ class AppReferSupportView @JvmOverloads constructor(
         val names = AppReferSupport.teamNames.take(if (persona == null) 3 else 2)
         val pill = row().apply {
             setPaddingRelative(dp(8), dp(7), dp(14), dp(7))
-            background = rounded(supportAlpha(Color.BLACK, if (p.onAccentIsDark) .06f else .16f), 22, supportAlpha(p.onAccent, .3f))
+            background = rounded(h.pillFill, 22, h.pillStroke)
         }
         // The AI assistant first (with its portrait), then the team.
         val faces = mutableListOf<View>()
-        persona?.let { faces.add(avatar(it.name, 28, agentColors, ring = true, imageUrl = it.avatarUrl)) }
-        names.forEachIndexed { i, n -> faces.add(avatar(n, 28, avatarColors(i), ring = true)) }
-        if (faces.isEmpty()) faces.add(avatar(null, 28, agentColors, R.drawable.apprefer_support_bubble, ring = true))
+        val ring = h.avatarRing
+        persona?.let { faces.add(avatar(it.name, 28, h.avatars ?: agentColors, ring = true, imageUrl = it.avatarUrl, ringColor = ring)) }
+        names.forEachIndexed { i, n -> faces.add(avatar(n, 28, h.avatars ?: avatarColors(i), ring = true, ringColor = ring)) }
+        if (faces.isEmpty()) faces.add(avatar(null, 28, h.avatars ?: agentColors, R.drawable.apprefer_support_bubble, ring = true, ringColor = ring))
         val stack = FrameLayout(context)
         val count = faces.size
         // Added last-first so the first face sits on top, like the iOS pill.
         for (i in count - 1 downTo 0) stack.addView(faces[i], FrameLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(20) * i })
         pill.addView(stack, lp(dp(28) + dp(20) * (count - 1), dp(28)))
         val line = SupportText.presence(AppReferSupport.teamNames, AppReferSupport.replyTime, persona?.name)
-        pill.addView(text(line, 14f, p.onAccent, 500).apply { maxLines = 2 }, lp(-2, start = dp(10)))
+        pill.addView(text(line, 14f, h.foreground, 500).apply { maxLines = 2 }, lp(-2, start = dp(10)))
         pill.contentDescription = line
         return pill
     }
@@ -1597,12 +1600,12 @@ class AppReferSupportView @JvmOverloads constructor(
         updateChrome()
     }
 
-    /** Status bar: over the hero its icons follow the accent; elsewhere a solid band in the page colour. */
+    /** Status bar: over the hero its icons follow the header's text colour; elsewhere a solid band in the page colour. */
     private fun updateChrome() {
         if (!::scrim.isInitialized) return
         val overHero = route == "home" && hero.let { it == null || scroll.scrollY < it.height - insetT - dp(8) }
         if (route == "home") scrim.alpha = if (overHero) 0f else 1f
-        val darkIcons = if (overHero) p.onAccentIsDark else !dark
+        val darkIcons = if (overHero) h.foregroundIsDark else !dark
         if (darkIcons != lastStatusDark) { lastStatusDark = darkIcons; onStatusBarStyle?.invoke(darkIcons) }
     }
 
@@ -1771,10 +1774,11 @@ class AppReferSupportView @JvmOverloads constructor(
 /** A round avatar: a person's initial, or an icon, on a diagonal gradient, optionally ringed in white. */
 internal class SupportAvatarView(
     context: Context, private val colors: IntArray, private val initial: String?, icon: Int?, private val ring: Boolean,
+    ringColor: Int = 0xE6FFFFFF.toInt(),
 ) : View(context) {
     private val glyph = icon?.let { context.getDrawable(it)?.mutate()?.apply { setTint(Color.WHITE) } }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xE6FFFFFF.toInt() }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = ringColor }
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textAlign = Paint.Align.CENTER
         typeface = if (Build.VERSION.SDK_INT >= 28) Typeface.create(Typeface.DEFAULT, 700, false) else Typeface.DEFAULT_BOLD
@@ -1809,13 +1813,14 @@ internal class SupportAvatarView(
     }
 }
 
-/** The home hero: the accent with three soft radial glows (light, hot and warm neighbours). */
-internal class SupportHeroDrawable(private val p: SupportPalette, private val density: Float) : Drawable() {
+/** The home hero: the accent with three soft radial glows (light, hot and warm neighbours), or the plain header's flat grey. */
+internal class SupportHeroDrawable(private val p: SupportPalette, private val h: SupportHeaderLook, private val density: Float) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     override fun draw(canvas: Canvas) {
         val b = bounds
         if (b.isEmpty) return
-        paint.shader = null; paint.color = p.accent; canvas.drawRect(b, paint)
+        paint.shader = null; paint.color = h.background; canvas.drawRect(b, paint)
+        if (!h.glows) return
         glow(canvas, p.light, 1f, .10f, 0f, 380f)
         glow(canvas, p.hot, 1f, 1f, .2f, 320f)
         glow(canvas, p.warm, .95f, .6f, 1.05f, 340f)
