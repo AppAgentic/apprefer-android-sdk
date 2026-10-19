@@ -518,10 +518,8 @@ class AppReferSupportView @JvmOverloads constructor(
         shadow(card, 12, .22f)
         card.addView(label(s("support.home.continue")))
         val line = row()
-        val agent = SupportText.firstName(AppReferSupport.teamNames.firstOrNull())
-        val persona = persona
-        line.addView(if (conversation.lastFrom == "bot" && persona != null) avatar(persona.name, 46, agentColors, imageUrl = persona.avatarUrl)
-            else avatar(agent, 46, agentColors, if (agent == null) R.drawable.apprefer_support_forum else null))
+        val a = SupportContinueAvatar(conversation, persona, AppReferSupport.teamNames, h, p)
+        line.addView(avatar(a.name, 46, a.colors, if (a.chatIcon) R.drawable.apprefer_support_forum else null, imageUrl = a.imageUrl))
         val labels = column()
         labels.addView(text(conversation.subject, 16f, c.ink, 600, 1))
         labels.addView(text(if (conversation.lastFrom == "customer") s("support.home.youPrefix", "text" to conversation.preview) else conversation.preview, 14f, c.muted, lines = 1), lp(top = dp(3)))
