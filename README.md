@@ -430,7 +430,7 @@ Configure AppRefer first, then call from a Help button:
 AppRefer.support.open()                      // optional conversationId
 AppRefer.support.identify("María", "maria@example.com")
 AppRefer.support.accentColor = Color.rgb(120, 82, 255)
-AppRefer.support.headerStyle = AppReferSupportHeaderStyle.PLAIN // 0.11.1: flat neutral grey header (default ACCENT)
+AppRefer.support.headerStyle = AppReferSupportHeaderStyle.PLAIN // 0.11.1: flat neutral grey header (default ACCENT); 0.11.2: Continue card avatar too
 AppRefer.support.title = "My app support"     // defaults to "<application label> support" in the chat's language
 AppRefer.support.replyTime = "a few hours"    // completes "We usually reply in …"; defaults to "under an hour", translated
 AppRefer.support.teamNames = listOf("Jay")    // first names shown on the help home
@@ -462,7 +462,7 @@ An explicit `Context` overload is available for `open(context, conversationId)` 
 
 The help home has a coloured hero built from `accentColor` (its text turns dark on a bright accent
 such as yellow; `headerStyle = AppReferSupportHeaderStyle.PLAIN` makes it a flat neutral grey with no
-accent or glow instead, 0.11.1), a "Continue" card for the open conversation (unread first, then the newest), the
+accent or glow instead, 0.11.1; from 0.11.2 the Continue card's avatar is neutral grey too), a "Continue" card for the open conversation (unread first, then the newest), the
 quick-help tiles, earlier conversations and a message field pinned to the bottom. Messages start
 right from that field; there is no separate compose screen. Conversations show who is answering
 (team members appear by first name only), group bubbles, and offer quick replies after an answer.

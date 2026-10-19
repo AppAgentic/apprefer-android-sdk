@@ -148,6 +148,38 @@ class SupportStyleTest {
         }
     }
 
+    @Test fun continueCardAvatarFollowsHeaderStyle() {
+        fun conv(lastFrom: String) = AppReferSupportConversation("a", "s", "open", "p", "2026-10-19T10:00:00Z", lastFrom, 0)
+        val persona = AppReferSupportPersona("Riley", "https://example.com/riley.png", null)
+        val p = SupportPalette(white)
+        listOf(true, false).forEach { dark ->
+            val accent = SupportHeaderLook(AppReferSupportHeaderStyle.ACCENT, p, dark)
+            val plain = SupportHeaderLook(AppReferSupportHeaderStyle.PLAIN, p, dark)
+            // No team names: the chat icon, in the accent's neighbours (unchanged; the reported mint) or neutral greys.
+            val iconAccent = SupportContinueAvatar(conv("customer"), persona, emptyList(), accent, p)
+            assertArrayEquals(intArrayOf(p.warm, p.hot), iconAccent.colors)
+            assertFalse(iconAccent.colors.all(::isNeutral))
+            assertTrue(iconAccent.chatIcon)
+            val iconPlain = SupportContinueAvatar(conv("customer"), persona, emptyList(), plain, p)
+            assertArrayEquals(SupportHeaderLook.PLAIN_AVATAR, iconPlain.colors)
+            iconPlain.colors.forEach { assertTrue(isNeutral(it)); assertTrue(contrast(white, it) >= 4.5) }
+            assertTrue(iconPlain.chatIcon)
+            assertNull(iconPlain.imageUrl)
+            // A team member: their initial on the same fill.
+            val team = SupportContinueAvatar(conv("team"), persona, listOf("Jay Smith"), plain, p)
+            assertEquals("Jay", team.name)
+            assertFalse(team.chatIcon)
+            team.colors.forEach { assertTrue(isNeutral(it)) }
+            // The AI answered last: its portrait is kept in both styles.
+            listOf(accent, plain).forEach { h ->
+                val bot = SupportContinueAvatar(conv("bot"), persona, listOf("Jay"), h, p)
+                assertEquals("https://example.com/riley.png", bot.imageUrl)
+                assertEquals("Riley", bot.name)
+                assertFalse(bot.chatIcon)
+            }
+        }
+    }
+
     private fun contrast(a: Int, b: Int): Double {
         fun lin(v: Int): Double { val c = v / 255.0; return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4) }
         fun lum(c: Int) = 0.2126 * lin((c shr 16) and 0xff) + 0.7152 * lin((c shr 8) and 0xff) + 0.0722 * lin(c and 0xff)

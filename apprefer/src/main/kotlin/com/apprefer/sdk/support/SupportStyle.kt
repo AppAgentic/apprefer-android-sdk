@@ -94,7 +94,7 @@ internal class SupportHeaderLook(style: AppReferSupportHeaderStyle, p: SupportPa
     val closeStroke: Int = supportAlpha(foreground, if (plain) .16f else .35f)
     val pillFill: Int = if (plain) supportAlpha(foreground, .06f) else supportAlpha(0xFF000000.toInt(), if (p.onAccentIsDark) .06f else .16f)
     val pillStroke: Int = supportAlpha(foreground, if (plain) .16f else .3f)
-    /** Avatars in the presence pill: the accent's neighbours, or neutral greys. Null keeps the per-person colours. */
+    /** Avatars in the presence pill and on the Continue card: neutral greys, or null for the accent's and per-person colours. */
     val avatars: IntArray? = if (plain) PLAIN_AVATAR.copyOf() else null
     /** The ring that separates overlapping avatars. */
     val avatarRing: Int = if (plain) background else 0xE6FFFFFF.toInt()
@@ -109,6 +109,25 @@ internal class SupportHeaderLook(style: AppReferSupportHeaderStyle, p: SupportPa
         fun plainInk(dark: Boolean): Int = if (dark) 0xFFFFFFFF.toInt() else 0xFF121212.toInt()
         /** White initials on these read at 5:1 or better. */
         val PLAIN_AVATAR = intArrayOf(0xFF6B6B6B.toInt(), 0xFF3A3A3A.toInt())
+    }
+}
+
+/**
+ * The avatar on the home's Continue card (pure, so JVM tests cover the card's wiring): the AI's
+ * portrait when it answered last, else the first team member's initial, or the chat icon. PLAIN
+ * draws it in the header's neutral greys; a portrait still covers them.
+ */
+internal class SupportContinueAvatar(conversation: AppReferSupportConversation, persona: AppReferSupportPersona?, teamNames: List<String>, h: SupportHeaderLook, p: SupportPalette) {
+    val colors: IntArray = h.avatars ?: intArrayOf(p.warm, p.hot)
+    val name: String?
+    val chatIcon: Boolean
+    val imageUrl: String?
+    init {
+        if (conversation.lastFrom == "bot" && persona != null) {
+            name = persona.name; chatIcon = false; imageUrl = persona.avatarUrl
+        } else {
+            name = SupportText.firstName(teamNames.firstOrNull()); chatIcon = name == null; imageUrl = null
+        }
     }
 }
 
