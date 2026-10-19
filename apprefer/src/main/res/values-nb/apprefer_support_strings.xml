@@ -218,4 +218,66 @@
     <string name="apprefer_engagement_channel_reminders">Påminnelser</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">Konto og betaling</string>
+    <!-- support.offer.title: Small heading on a card in the chat holding one or more of the app's plans, credit packs or one-off purchases the team or assistant attached. Neutral: these are normal prices, so never imply a discount, deal or special offer. -->
+    <string name="apprefer_support_offer_title">Alternativer for deg</string>
+    <!-- support.offer.open: Button on that card that opens the app's own screen listing these options. Short. Never imply a discount. -->
+    <string name="apprefer_support_offer_open">Se alternativer</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">Nåværende abonnement</string>
+    <!-- support.offer.purchased: Tag next to a one-off purchase on the card that the customer already owns (subscriptions use 'Current plan'). -->
+    <string name="apprefer_support_offer_purchased">Kjøpt</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">Dette har du allerede</string>
+    <!-- support.offer.unavailable: Shown on the card when it was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">Disse alternativene er ikke lenger tilgjengelige</string>
+    <!-- support.offer.unsupported: Shown on the card when this version of the app can't open it yet. -->
+    <string name="apprefer_support_offer_unsupported">Oppdater appen for å åpne dette</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">Ukentlig</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">Månedlig</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">2 måneder</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3 måneder</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6 måneder</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">Årlig</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">Livstid</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">Alternativ</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">Åpner disse alternativene i appen</string>
+    <!-- support.offer.price.week: Regular store price of a weekly subscription. {price} = the store's formatted price, e.g. £2.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_week">{price}/uke</string>
+    <!-- support.offer.price.fourWeeks: Regular store price of a subscription billed every 4 weeks. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_four_weeks">{price} hver 4. uke</string>
+    <!-- support.offer.price.month: Regular store price of a monthly subscription. {price} = the store's formatted price, e.g. £4.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_month">{price}/måned</string>
+    <!-- support.offer.price.twoMonths: Regular store price of a subscription billed every 2 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_two_months">{price} annenhver måned</string>
+    <!-- support.offer.price.threeMonths: Regular store price of a subscription billed every 3 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_three_months">{price} hver 3. måned</string>
+    <!-- support.offer.price.sixMonths: Regular store price of a subscription billed every 6 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_six_months">{price} hver 6. måned</string>
+    <!-- support.offer.price.year: Regular store price of a yearly subscription. {price} = the store's formatted price, e.g. £29.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_year">{price}/år</string>
+    <!-- support.review.title: Small heading on an optional review card in the chat. Neutral: never ask for stars or a good rating, never promise anything. -->
+    <string name="apprefer_support_review_title">Del opplevelsen din</string>
+    <!-- support.review.body.appStore: Text on the review card. Store: App Store (brand name, never translated). -->
+    <string name="apprefer_support_review_body_app_store">Hvis du vil, kan du skrive en anmeldelse på App Store.</string>
+    <!-- support.review.body.googlePlay: Text on the review card. Store: Google Play (brand name, never translated). -->
+    <string name="apprefer_support_review_body_google_play">Hvis du vil, kan du skrive en anmeldelse på Google Play.</string>
+    <!-- support.review.open: Button on the review card that opens the app's store page. Short. -->
+    <string name="apprefer_support_review_open">Skriv en anmeldelse</string>
+    <!-- support.review.unavailable: Shown on a review card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_review_unavailable">Denne anmeldelseslenken er ikke lenger tilgjengelig</string>
+    <!-- support.review.unsupported: Shown on a review card when the app has no store page for this platform. -->
+    <string name="apprefer_support_review_unsupported">Det finnes ingen butikkside for denne enheten</string>
+    <!-- support.review.a11y.hint.appStore: VoiceOver/TalkBack hint on the review card's button. Store: App Store (brand name, never translated). -->
+    <string name="apprefer_support_review_a11y_hint_app_store">Åpner App Store</string>
+    <!-- support.review.a11y.hint.googlePlay: VoiceOver/TalkBack hint on the review card's button. Store: Google Play (brand name, never translated). -->
+    <string name="apprefer_support_review_a11y_hint_google_play">Åpner Google Play</string>
 </resources>

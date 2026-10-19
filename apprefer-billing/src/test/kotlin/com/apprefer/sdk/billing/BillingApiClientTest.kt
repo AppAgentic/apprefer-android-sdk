@@ -21,7 +21,7 @@ class BillingApiClientTest {
         assertEquals("POST", r.method)
         assertEquals("$base/api/billing/v1/customers", r.url)
         assertEquals("pk_live_x", r.headers["X-AppRefer-Key"])
-        assertEquals("0.11.2", r.headers["X-SDK-Version"])
+        assertEquals("0.12.0", r.headers["X-SDK-Version"])
         assertEquals("application/json", r.headers["Content-Type"])
         val body = JSONObject(r.body!!)
         assertEquals("user_1", body.getString("appUserId"))

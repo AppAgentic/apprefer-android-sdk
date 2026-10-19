@@ -219,4 +219,66 @@
     <string name="apprefer_engagement_channel_reminders">תזכורות</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">חשבון וחיובים</string>
+    <!-- support.offer.title: Small heading on a card in the chat holding one or more of the app's plans, credit packs or one-off purchases the team or assistant attached. Neutral: these are normal prices, so never imply a discount, deal or special offer. -->
+    <string name="apprefer_support_offer_title">אפשרויות בשבילך</string>
+    <!-- support.offer.open: Button on that card that opens the app's own screen listing these options. Short. Never imply a discount. -->
+    <string name="apprefer_support_offer_open">הצגת האפשרויות</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">התוכנית הנוכחית</string>
+    <!-- support.offer.purchased: Tag next to a one-off purchase on the card that the customer already owns (subscriptions use 'Current plan'). -->
+    <string name="apprefer_support_offer_purchased">נרכש</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">כבר יש לך את זה</string>
+    <!-- support.offer.unavailable: Shown on the card when it was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">האפשרויות האלה כבר לא זמינות</string>
+    <!-- support.offer.unsupported: Shown on the card when this version of the app can't open it yet. -->
+    <string name="apprefer_support_offer_unsupported">עדכנו את האפליקציה כדי לפתוח את זה</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">שבועי</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">חודשי</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">חודשיים</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3 חודשים</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6 חודשים</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">שנתי</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">לכל החיים</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">אפשרות</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">פותח את האפשרויות האלה באפליקציה</string>
+    <!-- support.offer.price.week: Regular store price of a weekly subscription. {price} = the store's formatted price, e.g. £2.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_week">{price} לשבוע</string>
+    <!-- support.offer.price.fourWeeks: Regular store price of a subscription billed every 4 weeks. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_four_weeks">{price} כל 4 שבועות</string>
+    <!-- support.offer.price.month: Regular store price of a monthly subscription. {price} = the store's formatted price, e.g. £4.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_month">{price} לחודש</string>
+    <!-- support.offer.price.twoMonths: Regular store price of a subscription billed every 2 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_two_months">{price} כל חודשיים</string>
+    <!-- support.offer.price.threeMonths: Regular store price of a subscription billed every 3 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_three_months">{price} כל 3 חודשים</string>
+    <!-- support.offer.price.sixMonths: Regular store price of a subscription billed every 6 months. {price} = the store's formatted price. -->
+    <string name="apprefer_support_offer_price_six_months">{price} כל 6 חודשים</string>
+    <!-- support.offer.price.year: Regular store price of a yearly subscription. {price} = the store's formatted price, e.g. £29.99. Short, like a price tag. -->
+    <string name="apprefer_support_offer_price_year">{price} לשנה</string>
+    <!-- support.review.title: Small heading on an optional review card in the chat. Neutral: never ask for stars or a good rating, never promise anything. -->
+    <string name="apprefer_support_review_title">שתפו את החוויה שלכם</string>
+    <!-- support.review.body.appStore: Text on the review card. Store: App Store (brand name, never translated). -->
+    <string name="apprefer_support_review_body_app_store">אם תרצו, אפשר לכתוב ביקורת ב-App Store.</string>
+    <!-- support.review.body.googlePlay: Text on the review card. Store: Google Play (brand name, never translated). -->
+    <string name="apprefer_support_review_body_google_play">אם תרצו, אפשר לכתוב ביקורת ב-Google Play.</string>
+    <!-- support.review.open: Button on the review card that opens the app's store page. Short. -->
+    <string name="apprefer_support_review_open">כתיבת ביקורת</string>
+    <!-- support.review.unavailable: Shown on a review card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_review_unavailable">הקישור לביקורת כבר לא זמין</string>
+    <!-- support.review.unsupported: Shown on a review card when the app has no store page for this platform. -->
+    <string name="apprefer_support_review_unsupported">אין דף חנות למכשיר הזה</string>
+    <!-- support.review.a11y.hint.appStore: VoiceOver/TalkBack hint on the review card's button. Store: App Store (brand name, never translated). -->
+    <string name="apprefer_support_review_a11y_hint_app_store">פותח את App Store</string>
+    <!-- support.review.a11y.hint.googlePlay: VoiceOver/TalkBack hint on the review card's button. Store: Google Play (brand name, never translated). -->
+    <string name="apprefer_support_review_a11y_hint_google_play">פותח את Google Play</string>
 </resources>

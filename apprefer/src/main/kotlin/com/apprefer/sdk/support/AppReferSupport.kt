@@ -68,6 +68,34 @@ object AppReferSupport {
     var topics: List<AppReferSupportTopic> = AppReferSupportTopic.defaults
     /** The icon on the home screen. Defaults to the app's launcher icon, else its initials. */
     var appIcon: Drawable? = null
+    /**
+     * Opens your app's own paywall when the customer taps an offer card your team (or AI
+     * assistant) sent in the chat. Set it once at startup:
+     *
+     * ```kotlin
+     * AppReferSupport.onOffer = { offer -> PaywallActivity.start(context, offer.offeringId, offer.packageId) }
+     * ```
+     *
+     * The card shows your offering's packages with Google Play's own prices; the SDK never shows a
+     * paywall or starts a purchase itself. Without `onOffer`, cards say they can't be opened in
+     * this version of the app. Runs on the main thread; with [closesChatOnOffer] (the default) the
+     * chat Activity finishes first.
+     */
+    var onOffer: ((AppReferSupportOffer) -> Unit)? = null
+        set(value) { field = value; SupportOffers.hasHandler = value != null }
+    /** Close the chat before [onOffer] runs (default true). The embedded view calls its `onClose`. */
+    var closesChatOnOffer: Boolean = true
+    @Volatile private var offerQueue: SupportOfferReceipts? = null
+    /** Receipts waiting to be sent, on disk per app. */
+    internal fun offerReceipts(context: Context): SupportOfferReceipts =
+        offerQueue ?: synchronized(this) { offerQueue ?: SupportOfferReceipts(SupportOfferPrefs(context)).also { offerQueue = it } }
+    /** Hands a tapped card to [onOffer] on the main thread after [close]; false when the app set none. */
+    internal fun deliver(offer: AppReferSupportOffer, close: () -> Unit): Boolean {
+        val handler = onOffer ?: return false
+        if (closesChatOnOffer) close()
+        android.os.Handler(android.os.Looper.getMainLooper()).post { handler(offer) }
+        return true
+    }
     @Volatile internal var name: String? = null
     @Volatile private var email: String? = null
     @Volatile private var app: Context? = null
@@ -84,6 +112,8 @@ object AppReferSupport {
         pendingClearIdentity = false
         val c = app ?: context
         if (c != null) {
+            // Offer-card receipts belong to the session being retired; never sent for another account.
+            offerReceipts(c).clear()
             AppReferStorage(c).clearUser()
             runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
             api(c, initialize = false).reset()
@@ -108,6 +138,7 @@ object AppReferSupport {
         val c = app ?: context
         if (c != null) {
             pendingClearIdentity = false
+            offerReceipts(c).clear()
             AppReferStorage(c).supportIdentityCleared = true
             runCatching { c.cacheDir.listFiles()?.filter { it.name.startsWith("apprefer-support-") }?.forEach { it.delete() } }
         } else {
@@ -216,6 +247,19 @@ object AppReferSupport {
      * as the server allows (5 minutes once everything is verified, else 30 s).
      */
     suspend fun status(): AppReferSupportStatus = api(app ?: error("Configure AppRefer first")).help.status()
+
+    /**
+     * Confirms who the customer is, so your team and the AI assistant may use the account's
+     * private details (plan, orders, credits). Your backend, after signing the user in, asks
+     * AppRefer for a short-lived single-use token (`POST /api/v1/apps/{appId}/support/identity-tokens`
+     * with your private key; never ship that key in the app) and passes it here. It verifies the
+     * current Support session, so conversations already started on it count too. Call it after
+     * `AppRefer.setUserId` with the same user; `reset()`, `clearIdentity()` or another account
+     * ends it. Network failures are retried with the same token and then thrown (retrying the
+     * same token later is safe); a refusal returns `verified = false` with a reason.
+     */
+    suspend fun verifyIdentity(identityToken: String): AppReferSupportIdentityVerification =
+        api(app ?: error("Configure AppRefer first")).verifyIdentity(identityToken)
 
     /** The customer's email from identify(), for the "we'll email you" line. */
     internal val customerEmail: String? get() = email
