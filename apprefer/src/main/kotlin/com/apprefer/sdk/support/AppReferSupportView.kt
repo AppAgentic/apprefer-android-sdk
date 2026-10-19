@@ -205,6 +205,15 @@ class AppReferSupportView @JvmOverloads constructor(
     private var notice = SupportReplyNotice.PUSH
     private var subject = SupportStrings.text("support.conversation.defaultSubject")
     private val timeline = SupportTimeline { date(it) }
+    // Offer cards: each card's latest state, store prices by offering then package, the card opening.
+    private val offerCards = mutableMapOf<String, AppReferSupportOfferCard>()
+    private var offerPrices = emptyMap<String, Map<String, SupportOfferPrice>>()
+    private var openingCard: String? = null
+    private val shownCards = mutableSetOf<String>()
+    private var lastOfferRefresh = 0L
+    private val offerQueue get() = AppReferSupport.offerReceipts(context)
+    internal var offerOpener = SupportOfferOpener(AppReferSupport.offerReceipts(context.applicationContext), send = { api.sendOfferReceipt(it) })
+    private val billingListener: () -> Unit = { post { scope.launch { refreshOffers() } } }
     private val cursor get() = timeline.cursor
     private val messages get() = timeline.messages
     private var threadLoaded = false
@@ -230,6 +239,7 @@ class AppReferSupportView @JvmOverloads constructor(
         accountReset = true
         pause(); scope.cancel()
         timeline.reset(); conversations = emptyList(); pending.clear()
+        offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear()
         images.clear(); draft = ""; homeStash = null; id = null; topic = null
         draftFile?.delete(); draftFile = null
         starting = false; sendError = null; loadError = null; route = "home"
@@ -682,11 +692,16 @@ class AppReferSupportView @JvmOverloads constructor(
                 topMargin = if (i == 0) dp(4) else dp(16); bottomMargin = dp(8)
             })
             val last = i == messages.size - 1 || !sameSide(i, i + 1) || showsTime(i + 1)
-            val view = when {
+            val bubble = when {
                 m.from == "customer" -> customerBubble(m, last)
                 m.from == "bot" && SupportText.firstName(m.authorName) != null -> personaMessage(m, requireNotNull(SupportText.firstName(m.authorName)), last)
                 m.from == "bot" -> botCard(m)
                 else -> teamBubble(m, last)
+            }
+            val card = m.offer?.let { offerCards[it.cardId] ?: it }
+            val view = if (card == null) bubble else column().apply {
+                if (m.text.isNotEmpty() || m.from == "bot") addView(bubble, lp())
+                addView(offerCard(card), lp(top = if (m.text.isNotEmpty()) dp(8) else 0))
             }
             body.addView(view, lp(top = if (i > 0 && !timed) (if (sameSide(i - 1, i)) dp(3) else dp(10)) else 0))
         }
@@ -701,6 +716,136 @@ class AppReferSupportView @JvmOverloads constructor(
         val count = messages.size + waiting.size
         if (count != renderedCount) { scroll.scrollToBottom(animated = renderedCount > 0); renderedCount = count }
         refreshQuickReplies()
+    }
+
+    /**
+     * An offer card under a team or AI message: heading, the packages with Google Play's prices
+     * (and "Current plan"), and one button that hands the offer to the app's paywall. Disabled
+     * cards say why. Never a price, discount or deadline of the SDK's own.
+     */
+    private fun offerCard(card: AppReferSupportOfferCard): View {
+        val look = SupportOfferLook.of(card, SupportOffers.hasHandler)
+        val active = look == SupportOfferLook.OPEN
+        val box = column().apply {
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = rounded(c.card, 22, if (active) supportAlpha(p.accent, .22f) else supportAlpha(c.ink, .06f))
+            if (look == SupportOfferLook.UNAVAILABLE) alpha = .85f
+        }
+        shadow(box, 3, .07f)
+        val tint = if (active) p.accent else c.muted
+        box.addView(row().apply {
+            addView(FrameLayout(context).apply {
+                background = oval(supportAlpha(tint, .13f)); addView(icon(R.drawable.apprefer_support_tag, tint, 14))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, lp(dp(26), dp(26)))
+            addView(text(s("support.offer.title"), 15f, c.ink, 700).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true }, lp(-2, start = dp(8)))
+        }, lp())
+        val rows = if (card.status == "unavailable") emptyList() else card.shownPackages
+        if (rows.isNotEmpty()) {
+            val list = column().apply { setPadding(dp(12), 0, dp(12), 0); background = rounded(supportAlpha(c.ink, if (dark) .06f else .035f), 14) }
+            val prices = offerPrices[card.offeringId].orEmpty()
+            rows.forEachIndexed { i, pkg ->
+                if (i > 0) list.addView(View(context).apply { setBackgroundColor(c.divider) }, lp(-1, 1))
+                val price = prices[pkg.id]
+                val name = SupportOfferText.label(pkg, price?.name)
+                list.addView(row().apply {
+                    setPadding(0, dp(11), 0, dp(11))
+                    addView(text(name, 15f, c.ink, 500, 2), lp(0, weight = 1f))
+                    if (pkg.current) addView(text(s("support.offer.current"), 11.5f, p.accent, 600).apply {
+                        setPadding(dp(8), dp(3), dp(8), dp(3)); background = rounded(supportAlpha(p.accent, .12f), 99)
+                    }, lp(-2, start = dp(8)))
+                    price?.let { addView(text(it.price, 15f, c.ink, 600).apply { fontFeatureSettings = "tnum" }, lp(-2, start = dp(8))) }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    contentDescription = listOfNotNull(name, if (pkg.current) s("support.offer.current") else null, price?.price).joinToString(", ")
+                }, lp())
+            }
+            box.addView(list, lp(top = dp(12)))
+        }
+        val notice = look.notice
+        if (notice != null) {
+            box.addView(row().apply {
+                gravity = Gravity.TOP
+                addView(icon(if (look == SupportOfferLook.OWNED) R.drawable.apprefer_support_check else R.drawable.apprefer_support_info, c.muted, 14).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { topMargin = dp(2) }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                })
+                addView(text(notice, 13.5f, c.muted), lp(-2, start = dp(6)))
+            }, lp(top = dp(12)))
+        } else {
+            val opening = openingCard == card.cardId
+            box.addView(FrameLayout(context).apply {
+                background = gradient(floatArrayOf(dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99), dpf(99)))
+                addView(row().apply {
+                    gravity = Gravity.CENTER
+                    if (opening) addView(ProgressBar(context).apply { indeterminateTintList = ColorStateList.valueOf(p.onAccent) }, lp(dp(18), dp(18), end = dp(8)))
+                    addView(text(s("support.offer.open"), 15.5f, p.onAccent, 600), lp(-2))
+                }, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+                minimumHeight = dp(46)
+                isEnabled = !opening
+                pressable("${s("support.offer.open")}. ${s("support.offer.a11y.hint")}") { openOffer(card) }
+            }, lp(top = dp(12), h = dp(46)))
+        }
+        if (shownCards.add(card.cardId)) {
+            offerQueue.enqueue(SupportOfferReceipt(id ?: "", card.cardId, "shown", SupportOfferReceipt.shownId(card.cardId), SupportOfferReceipt.iso(System.currentTimeMillis())))
+            scope.launch { runCatching { api.flushOfferReceipts(offerQueue) } }
+        }
+        return FrameLayout(context).apply {
+            setPaddingRelative(dp(38), 0, 0, 0)
+            addView(box, FrameLayout.LayoutParams(minOf(dp(340), resources.displayMetrics.widthPixels - dp(66)), -2, Gravity.START))
+        }
+    }
+
+    /** "View offer": checked with the server, then handed to the app's paywall. A refusal redraws instead. */
+    private fun openOffer(card: AppReferSupportOfferCard) {
+        val conversation = id ?: return
+        if (openingCard != null || !card.isAvailable || !SupportOffers.hasHandler) return
+        val epoch = api.actionGeneration
+        openingCard = card.cardId; renderMessages()
+        scope.launch {
+            val outcome = try { offerOpener.check(offerOpener.receipt(card, conversation)) } finally { openingCard = null }
+            if (epoch != api.actionGeneration || id != conversation) return@launch
+            when (outcome) {
+                is SupportOfferOpenCheck.Refused -> { refreshOffers(force = true); renderMessages(); return@launch }
+                is SupportOfferOpenCheck.Recorded -> outcome.card?.let { offerCards[it.cardId] = it }
+                is SupportOfferOpenCheck.Offline -> {}
+            }
+            renderMessages()
+            AppReferSupport.deliver(AppReferSupportOffer(card.cardId, conversation, card.offeringId, card.packageId)) { onClose() }
+        }
+    }
+
+    /** New cards from a read; prices for their offerings come from AppRefer Billing when the app uses it. */
+    private fun absorbOffers(incoming: List<AppReferSupportMessage>) {
+        val cards = incoming.mapNotNull { it.offer }
+        if (cards.isEmpty()) return
+        cards.forEach { offerCards[it.cardId] = it }
+        scope.launch { loadOfferPrices() }
+    }
+
+    private suspend fun loadOfferPrices() {
+        @OptIn(com.apprefer.sdk.InternalAppReferApi::class)
+        val source = com.apprefer.sdk.AppReferInternal.supportOfferPrices ?: return
+        val ids = offerCards.values.map { it.offeringId }.toSet()
+        val loaded = try { source(ids).mapValues { (_, m) -> m.mapValues { SupportOfferPrice(it.value.first, it.value.second) } } }
+            catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+        if (loaded != offerPrices) { offerPrices = loaded; if (route == "thread") renderMessages() }
+    }
+
+    /**
+     * Fresh states for every card here, after a purchase, restore, sign-in, catalogue change or
+     * coming back to the app (and every 30 s while the chat is open); also re-reads store prices.
+     */
+    private suspend fun refreshOffers(force: Boolean = true) {
+        val conversation = id ?: return
+        if (route != "thread" || offerCards.isEmpty()) return
+        if (!force && System.currentTimeMillis() - lastOfferRefresh < 30_000) return
+        lastOfferRefresh = System.currentTimeMillis()
+        val cards = try { api.offerCards(conversation) } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+        if (id != conversation) return
+        val changed = cards.any { offerCards[it.cardId] != it }
+        cards.forEach { offerCards[it.cardId] = it }
+        if (changed) renderMessages()
+        loadOfferPrices()
     }
 
     private fun bubbleText(value: String, color: Int) = text(value, 16f, color).apply {
@@ -1500,7 +1645,7 @@ class AppReferSupportView @JvmOverloads constructor(
                 val ids = message.images.map { api.upload(it, epoch) }
                 val m = api.send(conversation, message.text, ids, message.clientMessageId, epoch)
                 pending.remove(message)
-                if (route == "thread" && id == conversation) timeline.merge(listOf(m))
+                if (route == "thread" && id == conversation) { timeline.merge(listOf(m)); absorbOffers(listOf(m)) }
             } catch (e: CancellationException) { message.failed = true; throw e }
             catch (_: Exception) { message.failed = true }
             finally { if (isAttachedToWindow) { saveDraft(); renderMessages() } }
@@ -1546,8 +1691,13 @@ class AppReferSupportView @JvmOverloads constructor(
         }
     }
 
-    fun pause() { visible = false; polling?.cancel(); polling = null }
-    fun resume() { visible = true; startPolling() }
+    fun pause() { visible = false; polling?.cancel(); polling = null; SupportOffers.billingListeners.remove(billingListener) }
+    fun resume() {
+        visible = true; startPolling()
+        // Offer cards follow purchases, restores and sign-ins as Billing reports them, and coming back.
+        SupportOffers.billingListeners.add(billingListener)
+        scope.launch { refreshOffers(); runCatching { api.flushOfferReceipts(offerQueue) } }
+    }
 
     private fun startPolling() {
         polling?.cancel()
@@ -1569,8 +1719,11 @@ class AppReferSupportView @JvmOverloads constructor(
                             subject = t.conversation.subject
                             val before = messages.size; val first = !threadLoaded || loadError != null
                             timeline.merge(t.messages, fromLoad = true); threadLoaded = true; loadError = null
+                            absorbOffers(t.messages)
                             if (first || messages.size != before) renderMessages()
                             personaChanged()
+                            if (first) runCatching { api.flushOfferReceipts(offerQueue) }
+                            refreshOffers(force = false)
                         }
                     }
                 } catch (e: CancellationException) { throw e }

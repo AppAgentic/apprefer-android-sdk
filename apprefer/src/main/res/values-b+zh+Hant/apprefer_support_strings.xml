@@ -217,4 +217,34 @@
     <string name="apprefer_engagement_channel_reminders">提醒</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">帳號與帳單</string>
+    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
+    <string name="apprefer_support_offer_title">為你推薦的方案</string>
+    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
+    <string name="apprefer_support_offer_open">查看方案</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">目前方案</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">你已擁有</string>
+    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">此推薦已失效</string>
+    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
+    <string name="apprefer_support_offer_unsupported">此版本的 App 無法開啟此推薦</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">每週</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">每月</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">2 個月</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3 個月</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6 個月</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">每年</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">永久</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">選項</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">開啟 App 的方案頁面</string>
 </resources>

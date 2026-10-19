@@ -243,6 +243,8 @@ internal class SupportAPI(
         check(epoch == generation) { "Support reset" }
         val headers = mutableMapOf("X-AppRefer-Key" to (key() ?: throw AppReferSupportException(0, "AppRefer isn't configured", AppReferSupportException.Reason.UNAVAILABLE)))
         token?.let { headers["X-AppRefer-Support-Session"] = it }
+        // This chat draws offer cards; with `onOffer` set the app also opens its paywall from them.
+        headers["X-AppRefer-Support-Features"] = SupportOffers.featuresHeader
         val bytes = body?.let { headers["Content-Type"] = "application/json"; JsonCodec.encode(it).toByteArray(Charsets.UTF_8) }
         check(epoch == generation) { "Support reset" }
         val r = transport.request(method, base + path, headers, bytes)
@@ -340,8 +342,28 @@ internal class SupportAPI(
         synchronized(accountLock) { check(epoch == generation); persona = AppReferSupportPersona.from(list) }
         return list.objects("conversations").map { AppReferSupportConversation(it) }
     }
+    // The platform picks which store's products an offer card lists.
     suspend fun thread(id: String, after: String? = null): SupportThread =
-        SupportThread(call("GET", "/conversations/${escape(id)}" + (after?.let { "?after=${escape(it)}" } ?: ""))).also { persona = it.persona }
+        SupportThread(call("GET", "/conversations/${escape(id)}?platform=android" + (after?.let { "&after=${escape(it)}" } ?: ""))).also { persona = it.persona }
+    /**
+     * Every offer card in a conversation with its state now (after a purchase, restore, sign-in,
+     * catalogue change or reopening the chat), without reloading the messages.
+     */
+    suspend fun offerCards(id: String): List<AppReferSupportOfferCard> =
+        (call("GET", "/conversations/${escape(id)}/offers?platform=android")["offers"] as? List<*>).orEmpty().mapNotNull { AppReferSupportOfferCard.from(it) }
+    /** Sends one receipt. Throws on network or server failure; a 4xx other than 408/429 is final. */
+    suspend fun sendOfferReceipt(r: SupportOfferReceipt): AppReferSupportOfferCard? =
+        AppReferSupportOfferCard.from(call("POST", "/conversations/${escape(r.conversationId)}/offers/${escape(r.cardId)}/events?platform=android",
+            mapOf("kind" to r.kind, "clientEventId" to r.clientEventId, "occurredAt" to r.occurredAt))["offer"])
+    /** Sends every queued receipt once; keeps the ones that failed for a transient reason. */
+    suspend fun flushOfferReceipts(queue: SupportOfferReceipts) {
+        for (r in queue.pending) {
+            try { sendOfferReceipt(r); queue.remove(r) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: AppReferSupportException) { if (e.status in 400..499 && e.status != 408 && e.status != 429) queue.remove(r) else queue.failed(r) }
+            catch (_: Exception) { queue.failed(r) }
+        }
+    }
     suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null, generation: Int = this.generation): SupportThread =
         SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
             (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap()), generation))
@@ -390,8 +412,10 @@ data class AppReferSupportMessage @JvmOverloads constructor(
     val authorName: String?, val text: String, val createdAt: String, val attachments: List<AppReferSupportAttachment>,
     /** The AI assistant's note that it passed the conversation to a person. */
     val handoff: Boolean? = null,
+    /** An offer card sent with this reply: one of the app's offerings, with its state when read. */
+    val offer: AppReferSupportOfferCard? = null,
 ) {
-    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean)
+    internal constructor(m: Map<String, Any?>) : this(m["id"].toString(), m["from"].toString(), m["authorName"] as? String, m["text"] as? String ?: "", m["createdAt"] as? String ?: "", m.objects("attachments").map { AppReferSupportAttachment(it["url"] as? String, it["name"] as? String, it["contentType"] as? String, (it["size"] as? Number)?.toLong()) }, m["handoff"] as? Boolean, AppReferSupportOfferCard.from(m["offer"]))
     val isHandoff: Boolean get() = handoff == true
 }
 /**

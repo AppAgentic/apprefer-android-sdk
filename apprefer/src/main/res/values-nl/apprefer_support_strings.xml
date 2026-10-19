@@ -218,4 +218,34 @@
     <string name="apprefer_engagement_channel_reminders">Herinneringen</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">Account en facturering</string>
+    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
+    <string name="apprefer_support_offer_title">Een aanbieding voor jou</string>
+    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
+    <string name="apprefer_support_offer_open">Bekijk aanbieding</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">Huidig abonnement</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">Dit heb je al</string>
+    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">Deze aanbieding is niet meer beschikbaar</string>
+    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
+    <string name="apprefer_support_offer_unsupported">Deze aanbieding kan niet worden geopend in deze versie van de app</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">Wekelijks</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">Maandelijks</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">2 maanden</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3 maanden</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6 maanden</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">Jaarlijks</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">Levenslang</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">Optie</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">Opent de abonnementen van de app</string>
 </resources>

@@ -219,4 +219,34 @@
     <string name="apprefer_engagement_channel_reminders">Podsjetnici</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">Račun i naplata</string>
+    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
+    <string name="apprefer_support_offer_title">Ponuda za vas</string>
+    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
+    <string name="apprefer_support_offer_open">Pogledaj ponudu</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">Trenutačni plan</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">Ovo već imate</string>
+    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">Ova ponuda više nije dostupna</string>
+    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
+    <string name="apprefer_support_offer_unsupported">Ova se ponuda ne može otvoriti u ovoj verziji aplikacije</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">Tjedno</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">Mjesečno</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">2 mjeseca</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3 mjeseca</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6 mjeseci</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">Godišnje</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">Doživotno</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">Opcija</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">Otvara planove aplikacije</string>
 </resources>

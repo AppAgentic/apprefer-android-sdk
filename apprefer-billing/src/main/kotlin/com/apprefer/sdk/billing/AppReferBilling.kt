@@ -163,10 +163,31 @@ object AppReferBilling {
             scope.launch { safely(logger) { created.start() } }
         }
         observeForeground(appContext, created, logger)
+        // Support offer cards show Google Play's own prices for the offering's packages.
+        AppReferInternal.supportOfferPrices = { ids -> offerPrices(created.offerings(), ids) }
+    }
+
+    /** Offering id -> package id -> (Google Play's formatted price, product name) for Support offer cards. */
+    internal fun offerPrices(offerings: AppReferOfferings, ids: Set<String>): Map<String, Map<String, Pair<String, String?>>> =
+        ids.mapNotNull { id ->
+            val offering = offerings.all[id] ?: return@mapNotNull null
+            id to offering.availablePackages.mapNotNull { p -> playPrice(p)?.let { p.identifier to (it to p.storeProduct.name.takeIf { n -> n.isNotBlank() }) } }.toMap()
+        }.toMap()
+
+    /** The regular (recurring) price of the package's base plan or offer, or the one-time price. */
+    internal fun playPrice(p: AppReferPackage): String? {
+        val details = p.storeProduct
+        details.oneTimePurchaseOfferDetails?.formattedPrice?.let { return it }
+        val offers = details.subscriptionOfferDetails.orEmpty()
+        val offer = offers.firstOrNull { p.offerToken != null && it.offerToken == p.offerToken }
+            ?: offers.firstOrNull { p.basePlanId != null && it.basePlanId == p.basePlanId && it.offerId == null }
+            ?: offers.firstOrNull()
+        return offer?.pricingPhases?.pricingPhaseList?.lastOrNull()?.formattedPrice
     }
 
     private fun publish(info: AppReferCustomerInfo) {
         latest.value = info
+        AppReferInternal.billingChanged()
         mainHandler.post {
             try {
                 listener?.onCustomerInfoUpdated(info)

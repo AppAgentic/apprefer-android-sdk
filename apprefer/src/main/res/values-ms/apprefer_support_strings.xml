@@ -217,4 +217,34 @@
     <string name="apprefer_engagement_channel_reminders">Peringatan</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">Akaun dan pengebilan</string>
+    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
+    <string name="apprefer_support_offer_title">Tawaran untuk anda</string>
+    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
+    <string name="apprefer_support_offer_open">Lihat tawaran</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">Pelan semasa</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">Anda sudah memilikinya</string>
+    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">Tawaran ini tidak lagi tersedia</string>
+    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
+    <string name="apprefer_support_offer_unsupported">Tawaran ini tidak boleh dibuka dalam versi apl ini</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">Mingguan</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">Bulanan</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">2 bulan</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3 bulan</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6 bulan</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">Tahunan</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">Seumur hidup</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">Pilihan</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">Membuka pelan apl</string>
 </resources>

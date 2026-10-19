@@ -217,4 +217,34 @@
     <string name="apprefer_engagement_channel_reminders">리마인더</string>
     <!-- engagement.channel.service: Android notification category name for account and subscription notices (billing problems, renewals). -->
     <string name="apprefer_engagement_channel_service">계정 및 결제</string>
+    <!-- support.offer.title: Small heading on an offer card in the chat. The team or assistant attached one of the app's plans. Never imply a discount. -->
+    <string name="apprefer_support_offer_title">회원님을 위한 오퍼</string>
+    <!-- support.offer.open: Button on an offer card that opens the app's own plans screen. Short. -->
+    <string name="apprefer_support_offer_open">오퍼 보기</string>
+    <!-- support.offer.current: Tag next to a plan on an offer card that the customer already has. -->
+    <string name="apprefer_support_offer_current">현재 플랜</string>
+    <!-- support.offer.owned: Shown on an offer card when every plan in it is one the customer already has. -->
+    <string name="apprefer_support_offer_owned">이미 보유하고 있어요</string>
+    <!-- support.offer.unavailable: Shown on an offer card that was withdrawn, expired or changed. -->
+    <string name="apprefer_support_offer_unavailable">이 오퍼는 더 이상 이용할 수 없어요</string>
+    <!-- support.offer.unsupported: Shown on an offer card when the app hasn't connected its plans screen to the chat. -->
+    <string name="apprefer_support_offer_unsupported">이 버전의 앱에서는 이 오퍼를 열 수 없어요</string>
+    <!-- support.offer.package.weekly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_weekly">주간</string>
+    <!-- support.offer.package.monthly: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_monthly">월간</string>
+    <!-- support.offer.package.twoMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_two_month">2개월</string>
+    <!-- support.offer.package.threeMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_three_month">3개월</string>
+    <!-- support.offer.package.sixMonth: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_six_month">6개월</string>
+    <!-- support.offer.package.annual: Plan length label on an offer card. -->
+    <string name="apprefer_support_offer_package_annual">연간</string>
+    <!-- support.offer.package.lifetime: Label for a one-time, never-expiring purchase on an offer card. -->
+    <string name="apprefer_support_offer_package_lifetime">평생</string>
+    <!-- support.offer.package.custom: Label for a plan with no standard length on an offer card, when the app gave it no name. -->
+    <string name="apprefer_support_offer_package_custom">옵션</string>
+    <!-- support.offer.a11y.hint: VoiceOver/TalkBack hint on the offer card's button. -->
+    <string name="apprefer_support_offer_a11y_hint">앱의 플랜을 열어요</string>
 </resources>

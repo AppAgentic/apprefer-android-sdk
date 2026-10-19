@@ -50,6 +50,15 @@ object AppReferInternal {
      * account. [clearMarker] clears the persisted reset marker; it runs under the lock reset()'s
      * marker write takes, and a reset() that started before this call writes no marker.
      */
+    /**
+     * AppRefer Billing's store prices for Support offer cards: offering id -> package id ->
+     * (formatted store price, store product name). Set by AppRefer Billing's configure.
+     */
+    @Volatile var supportOfferPrices: (suspend (Set<String>) -> Map<String, Map<String, Pair<String, String?>>>)? = null
+
+    /** AppRefer Billing's entitlements changed (purchase, restore, sign-in): offer cards refresh. */
+    fun billingChanged() = com.apprefer.sdk.support.SupportOffers.billingChanged()
+
     fun billingIdentitySet(freshAnonymousId: String?, clearMarker: () -> Unit) =
         com.apprefer.sdk.internal.BillingResetMarker.identitySet(freshAnonymousId, clearMarker)
 }

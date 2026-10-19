@@ -119,6 +119,21 @@ internal object SupportStringIds {
             "engagement.channel.marketing" to R.string.apprefer_engagement_channel_marketing,
             "engagement.channel.reminders" to R.string.apprefer_engagement_channel_reminders,
             "engagement.channel.service" to R.string.apprefer_engagement_channel_service,
+            "support.offer.title" to R.string.apprefer_support_offer_title,
+            "support.offer.open" to R.string.apprefer_support_offer_open,
+            "support.offer.current" to R.string.apprefer_support_offer_current,
+            "support.offer.owned" to R.string.apprefer_support_offer_owned,
+            "support.offer.unavailable" to R.string.apprefer_support_offer_unavailable,
+            "support.offer.unsupported" to R.string.apprefer_support_offer_unsupported,
+            "support.offer.package.weekly" to R.string.apprefer_support_offer_package_weekly,
+            "support.offer.package.monthly" to R.string.apprefer_support_offer_package_monthly,
+            "support.offer.package.twoMonth" to R.string.apprefer_support_offer_package_two_month,
+            "support.offer.package.threeMonth" to R.string.apprefer_support_offer_package_three_month,
+            "support.offer.package.sixMonth" to R.string.apprefer_support_offer_package_six_month,
+            "support.offer.package.annual" to R.string.apprefer_support_offer_package_annual,
+            "support.offer.package.lifetime" to R.string.apprefer_support_offer_package_lifetime,
+            "support.offer.package.custom" to R.string.apprefer_support_offer_package_custom,
+            "support.offer.a11y.hint" to R.string.apprefer_support_offer_a11y_hint,
         )
     }
 
