@@ -131,6 +131,22 @@ internal class SupportContinueAvatar(conversation: AppReferSupportConversation, 
     }
 }
 
+/** The help home's line limits and end spacing, the same in all four SDKs. */
+internal object SupportHomeLayout {
+    /** An article summary on the home: readable on a 320 dp screen, short enough that one long summary can't push everything else off the page (the help centre keeps 2). */
+    const val SUMMARY_LINES = 3
+    /** A quick-help tile's subtitle (half-width tiles); both tiles of a row share the height. */
+    const val TILE_SUBTITLE_LINES = 2
+    /** Space between the end of the page and the floating composer. */
+    const val END_GAP_DP = 64
+    /** The page's padding below the last card before the composer has been measured. */
+    const val INITIAL_END_PADDING_DP = 140
+
+    /** The page's padding below the last card: the composer's real height (chip, photos, several lines, large text) plus the gap. */
+    fun endPadding(composerHeightPx: Int, density: Float): Int =
+        if (composerHeightPx <= 0) (INITIAL_END_PADDING_DP * density).toInt() else composerHeightPx + (END_GAP_DP * density).toInt()
+}
+
 internal object SupportText {
     /** First name only; never shows an email address. */
     fun firstName(name: String?): String? {

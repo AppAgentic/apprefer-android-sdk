@@ -180,6 +180,18 @@ class SupportStyleTest {
         }
     }
 
+    @Test fun homeEndFollowsTheComposersRealHeight() {
+        // Narrow screens: summaries and tile subtitles wrap instead of stopping after a few words.
+        assertEquals(3, SupportHomeLayout.SUMMARY_LINES)
+        assertEquals(2, SupportHomeLayout.TILE_SUBTITLE_LINES)
+        // Before the composer is measured: the old fixed 140 dp.
+        assertEquals(420, SupportHomeLayout.endPadding(0, 3f))
+        // One line (74 dp) and a five-line composer with a topic chip (230 dp), both at 3x:
+        // the page always ends 64 dp above the composer, so the last tiles are never under it.
+        assertEquals(74 * 3 + 64 * 3, SupportHomeLayout.endPadding(74 * 3, 3f))
+        assertEquals(230 * 3 + 64 * 3, SupportHomeLayout.endPadding(230 * 3, 3f))
+    }
+
     private fun contrast(a: Int, b: Int): Double {
         fun lin(v: Int): Double { val c = v / 255.0; return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4) }
         fun lum(c: Int) = 0.2126 * lin((c shr 16) and 0xff) + 0.7152 * lin((c shr 8) and 0xff) + 0.0722 * lin(c and 0xff)
