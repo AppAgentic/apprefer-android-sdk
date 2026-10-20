@@ -429,7 +429,13 @@ class AppReferSupportView @JvmOverloads constructor(
         addView(composerBox, LayoutParams(-1, -2, Gravity.BOTTOM))
         composerBox.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
             // The last tiles always scroll clear of the composer, however tall it gets.
-            if (bottom - top != oldBottom - oldTop) post { if (route == "home") body.setPadding(dp(16), 0, dp(16), SupportHomeLayout.endPadding(composerBox.height, resources.displayMetrics.density)) }
+            // Someone already at the end (then adding lines, a topic, photos or an error) stays there.
+            if (bottom - top != oldBottom - oldTop) post {
+                if (route != "home") return@post
+                val keepEnd = scroll.atBottom()
+                body.setPadding(dp(16), 0, dp(16), SupportHomeLayout.endPadding(composerBox.height, resources.displayMetrics.density))
+                if (keepEnd) scroll.scrollToBottom(false)
+            }
         }
         renderHomeContent(); renderAccessories(); updateSend()
     }
@@ -576,7 +582,11 @@ class AppReferSupportView @JvmOverloads constructor(
         tile.addView(FrameLayout(context).apply {
             background = rounded(supportAlpha(t.tint, .13f), 11); addView(icon(t.icon, t.tint, 18))
         }, lp(dp(34), dp(34)))
-        tile.addView(text(t.title, 15f, c.ink, 600, 1), lp(top = dp(10)))
+        // One line that shrinks to fit, like the other SDKs, before it ends in "…".
+        tile.addView(SupportFitTextView(context, SupportHomeLayout.TILE_TITLE_MIN_SCALE).apply {
+            text = t.title; setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f); setTextColor(c.ink); typeface = font(600); includeFontPadding = false
+            textLocale = SupportStrings.locale; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        }, lp(top = dp(10)))
         if (t.subtitle.isNotEmpty()) tile.addView(text(t.subtitle, 12.5f, c.muted, lines = SupportHomeLayout.TILE_SUBTITLE_LINES), lp(top = dp(3)))
         tile.pressable("${t.title}, ${t.subtitle}") { pick(t) }
         return tile
@@ -1962,9 +1972,12 @@ class AppReferSupportView @JvmOverloads constructor(
         }
         fun scrollToBottom(animated: Boolean) { pinPending = true; animate = animated; requestLayout() }
         fun stickToBottom() { if (atBottom()) scrollToBottom(false) }
-        private fun atBottom() = getChildAt(0)?.let { scrollY + height >= it.height - dp(24) } ?: true
+        fun atBottom() = getChildAt(0)?.let { SupportHomeLayout.atEnd(scrollY, height, it.height, dp(SupportHomeLayout.AT_END_TOLERANCE_DP)) } ?: true
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-            val wasAtBottom = route == "thread" && oldh > 0 && getChildAt(0)?.let { scrollY + oldh >= it.height - dp(24) } == true
+            // The keyboard opening shrinks the page: a thread, or a home already scrolled to its end, stays at its end
+            // (the last tiles stay above the composer). Someone reading higher up is not moved.
+            val wasAtBottom = (route == "thread" || route == "home") && oldh > 0 &&
+                getChildAt(0)?.let { SupportHomeLayout.atEnd(scrollY, oldh, it.height, dp(SupportHomeLayout.AT_END_TOLERANCE_DP)) } == true
             super.onSizeChanged(w, h, oldw, oldh)
             if (wasAtBottom && h < oldh) { pinPending = true; animate = false }
         }

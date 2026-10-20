@@ -143,6 +143,30 @@ internal object SupportHomeLayout {
     const val INITIAL_END_PADDING_DP = 140
 
     /** The page's padding below the last card: the composer's real height (chip, photos, several lines, large text) plus the gap. */
+    /**
+     * A quick-help tile's one-line title shrinks to fit down to this scale before it ends in "…". Flutter's FittedBox has
+     * no floor and React Native on Android shrinks past its 0.8 (Android ignores minimumFontScale), so a whole title shows
+     * at 320 dp with 1.6x text there; 0.5 matches that, and at 1.6x it is still 12 sp, the size of the subtitle below it.
+     */
+    const val TILE_TITLE_MIN_SCALE = 0.5f
+    /** How close to the end of the home still counts as "at the end". */
+    const val AT_END_TOLERANCE_DP = 24
+
+    /**
+     * True when the page is scrolled to its end (within [tolerancePx]). Checked *before* the keyboard opens or the
+     * composer grows: only then does the home keep its end in view; someone reading higher up is never moved.
+     */
+    /**
+     * The text size that fits [neededPx] of text (measured at [basePx]) into [availablePx], never below [minScale] of the base.
+     * Shrinks 2 % further than the exact ratio: text drawn at the scaled size can come out a pixel wider (hinting) and would
+     * still end in "…".
+     */
+    fun fitTextSize(basePx: Float, neededPx: Float, availablePx: Float, minScale: Float): Float =
+        if (neededPx <= availablePx || neededPx <= 0f || availablePx <= 0f) basePx else max(basePx * minScale, basePx * availablePx / neededPx * 0.98f)
+
+    fun atEnd(scrollY: Int, viewportHeight: Int, contentHeight: Int, tolerancePx: Int): Boolean =
+        scrollY + viewportHeight >= contentHeight - tolerancePx
+
     fun endPadding(composerHeightPx: Int, density: Float): Int =
         if (composerHeightPx <= 0) (INITIAL_END_PADDING_DP * density).toInt() else composerHeightPx + (END_GAP_DP * density).toInt()
 }

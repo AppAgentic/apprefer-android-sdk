@@ -1,6 +1,8 @@
 ## 0.13.1 (unreleased)
 
 - Support home on narrow screens (320 dp, iPhone Duo-sized covers) and with large text: help-article summaries wrap to 3 lines instead of stopping after a few words (`SupportHomeLayout.SUMMARY_LINES`; the help centre keeps 2), quick-help tile subtitles wrap to 2 lines with both tiles of a row sharing the taller height, and an empty subtitle adds no blank line. The page ends 64 dp above the floating composer's measured height (`SupportHomeLayout.endPadding`; 140 dp until measured) instead of `max(140 dp, composer + 16 dp)`, matching the other SDKs. No API, string or behaviour change otherwise.
+- Support home keeps its end in view: when the customer is already at the end of the help home (within 24 pt) and the keyboard opens or the composer grows (more lines, a topic chip, photos, an error line, large text), the page stays at its end, so the last quick-help tiles stay above the composer with the keyboard still open. Someone reading higher up is never moved, and dragging the page still closes the keyboard as before. `SupportScrollView` now pins the home as it already pinned a thread when the keyboard shrinks it, and the composer's layout listener pins it when the end padding grows (`SupportHomeLayout.atEnd`).
+- Quick-help tile titles shrink to fit their tile instead of ending in "…" (`SupportFitTextView`, down to half size, `SupportHomeLayout.TILE_TITLE_MIN_SCALE`), as Flutter (`FittedBox`) and React Native (`adjustsFontSizeToFit`) already did; at 320 dp with 1.6x text "Billing & refunds" shows whole.
 - Version 0.13.1 (source only; not tagged or released).
 
 ## 0.13.0 (2026-10-20)
