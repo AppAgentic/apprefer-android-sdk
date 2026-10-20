@@ -558,7 +558,7 @@ from the package name your app already has in AppRefer (Billing or the store URL
   device". AppRefer sends at most one card per customer every 120 days (configurable, 30–365).
 - Older SDK versions show your text plus a line asking the customer to update the app.
 
-0.12.0 is unreleased source (not tagged). Once tagged, install it from Git only: JitPack, `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.12.0` (core) and `com.github.AppAgentic.apprefer-android-sdk:apprefer-billing:0.12.0` (billing).
+0.12.0 is released. Install it from Git only: JitPack, `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.12.0` (core) and `com.github.AppAgentic.apprefer-android-sdk:apprefer-billing:0.12.0` (billing).
 
 ### Photo and video testimonials (0.13.0)
 
