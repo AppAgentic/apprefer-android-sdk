@@ -284,8 +284,8 @@
     <string name="apprefer_support_testimonial_reward">भाग लेने के लिए: {reward}</string>
     <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
     <string name="apprefer_support_testimonial_honest">अच्छी, बुरी या मिली-जुली: हमें आपकी ईमानदार राय चाहिए।</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
-    <string name="apprefer_support_testimonial_reward_note">यह आपको हिस्सा लेने के लिए मिलता है, चाहे आप कुछ भी कहें और दोबारा इस्तेमाल की अनुमति दें या न दें।</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on whether the media is later used. -->
+    <string name="apprefer_support_testimonial_reward_note">यह आपको हिस्सा लेने के लिए मिलता है, चाहे आप कुछ भी कहें और चाहे हम इसका इस्तेमाल करें या न करें।</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">फ़ोटो या वीडियो शेयर करें</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
@@ -300,16 +300,12 @@
     <string name="apprefer_support_testimonial_camera_denied">कैमरा ऐक्सेस बंद है। आप इसके बजाय अपनी लाइब्रेरी से चुन सकते हैं।</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">कोई और चुनें</string>
-    <!-- support.testimonial.publish: Label of the public-use switch, which starts on; the customer can turn it off. The app's own permission text is shown under it. -->
-    <string name="apprefer_support_testimonial_publish">सार्वजनिक उपयोग की अनुमति दें</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch, which starts on. Must say it is on unless turned off, that the reward is the same either way and that permission can be withdrawn later. -->
-    <string name="apprefer_support_testimonial_publish_hint">जब तक आप बंद न करें, यह चालू रहता है। इनाम दोनों हालात में एक जैसा है, और आप बाद में यह अनुमति वापस ले सकते हैं।</string>
-    <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
-    <string name="apprefer_support_testimonial_submit">शेयर करें</string>
-    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
-    <string name="apprefer_support_testimonial_submit_public">भेजें और शेयर करने की अनुमति दें</string>
-    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
-    <string name="apprefer_support_testimonial_submit_private">निजी रूप से भेजें</string>
+    <!-- support.testimonial.termsAgree: Shown directly above the app's own usage terms (shown word for word under it) and the Submit button. Submitting is the agreement; there is no switch or tick. -->
+    <string name="apprefer_support_testimonial_terms_agree">सबमिट करके आप इन शर्तों से सहमत होते हैं।</string>
+    <!-- support.testimonial.termsChanged: Shown when the app's usage terms changed before the customer submitted. The new terms are shown and nothing was sent. -->
+    <string name="apprefer_support_testimonial_terms_changed">शर्तें बदल गई हैं। कृपया इन्हें पढ़ें, फिर दोबारा सबमिट करें।</string>
+    <!-- support.testimonial.submit: Primary button under the usage terms that uploads and submits the selected photo or video. Submitting means agreeing to the terms shown. -->
+    <string name="apprefer_support_testimonial_submit">सबमिट करें</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">अपलोड हो रहा है… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

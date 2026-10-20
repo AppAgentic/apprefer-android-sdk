@@ -21,7 +21,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import com.apprefer.sdk.testimonial.TestimonialMedia
 import kotlinx.coroutines.CancellationException
@@ -40,10 +39,9 @@ import java.util.concurrent.ConcurrentHashMap
 // something the app trusts (its backend, its coach tool, a person in Support, the AI within the
 // app's policy, or automation); this SDK only answers one, for the account the support session is
 // verified for (`AppRefer.support.verifyIdentity`). The reward and the publication permission text
-// come from the request: the SDK never chooses a reward and never ties it to what is said. Taking
-// part earns the reward; public use is a separate switch that starts on and the customer can turn
-// off. Only the final button sends its value ("Send and allow sharing" / "Send privately"), with
-// the permission version shown.
+// come from the request: the SDK never chooses a reward and never ties it to what is said or to
+// later use. The app's usage terms are shown word for word above a plain Submit ("By submitting,
+// you agree to these terms."); only that Submit sends the agreement, with the terms version shown.
 
 /** A photo/video request as the server sends it. */
 data class AppReferTestimonialRequest(
@@ -148,22 +146,14 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
     var request: AppReferTestimonialRequest? = null; private set
     var file: TestimonialMedia.Picked? = null; private set
     /**
-     * Public use starts on; the customer can turn it off. Nothing is recorded until [submit]
-     * (opening, picking or cancelling sends no answer), and a request without permission text
-     * (an older server) can't be submitted, so no permission is ever assumed.
+     * The app's usage terms are shown word for word above Submit, and submitting is the agreement:
+     * [submit] sends `publication: true` with the version of the terms on screen. Opening, picking,
+     * cancelling and declining send no answer, and a request without terms (an older server) can't
+     * be submitted at all, so agreement is never assumed.
      */
-    var publish = true
-    /**
-     * The final button says what it sends: "Send and allow sharing" while the switch is on,
-     * "Send privately" while it is off (also on retry). Without permission text there is no
-     * switch and nothing can be submitted, so it keeps the plain label.
-     */
-    val submitLabelKey: String
-        get() = when {
-            request?.permission == null -> "support.testimonial.submit"
-            publish -> "support.testimonial.submitPublic"
-            else -> "support.testimonial.submitPrivate"
-        }
+    val hasTerms: Boolean get() = request?.permission != null
+    /** Submit is offered only with a file picked and the terms on screen. */
+    val canSubmit: Boolean get() = hasTerms && file != null
     /** The localized message for the last problem (null when none). */
     var notice: String? = null; private set
     /** The same on every retry: a lost answer never shares twice. */
@@ -175,7 +165,7 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
         try {
             val r = transport.request(requestId)
             request = r
-            phase = if (r.isOpen) Phase.READY else if (r.status == "submitted") Phase.DONE else Phase.UNAVAILABLE
+            phase = if (r.isOpen) (if (hasTerms) Phase.READY else Phase.UNAVAILABLE) else if (r.status == "submitted") Phase.DONE else Phase.UNAVAILABLE
             if (r.status == "submitted") AppReferTestimonials.note(requestId, r.rewardStatus ?: "none")
         } catch (e: CancellationException) { throw e } catch (e: Exception) {
             val refused = e is AppReferSupportException && (e.status == 404 || e.code == "IDENTITY_REQUIRED")
@@ -199,7 +189,11 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
         changed()
     }
 
-    /** Uploads (unless this file already reached storage) and shares. Safe to call again after a failure. */
+    /**
+     * The customer's Submit: agrees to the terms on screen, uploads (unless this file already reached
+     * storage) and shares. Safe to call again after a failure. If the terms changed in the meantime
+     * nothing is shared: the new terms are loaded and shown, and only another Submit agrees to them.
+     */
     suspend fun submit() {
         val r = request ?: return; val f = file ?: return; val version = r.permission?.version ?: return
         notice = null
@@ -212,7 +206,7 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
                 slot.uploadId
             }
             phase = Phase.CHECKING; changed()
-            val done = transport.submit(requestId, uploadId, clientSubmissionId, publish, version)
+            val done = transport.submit(requestId, uploadId, clientSubmissionId, true, version)
             request = done
             phase = Phase.DONE
             AppReferTestimonials.note(requestId, done.rewardStatus ?: "none")
@@ -222,6 +216,7 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
             notice = SupportStrings.text("support.testimonial.unavailable")
         } catch (e: Exception) {
             val code = (e as? AppReferSupportException)?.code
+            if (code == "TERMS_CHANGED") { reloadTerms(); changed(); return }
             if (code in setOf("TYPE_MISMATCH", "UNREADABLE_VIDEO", "VIDEO_TOO_LONG", "UPLOAD_INCOMPLETE", "UPLOAD_CHANGED", "UNKNOWN_UPLOAD")) uploaded = null
             if (code in setOf("REQUEST_CLOSED", "CAMPAIGN_ENDED", "IDENTITY_REQUIRED", "ALREADY_SUBMITTED") || (e as? AppReferSupportException)?.status == 404) {
                 notice = SupportStrings.text("support.testimonial.unavailable"); phase = Phase.UNAVAILABLE
@@ -235,6 +230,18 @@ internal class TestimonialFlow(val requestId: String, private val transport: Tes
             }
         }
         changed()
+    }
+
+    /** The terms changed before the server took the answer: show the current ones and wait for the next Submit (the upload is kept). */
+    private suspend fun reloadTerms() {
+        try {
+            val fresh = transport.request(requestId)
+            request = fresh
+            if (fresh.isOpen && hasTerms) { notice = SupportStrings.text("support.testimonial.termsChanged"); phase = Phase.READY }
+            else { notice = SupportStrings.text("support.testimonial.unavailable"); phase = Phase.UNAVAILABLE }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) {
+            notice = SupportStrings.text("support.testimonial.failed"); phase = Phase.FAILED
+        }
     }
 
     suspend fun decline(dontAskAgain: Boolean): AppReferTestimonialResult {
@@ -313,8 +320,8 @@ object AppReferTestimonials {
 }
 
 /**
- * The capture screen: what's asked, the reward, pick, take a photo or record, preview, public
- * use (on unless the customer turns it off), progress, result. The camera app takes the photo or video: no camera permission is
+ * The capture screen: what's asked, the reward, pick, take a photo or record, preview, the app's
+ * exact usage terms above Submit, progress, result. The camera app takes the photo or video: no camera permission is
  * declared, and only when the host app itself declares CAMERA is it asked for, right before capture.
  */
 class AppReferTestimonialActivity : Activity() {
@@ -344,8 +351,6 @@ class AppReferTestimonialActivity : Activity() {
         val requestId = intent.getStringExtra("requestId") ?: return finish()
         // Upload progress arrives on a background thread: views are only touched on the main one.
         flow = TestimonialFlow(requestId, LiveTestimonialTransport(AppReferSupport.configuredApi())) { runOnUiThread { render() } }
-        // A switch the customer turned off stays off when the screen comes back from the camera.
-        flow.publish = state?.getBoolean(STATE_PUBLISH, true) ?: true
         body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(28)) }
         setContentView(ScrollView(this).apply { setBackgroundColor(c.background); isFillViewport = true; addView(body) })
         render()
@@ -358,7 +363,6 @@ class AppReferTestimonialActivity : Activity() {
         // permission question come back with the recreated screen.
         out.putString(STATE_CAPTURE, capturePath)
         out.putString(STATE_PERMISSION, awaitingPermission)
-        if (::flow.isInitialized) out.putBoolean(STATE_PUBLISH, flow.publish)
     }
 
     override fun onDestroy() {
@@ -504,19 +508,13 @@ class AppReferTestimonialActivity : Activity() {
         body.addView(text(s("support.testimonial.honest"), 14f, c.muted), lp(dp(6)))
         r.reward?.description?.let { body.addView(rewardBox(it), lp(dp(14))) }
         val f = flow.file
-        // Built below the switch; the switch relabels it in place (no rebuild mid-toggle).
-        var submit: Button? = null
         if (f != null) {
             body.addView(preview(f), LinearLayout.LayoutParams(-1, dp(280)).apply { topMargin = dp(14) })
             if (!busy) body.addView(button(s("support.testimonial.retake"), false) { pick(null) }, lp(dp(10)))
             r.permission?.let { permission ->
                 body.addView(card().apply {
-                    addView(Switch(this@AppReferTestimonialActivity).apply {
-                        text = s("support.testimonial.publish"); textSize = 15f; setTextColor(c.ink); isChecked = flow.publish; isEnabled = !busy
-                        setOnCheckedChangeListener { _, on -> flow.publish = on; submit?.text = s(flow.submitLabelKey) }
-                    }, lp())
+                    addView(text(s("support.testimonial.termsAgree"), 15f, bold = true), lp())
                     addView(text(permission.text, 13.5f), lp(dp(6)))
-                    addView(text(s("support.testimonial.publishHint"), 12.5f, c.muted), lp(dp(6)))
                 }, lp(dp(14)))
             }
         } else {
@@ -534,7 +532,7 @@ class AppReferTestimonialActivity : Activity() {
             }
             TestimonialFlow.Phase.CHECKING -> body.addView(text(s("support.testimonial.checking"), 14f, c.muted), lp(dp(14)))
             else -> {
-                if (f != null) body.addView(button(s(flow.submitLabelKey), true) { scope.launch { flow.submit() } }.also { submit = it }, lp(dp(16)))
+                if (flow.canSubmit) body.addView(button(s("support.testimonial.submit"), true) { scope.launch { flow.submit() } }, lp(dp(16)))
                 body.addView(LinearLayout(this).apply {
                     gravity = Gravity.CENTER
                     addView(text(s("support.testimonial.decline"), 14f, c.muted, true).apply { setPadding(dp(10), dp(10), dp(10), dp(10)); setOnClickListener { scope.launch { close(flow.decline(false)) } } })
@@ -559,6 +557,5 @@ class AppReferTestimonialActivity : Activity() {
         const val PERMISSION = 8053
         const val STATE_CAPTURE = "apprefer_capture_path"
         const val STATE_PERMISSION = "apprefer_capture_permission"
-        const val STATE_PUBLISH = "apprefer_capture_publish"
     }
 }

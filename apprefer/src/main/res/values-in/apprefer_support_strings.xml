@@ -283,8 +283,8 @@
     <string name="apprefer_support_testimonial_reward">Untuk partisipasimu: {reward}</string>
     <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
     <string name="apprefer_support_testimonial_honest">Bagus, buruk, atau campuran: kami ingin pendapat jujurmu.</string>
-    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on allowing reuse. -->
-    <string name="apprefer_support_testimonial_reward_note">Kamu mendapatkannya karena ikut serta, apa pun yang kamu katakan dan apakah kamu mengizinkan penggunaan ulang atau tidak.</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on whether the media is later used. -->
+    <string name="apprefer_support_testimonial_reward_note">Kamu mendapatkannya karena ikut serta, apa pun yang kamu katakan dan entah kami menggunakannya atau tidak.</string>
     <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
     <string name="apprefer_support_testimonial_open">Bagikan foto atau video</string>
     <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
@@ -299,16 +299,12 @@
     <string name="apprefer_support_testimonial_camera_denied">Akses kamera nonaktif. Kamu bisa memilih dari galerimu.</string>
     <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
     <string name="apprefer_support_testimonial_retake">Pilih yang lain</string>
-    <!-- support.testimonial.publish: Label of the public-use switch, which starts on; the customer can turn it off. The app's own permission text is shown under it. -->
-    <string name="apprefer_support_testimonial_publish">Izinkan penggunaan publik</string>
-    <!-- support.testimonial.publishHint: Hint under the public-use switch, which starts on. Must say it is on unless turned off, that the reward is the same either way and that permission can be withdrawn later. -->
-    <string name="apprefer_support_testimonial_publish_hint">Aktif kecuali kamu menonaktifkannya. Hadiahnya sama dalam kedua kasus, dan kamu bisa menariknya nanti.</string>
-    <!-- support.testimonial.submit: Primary button that uploads and shares the selected photo or video. -->
-    <string name="apprefer_support_testimonial_submit">Bagikan</string>
-    <!-- support.testimonial.submitPublic: Primary button that sends the selected photo/video while the public-use switch is on. Must say it sends and allows sharing (public use). -->
-    <string name="apprefer_support_testimonial_submit_public">Kirim dan izinkan dibagikan</string>
-    <!-- support.testimonial.submitPrivate: Primary button that sends the selected photo/video while the public-use switch is off. Must say it is sent privately (no public use). -->
-    <string name="apprefer_support_testimonial_submit_private">Kirim secara pribadi</string>
+    <!-- support.testimonial.termsAgree: Shown directly above the app's own usage terms (shown word for word under it) and the Submit button. Submitting is the agreement; there is no switch or tick. -->
+    <string name="apprefer_support_testimonial_terms_agree">Dengan mengirim, kamu menyetujui ketentuan ini.</string>
+    <!-- support.testimonial.termsChanged: Shown when the app's usage terms changed before the customer submitted. The new terms are shown and nothing was sent. -->
+    <string name="apprefer_support_testimonial_terms_changed">Ketentuannya berubah. Baca dulu, lalu kirim lagi.</string>
+    <!-- support.testimonial.submit: Primary button under the usage terms that uploads and submits the selected photo or video. Submitting means agreeing to the terms shown. -->
+    <string name="apprefer_support_testimonial_submit">Kirim</string>
     <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
     <string name="apprefer_support_testimonial_uploading">Mengunggah… {percent}%</string>
     <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->

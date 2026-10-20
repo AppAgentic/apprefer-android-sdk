@@ -55,7 +55,6 @@ class SupportTestimonialTest {
         flow.load()
         assertEquals(TestimonialFlow.Phase.READY, flow.phase)
         flow.picked(photo)
-        flow.publish = false
         t.failSubmit = java.io.IOException("connection reset")
         flow.submit()
         assertEquals(TestimonialFlow.Phase.FAILED, flow.phase)
@@ -65,55 +64,77 @@ class SupportTestimonialTest {
         assertEquals(1, t.slots); assertEquals(1, t.puts)
         assertEquals(t.submits[0][0], t.submits[1][0])
         assertEquals("same clientSubmissionId", t.submits[0][1], t.submits[1][1])
-        assertEquals(false, t.submits[1][2])
-        assertEquals("0123456789abcdef", t.submits[1][3])
-        assertEquals(AppReferTestimonialResult(t.current.requestId, "submitted", "pending", "declined"), flow.result)
+        assertEquals(listOf(true, "0123456789abcdef"), t.submits[1].subList(2, 4))
+        assertEquals(AppReferTestimonialResult(t.current.requestId, "submitted", "pending", "granted"), flow.result)
     }
 
-    @Test fun publicUseStartsOnButOnlyTheFinalShareRecordsIt() = runBlocking {
+    @Test fun onlySubmitAgreesToTheTermsShownAndNothingElseSendsAnAnswer() = runBlocking {
         val t = Fake(request())
         val flow = TestimonialFlow(t.current.requestId, t)
-        assertTrue("public use starts on", flow.publish)
-        flow.load(); flow.picked(photo)
-        assertEquals("the app's registered text is what the switch shows", "You may show this in the app.", flow.request?.permission?.text)
+        assertFalse(flow.canSubmit)
+        flow.load()
+        assertTrue(flow.hasTerms); assertFalse("nothing picked yet", flow.canSubmit)
+        flow.picked(photo)
+        assertTrue(flow.canSubmit)
+        assertEquals("the app's registered terms are shown as written", "You may show this in the app.", flow.request?.permission?.text)
         assertTrue("opening and picking record nothing", t.submits.isEmpty())
+        assertEquals("nothing is uploaded before Submit", 0, t.slots)
         flow.submit()
         assertEquals(listOf(true, "0123456789abcdef"), t.submits.single().subList(2, 4))
-        assertEquals(AppReferTestimonialResult(t.current.requestId, "submitted", "pending", "granted"), flow.result)
         val declined = TestimonialFlow("tsr_x", Fake(request()))
         declined.load(); declined.picked(photo)
-        assertNull("declining sends no permission answer", declined.decline(false).publication)
+        assertNull("declining or cancelling sends no agreement", declined.decline(false).publication)
     }
 
-    @Test fun theSubmitButtonSaysWhetherItAllowsSharing() = runBlocking {
+    @Test fun changedTermsAreShownAgainAndOnlyTheNextSubmitAgreesToThem() = runBlocking {
         val t = Fake(request())
         val flow = TestimonialFlow(t.current.requestId, t)
         flow.load(); flow.picked(photo)
-        assertEquals("support.testimonial.submitPublic", flow.submitLabelKey)
-        assertEquals("Send and allow sharing", SupportStrings.text(flow.submitLabelKey))
-        flow.publish = false
-        assertEquals("Send privately", SupportStrings.text(flow.submitLabelKey))
-        t.failSubmit = java.io.IOException("connection reset")
+        t.failSubmit = AppReferSupportException(409, "changed", "TERMS_CHANGED")
+        t.current = t.current.copy(permission = AppReferTestimonialRequest.Permission("You may show this in the app and on our website.", listOf("in_app", "website"), "fedcba9876543210"))
         flow.submit()
-        assertEquals(TestimonialFlow.Phase.FAILED, flow.phase)
-        assertEquals("a retry still names what it sends", "Send privately", SupportStrings.text(flow.submitLabelKey))
+        assertEquals(TestimonialFlow.Phase.READY, flow.phase)
+        assertEquals("The terms have changed. Please read them, then submit again.", flow.notice)
+        assertEquals("You may show this in the app and on our website.", flow.request?.permission?.text)
+        assertEquals("the refused answer named the terms that were shown", "0123456789abcdef", t.submits.single()[3])
+        assertNull("nothing was agreed", flow.result.publication)
         flow.submit()
-        assertEquals("the label matches the answer sent", listOf(false, false), t.submits.map { it[2] })
-        SupportStrings.forcedLanguage = "de"
-        assertEquals("Senden und Teilen erlauben", SupportStrings.text("support.testimonial.submitPublic"))
-        assertEquals("Privat senden", SupportStrings.text("support.testimonial.submitPrivate"))
+        assertEquals(TestimonialFlow.Phase.DONE, flow.phase)
+        assertEquals(listOf(true, "fedcba9876543210"), t.submits.last().subList(2, 4))
+        assertEquals("upload kept", t.submits.first()[0], t.submits.last()[0])
+        assertEquals("same client id", t.submits.first()[1], t.submits.last()[1])
+        assertEquals(1, t.slots)
     }
 
-    @Test fun aRequestWithoutPermissionTextIsNeverSubmittedWithAnAssumedAnswer() = runBlocking {
+    @Test fun theTermsWrapperSubmitAndNoticeAreTranslated() {
+        SupportStrings.forcedLanguage = "de"
+        assertEquals("Mit dem Senden stimmst du diesen Bedingungen zu.", SupportStrings.text("support.testimonial.termsAgree"))
+        assertEquals("Senden", SupportStrings.text("support.testimonial.submit"))
+        assertEquals("Die Bedingungen haben sich geändert. Bitte lies sie und sende noch einmal.", SupportStrings.text("support.testimonial.termsChanged"))
+        SupportStrings.forcedLanguage = "en"
+        assertEquals("By submitting, you agree to these terms.", SupportStrings.text("support.testimonial.termsAgree"))
+        assertEquals("Submit", SupportStrings.text("support.testimonial.submit"))
+        for (gone in listOf("publish", "publishHint", "submitPublic", "submitPrivate")) {
+            assertFalse(gone, SupportStringIds.text.containsKey("support.testimonial.$gone"))
+        }
+    }
+
+    @Test fun aRequestWithoutTermsCantBeSubmittedAndNothingIsAssumed() = runBlocking {
         val old = json().replace(""""permission":{"text":"You may show this in the app.","scopes":["in_app"],"version":"0123456789abcdef"},""", "")
         val t = Fake(request(old))
         val flow = TestimonialFlow(t.current.requestId, t)
         flow.load()
         assertNull(flow.request?.permission)
-        assertEquals("no switch, so the button claims neither sharing nor privacy", "support.testimonial.submit", flow.submitLabelKey)
-        flow.picked(photo); flow.submit()
-        assertTrue("no permission text means no answer is sent or inferred", t.submits.isEmpty())
+        assertEquals(TestimonialFlow.Phase.UNAVAILABLE, flow.phase)
+        flow.picked(photo)
+        assertFalse(flow.canSubmit)
+        flow.submit()
+        assertTrue("no terms means no answer is sent or inferred", t.submits.isEmpty())
         assertEquals(0, t.slots)
+        val noVersion = json().replace(""","version":"0123456789abcdef"""", "")
+        val other = TestimonialFlow("tsr_v", Fake(request(noVersion)))
+        other.load()
+        assertEquals(TestimonialFlow.Phase.UNAVAILABLE, other.phase)
     }
 
     @Test fun aRefusedFileIsUploadedAgainAndAClosedRequestEndsTheFlow() = runBlocking {
@@ -224,7 +245,7 @@ class SupportTestimonialTest {
 
     @Test fun everyLanguageHasTheTestimonialStrings() {
         assertEquals("For taking part: 50 bonus credits", SupportStrings.text("support.testimonial.reward", "reward" to "50 bonus credits"))
-        assertEquals("You get it for taking part, whatever you say and whether or not you allow reuse.", SupportStrings.text("support.testimonial.rewardNote"))
+        assertEquals("You get it for taking part, whatever you say and whether or not we use it.", SupportStrings.text("support.testimonial.rewardNote"))
         assertEquals("Good, bad or mixed: we want your honest take.", SupportStrings.text("support.testimonial.honest"))
         assertEquals("Take a photo", SupportStrings.text("support.testimonial.takePhoto"))
         assertEquals("Record a video", SupportStrings.text("support.testimonial.recordVideo"))
