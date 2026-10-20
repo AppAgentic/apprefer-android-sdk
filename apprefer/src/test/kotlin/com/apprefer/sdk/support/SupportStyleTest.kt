@@ -180,6 +180,42 @@ class SupportStyleTest {
         }
     }
 
+    @Test fun homeEndFollowsTheComposersRealHeight() {
+        // Narrow screens: summaries and tile subtitles wrap instead of stopping after a few words.
+        assertEquals(3, SupportHomeLayout.SUMMARY_LINES)
+        assertEquals(2, SupportHomeLayout.TILE_SUBTITLE_LINES)
+        // Before the composer is measured: the old fixed 140 dp.
+        assertEquals(420, SupportHomeLayout.endPadding(0, 3f))
+        // One line (74 dp) and a five-line composer with a topic chip (230 dp), both at 3x:
+        // the page always ends 64 dp above the composer, so the last tiles are never under it.
+        assertEquals(74 * 3 + 64 * 3, SupportHomeLayout.endPadding(74 * 3, 3f))
+        assertEquals(230 * 3 + 64 * 3, SupportHomeLayout.endPadding(230 * 3, 3f))
+    }
+
+    @Test fun homeKeepsItsEndOnlyWhenAlreadyThere() {
+        val tol = 24 * 3
+        // At the end of a 3000 px page in a 1800 px viewport: the keyboard (or a taller composer) keeps it there.
+        assertTrue(SupportHomeLayout.atEnd(1200, 1800, 3000, tol))
+        assertTrue(SupportHomeLayout.atEnd(1200 - tol, 1800, 3000, tol))
+        // Reading higher up: never moved.
+        assertFalse(SupportHomeLayout.atEnd(1200 - tol - 1, 1800, 3000, tol))
+        assertFalse(SupportHomeLayout.atEnd(0, 1800, 3000, tol))
+        // A page shorter than the screen is already at its end.
+        assertTrue(SupportHomeLayout.atEnd(0, 1800, 900, tol))
+    }
+
+    @Test fun tileTitlesShrinkToFitLikeTheOtherSdks() {
+        assertEquals(0.5f, SupportHomeLayout.TILE_TITLE_MIN_SCALE)
+        // Fits: unchanged.
+        assertEquals(45f, SupportHomeLayout.fitTextSize(45f, 200f, 300f, 0.8f))
+        // A little too wide: shrinks just enough.
+        assertEquals(45f * 300f / 330f * 0.98f, SupportHomeLayout.fitTextSize(45f, 330f, 300f, 0.8f), 0.001f)
+        // Far too wide: stops at the floor (then ends in "...").
+        assertEquals(22.5f, SupportHomeLayout.fitTextSize(45f, 1200f, 300f, 0.5f))
+        // "Billing & refunds" at 1.6x in a 320 dp tile needs about 0.55: shown whole.
+        assertEquals(45f * 0.55f * 0.98f, SupportHomeLayout.fitTextSize(45f, 300f / 0.55f, 300f, SupportHomeLayout.TILE_TITLE_MIN_SCALE), 0.01f)
+    }
+
     private fun contrast(a: Int, b: Int): Double {
         fun lin(v: Int): Double { val c = v / 255.0; return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4) }
         fun lum(c: Int) = 0.2126 * lin((c shr 16) and 0xff) + 0.7152 * lin((c shr 8) and 0xff) + 0.0722 * lin(c and 0xff)
