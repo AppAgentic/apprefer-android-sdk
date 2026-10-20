@@ -1,6 +1,6 @@
 # AppRefer Android SDK
 
-## 0.11.0 (unreleased): lifecycle notifications (engagement)
+## 0.11.0: lifecycle notifications (engagement)
 
 **Not generally available.** AppRefer turns lifecycle engagement on per app; until then every engagement call answers "disabled" quietly and nothing is stored. The server side is dry-run only in this release: no notification is sent to anyone yet. This version is the client contract (wire schema 1) the live sender will use.
 
@@ -31,7 +31,7 @@ AppRefer.engagement.identify(assertion)
 
 Declare `android.permission.POST_NOTIFICATIONS` and ask for it yourself on Android 13+; then call `refreshDeviceState()`. AppRefer sends data-only FCM messages and renders them itself (channels "Offers and news", "Reminders", "Account and billing" in the app's language). FCM limits apply honestly: delivery to a force-stopped app doesn't happen, normal-priority data messages can wait for Doze windows, and `onMessageReceived` has about 20 s (the image download is capped at 8 s, `imageTimeoutMs`). Taps open your launch activity; only intents carrying a nonce the SDK recorded are accepted.
 
-## 0.10.0 (unreleased): help centre in the chat; the help chat speaks 35 languages
+## 0.10.0: help centre in the chat; the help chat speaks 35 languages
 
 **Help centre.** When your app has published help articles in AppRefer, the help home
 shows a "Help articles" card (search plus the top articles), with a help centre screen
@@ -627,7 +627,7 @@ AppRefer.support.testimonials.present(activity, requestId) { result ->
   itself declares `CAMERA`, Android refuses capture intents until it is granted, so the SDK asks for
   it with the system prompt at the moment of capture; declining keeps the library and says so.
 
-0.13.0 is unreleased source (not tagged). Once tagged, install it from JitPack only: `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.13.0` (and `apprefer-billing:0.13.0` if you use Billing; keep both on the same version).
+0.13.1 is released. Install it from JitPack only: `com.github.AppAgentic.apprefer-android-sdk:apprefer-android-sdk:0.13.1` (and `apprefer-billing:0.13.1` if you use Billing; keep both on the same version).
 
 ### Languages and your own wording
 
