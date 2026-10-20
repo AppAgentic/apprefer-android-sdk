@@ -160,10 +160,10 @@ class SupportOfferTest {
         AppReferSupport.onOffer = null
         assertEquals(listOf("ofc_0123456789abcdef01234567"), cards.map { it.cardId })
         val calls = h.requests.filterNot { it.second.endsWith("/session") }
-        assertEquals("offers, reviews", calls[0].third["X-AppRefer-Support-Features"])
+        assertEquals("offers, reviews, testimonials", calls[0].third["X-AppRefer-Support-Features"])
         assertTrue(calls[0].second.endsWith("/conversations/cv1?platform=android&after=2026-10-19T12%3A00%3A00.000Z"))
         assertTrue(calls[1].second.endsWith("/conversations/cv1/offers?platform=android"))
-        assertEquals("offers, offer-handler, reviews", calls[1].third["X-AppRefer-Support-Features"])
+        assertEquals("offers, offer-handler, reviews, testimonials", calls[1].third["X-AppRefer-Support-Features"])
         assertFalse(SupportOffers.hasHandler)
     }
 

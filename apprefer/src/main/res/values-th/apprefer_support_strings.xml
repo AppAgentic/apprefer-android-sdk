@@ -279,4 +279,64 @@
     <string name="apprefer_support_review_a11y_hint_app_store">เปิด App Store</string>
     <!-- support.review.a11y.hint.googlePlay: VoiceOver/TalkBack hint on the review card's button. Store: Google Play (brand name, never translated). -->
     <string name="apprefer_support_review_a11y_hint_google_play">เปิด Google Play</string>
+    <!-- support.testimonial.reward: Line on the photo/video request card and screen. {reward} = the reward the app set, already in the customer's language (e.g. '50 bonus credits'). Taking part earns it; never imply it depends on praise. -->
+    <string name="apprefer_support_testimonial_reward">สำหรับการร่วมแชร์: {reward}</string>
+    <!-- support.testimonial.honest: Line under the ask on the photo/video request card and screen. Honest participation is what's asked; never imply praise is expected. -->
+    <string name="apprefer_support_testimonial_honest">ดี ไม่ดี หรือปนกัน: เราอยากได้ความเห็นที่ตรงไปตรงมาของคุณ</string>
+    <!-- support.testimonial.rewardNote: Small reassurance under the reward line. The reward never depends on what is said or on whether the media is later used. -->
+    <string name="apprefer_support_testimonial_reward_note">คุณได้รับรางวัลนี้จากการร่วมแชร์ ไม่ว่าคุณจะพูดอะไร และไม่ว่าเราจะนำไปใช้หรือไม่</string>
+    <!-- support.testimonial.open: Button on the request card that opens the capture screen. Short. -->
+    <string name="apprefer_support_testimonial_open">แชร์รูปภาพหรือวิดีโอ</string>
+    <!-- support.testimonial.choose: Button: pick an existing photo or video from the device's library. -->
+    <string name="apprefer_support_testimonial_choose">เลือกจากคลัง</string>
+    <!-- support.testimonial.camera: Button: take a photo or record a video now. -->
+    <string name="apprefer_support_testimonial_camera">ใช้กล้อง</string>
+    <!-- support.testimonial.takePhoto: Button: take a photo now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_take_photo">ถ่ายรูป</string>
+    <!-- support.testimonial.recordVideo: Button: record a video now with the camera (Android shows photo and video separately). -->
+    <string name="apprefer_support_testimonial_record_video">อัดวิดีโอ</string>
+    <!-- support.testimonial.cameraDenied: Shown when the customer declined camera access for this app. -->
+    <string name="apprefer_support_testimonial_camera_denied">การเข้าถึงกล้องปิดอยู่ คุณเลือกจากคลังภาพแทนได้</string>
+    <!-- support.testimonial.retake: Button under the preview to replace the selected photo or video. -->
+    <string name="apprefer_support_testimonial_retake">เลือกอันอื่น</string>
+    <!-- support.testimonial.termsAgree: Shown directly above the app's own usage terms (shown word for word under it) and the Submit button. Submitting is the agreement; there is no switch or tick. -->
+    <string name="apprefer_support_testimonial_terms_agree">เมื่อส่ง ถือว่าคุณยอมรับข้อกำหนดเหล่านี้</string>
+    <!-- support.testimonial.termsChanged: Shown when the app's usage terms changed before the customer submitted. The new terms are shown and nothing was sent. -->
+    <string name="apprefer_support_testimonial_terms_changed">ข้อกำหนดมีการเปลี่ยนแปลง โปรดอ่านแล้วส่งอีกครั้ง</string>
+    <!-- support.testimonial.submit: Primary button under the usage terms that uploads and submits the selected photo or video. Submitting means agreeing to the terms shown. -->
+    <string name="apprefer_support_testimonial_submit">ส่ง</string>
+    <!-- support.testimonial.uploading: Progress while uploading. {percent} = 0-100. -->
+    <string name="apprefer_support_testimonial_uploading">กำลังอัปโหลด… {percent}%</string>
+    <!-- support.testimonial.checking: Shown after the upload while the server checks the file. -->
+    <string name="apprefer_support_testimonial_checking">กำลังตรวจสอบ…</string>
+    <!-- support.testimonial.done: Title after a successful share. -->
+    <string name="apprefer_support_testimonial_done">ขอบคุณที่แชร์!</string>
+    <!-- support.testimonial.rewardPending: After sharing, while the app hasn't confirmed the reward yet. Never promise delivery, shipping or an email. -->
+    <string name="apprefer_support_testimonial_reward_pending">คุณได้รับสิทธิ์แล้ว เมื่อมอบให้แล้วจะแสดงที่นี่ว่ายืนยันแล้ว</string>
+    <!-- support.testimonial.rewardDone: After the app confirmed the reward (gifts, discounts, merchandise or anything handled by the app). Generic: no shipping or email promise. -->
+    <string name="apprefer_support_testimonial_reward_done">ยืนยันรางวัลของคุณแล้ว</string>
+    <!-- support.testimonial.rewardDone.account: After the app confirmed an in-account reward (credits, coach answers, subscription time). -->
+    <string name="apprefer_support_testimonial_reward_done_account">เพิ่มรางวัลลงในบัญชีของคุณแล้ว</string>
+    <!-- support.testimonial.rewardDelayed: After sharing, when the app's confirmation failed or took too long. The support team can retry it from their inbox. -->
+    <string name="apprefer_support_testimonial_reward_delayed">รางวัลของคุณยังไม่ได้รับการยืนยัน ทีมซัพพอร์ตเห็นเรื่องนี้และส่งให้อีกครั้งได้</string>
+    <!-- support.testimonial.rewardNotEligible: After sharing, when this customer was already rewarded for this campaign. -->
+    <string name="apprefer_support_testimonial_reward_not_eligible">คุณเคยร่วมกิจกรรมนี้แล้ว ครั้งนี้จึงไม่มีรางวัลใหม่</string>
+    <!-- support.testimonial.decline: Button to decline the request. -->
+    <string name="apprefer_support_testimonial_decline">ไม่ ขอบคุณ</string>
+    <!-- support.testimonial.dontAsk: Button to decline and never be asked again in this app. -->
+    <string name="apprefer_support_testimonial_dont_ask">ไม่ต้องถามอีก</string>
+    <!-- support.testimonial.cancel: Closes the capture screen without sharing. -->
+    <string name="apprefer_support_testimonial_cancel">ยกเลิก</string>
+    <!-- support.testimonial.unavailable: Shown on a request card or screen that expired, was withdrawn or belongs to another account. -->
+    <string name="apprefer_support_testimonial_unavailable">คำขอนี้ไม่พร้อมใช้งานแล้ว</string>
+    <!-- support.testimonial.tooLong: Error when the chosen video is too long. {seconds} = a whole number. -->
+    <string name="apprefer_support_testimonial_too_long">วิดีโอยาวได้สูงสุด {seconds} วินาที</string>
+    <!-- support.testimonial.tooLarge: Error when the chosen file is over the size limit. -->
+    <string name="apprefer_support_testimonial_too_large">ไฟล์นี้ใหญ่เกินกว่าจะแชร์ได้</string>
+    <!-- support.testimonial.failed: Error when the upload or share failed. Nothing was shared; the retry button follows. -->
+    <string name="apprefer_support_testimonial_failed">แชร์ไม่สำเร็จ ไม่มีอะไรถูกส่ง ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง</string>
+    <!-- support.testimonial.withdraw: Button after sharing to withdraw permission for public use. -->
+    <string name="apprefer_support_testimonial_withdraw">หยุดการใช้แบบสาธารณะ</string>
+    <!-- support.testimonial.a11y.preview: VoiceOver/TalkBack label of the preview. -->
+    <string name="apprefer_support_testimonial_a11y_preview">รูปภาพหรือวิดีโอที่คุณเลือก</string>
 </resources>

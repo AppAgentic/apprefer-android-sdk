@@ -38,8 +38,8 @@ class SupportLocalizationTest {
         }
         val keys = shared.getJSONObject("keys").keys().asSequence().toList()
         // 78 chat keys + 22 help centre / status keys (0.10.0) + 7 lifecycle notification keys (0.11.0)
-        // + 15 offer card keys (0.12.0).
-        assertEquals(138, keys.size)
+        // + 15 offer card keys (0.12.0) + 32 photo/video testimonial keys (0.13.0).
+        assertEquals(168, keys.size)
         assertEquals("every key has a resource", keys.toSet(), SupportStringIds.text.keys + SupportStringIds.plurals.keys)
         assertEquals(keys.toSet(), english.strings.keys + english.plurals.keys)
         for (key in listOf("support.home.subtitle", "support.ai.tag", "support.error.offline", "support.notification.channel")) {

@@ -118,10 +118,20 @@ class EngagementClientTest {
         val patch = server.installs[installId]!!.patches.last()
         assertEquals("granted", patch["notificationPermission"])
         assertEquals(true, (patch["capabilities"] as Map<*, *>)["images"])
+        // This SDK opens Support testimonial invitations as its own capture screen.
+        assertEquals(true, (patch["capabilities"] as Map<*, *>)["testimonials"])
         assertEquals(installId to 0, identity.last())
         // Another process with the same store reuses it.
         assertEquals(installId, id(client().start(key, true, AppReferEngagementOptions())))
         assertEquals(1, server.count("POST", "/api/engagement/v1/installs"))
+    }
+
+    @Test fun onlyAnExactTestimonialInvitationPathIsTheSdksOwn() {
+        val rid = "tsr_" + "0a".repeat(16)
+        assertEquals(rid, AppReferEngagement.testimonialRequestId("/apprefer/testimonials/$rid"))
+        for (other in listOf("/apprefer/testimonials/tsr_x", "/apprefer/testimonials/$rid/x", "/apprefer/testimonials/tsr_" + "A".repeat(32), "/setup", null)) {
+            assertNull(other, AppReferEngagement.testimonialRequestId(other))
+        }
     }
 
     @Test fun unchangedStateIsNotResentAndTheTokenIsSentOnce() = runBlocking {

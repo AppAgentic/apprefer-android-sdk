@@ -248,13 +248,33 @@ object AppReferEngagement {
 
     private fun deliver() {
         main.post {
-            val handler = onNotificationEvent ?: return@post
+            val handler = onNotificationEvent
+            // A Support testimonial invitation belongs to the SDK: it opens even with no app handler.
+            fun sdkOwned(e: AppReferEngagementNotificationEvent) = e.isNavigation && testimonialRequestId(e.destination) != null
             val now = synchronized(pending) {
-                val (go, keep) = pending.partition { !it.first.isNavigation || ready }
+                val (go, keep) = pending.partition { (handler != null || sdkOwned(it.first)) && (!it.first.isNavigation || ready) }
                 pending.clear(); pending.addAll(keep); go
             }
-            for ((event, raw) in now) if (stillDeliverable(event, raw, client?.snapshot?.get(), System.currentTimeMillis())) handler(event)
+            for ((event, raw) in now) {
+                if (!stillDeliverable(event, raw, client?.snapshot?.get(), System.currentTimeMillis())) continue
+                val requestId = if (event.isNavigation) testimonialRequestId(event.destination) else null
+                if (requestId != null) openTestimonial(requestId) else handler?.invoke(event)
+            }
         }
+    }
+
+    private val testimonialPath = Regex("^/apprefer/testimonials/(tsr_[0-9a-f]{32})$")
+
+    /**
+     * The request id when [destination] is a Support testimonial invitation
+     * (`/apprefer/testimonials/<requestId>`): the SDK opens its own capture screen for it and never
+     * passes it to the app's router.
+     */
+    internal fun testimonialRequestId(destination: String?): String? = destination?.let { testimonialPath.matchEntire(it)?.groupValues?.get(1) }
+
+    /** Opens the capture screen for a tapped invitation (tests replace it). */
+    internal var openTestimonial: (String) -> Unit = { requestId ->
+        (context ?: AppReferContext.context)?.let { com.apprefer.sdk.support.AppReferTestimonials.present(it, requestId) }
     }
 
     /**
