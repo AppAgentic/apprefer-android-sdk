@@ -1,5 +1,7 @@
 ## 0.13.3 (candidate, not published)
 
+- Automatically retain server-confirmed store context for default live-key review/test purchases; explicit selections remain strict. Protected install-local authorization recovers exact pending proofs across outages and restarts, consumes completed proof/intent capabilities together, and excludes legacy queues and migration from automatic selection.
+
 - Isolate customer snapshots, caches and offline grants by production or sandbox. Public Billing configuration accepts an explicit environment, including sandbox with a live SDK key; test keys cannot select production.
 - Preserve and classify legacy pending store proofs using server-verified environments. Other-environment receipts stay queued without expiring or blocking valid work. Read-only migration checkpoints are scoped per environment; app identities and ownership tokens remain shared.
 - Unknown local environments and historic unscoped caches grant nothing until verified.

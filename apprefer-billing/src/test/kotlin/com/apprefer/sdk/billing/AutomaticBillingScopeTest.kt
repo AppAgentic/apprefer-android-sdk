@@ -172,7 +172,8 @@ class AutomaticBillingScopeTest {
             val reopened = BillingStorage(kv, storage.directory)
             val next = AutomaticBillingScope(reopened, { "pk_live_review" })
             val restarted = Harness(this, "review-user", reopened, options = BillingEngine.Options(defaultEntitlement = "premium", environment = next::current, automaticScope = next), play = h.play, server = h.server, apiKey = { "pk_live_review" })
-            restarted.engine.drainQueue()
+            val refreshed = restarted.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT)
+            assertEquals(BillingEnvironment.SANDBOX, refreshed.environment)
             assertEquals(BillingEnvironment.SANDBOX, next.current())
             assertFalse(restarted.queue.entries.any { it.purchaseToken == "test-token" })
             assertTrue(restarted.engine.customerInfo(AppReferBilling.FetchPolicy.FETCH_CURRENT).hasActiveEntitlement)
@@ -221,6 +222,22 @@ class AutomaticBillingScopeTest {
         val next = AutomaticBillingScope(reopened, { "pk_live_a" })
         assertNull(next.recoverProof("same-user", "pending-token"))
         assertNull(next.recoverPending(intent, storePurchase("pending-token", "plan")))
+    }
+
+    @Test fun acceptedProofConsumesOriginatingIntentBeforePhysicalCleanup() = runTest {
+        val storage = newStorage()
+        storage.loggedInAppUserId = "buyer"
+        val automatic = AutomaticBillingScope(storage, { "pk_live_a" })
+        val ticket = automatic.capture("buyer")!!
+        val intent = PurchaseIntent("premium.plan", "buyer", null, NOW)
+        automatic.authorizePending(ticket, intent, "old-sandbox")
+        automatic.authorizeProof(ticket, "old-sandbox", intent)
+        assertTrue(automatic.commit(ticket, BillingEnvironment.SANDBOX, "old-sandbox"))
+        // A crash or failed physical intent deletion must not revive its capability.
+        assertTrue(automatic.commit(automatic.capture("buyer")!!, BillingEnvironment.PRODUCTION))
+        assertNull(automatic.recoverPending(intent, storePurchase("old-sandbox", "premium.plan")))
+        assertNull(automatic.recoverProof("buyer", "old-sandbox"))
+        assertEquals(BillingEnvironment.PRODUCTION, automatic.current())
     }
 
 }

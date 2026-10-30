@@ -471,10 +471,19 @@ internal class BillingStorage(
     }
     private fun proofContextKey(user: String, key: String, token: String) = automaticContextKey(user + ":" + token, key)
     @Synchronized
-    fun authorizeAutomaticProof(user: String, key: String, token: String, capability: String) {
+    fun authorizeAutomaticProof(user: String, key: String, token: String, capability: String, intent: PurchaseIntent? = null) {
         val value = automaticContexts()
         val proofs = value.optJSONObject("_proofs") ?: JSONObject()
-        proofs.put(proofContextKey(user, key, token), JSONObject().put("capability", capability).put("resetUser", resetUser ?: ""))
+        val record = proofs.optJSONObject(proofContextKey(user, key, token)) ?: JSONObject()
+        if (intent != null) {
+            val id = intentContextKey(intent, key)
+            val pending = value.optJSONObject("_pending")?.optJSONObject(id) ?: throw BillingStorageException("Automatic intent unavailable")
+            val bound = pending.optString("token")
+            if (bound.isNotEmpty() && bound != token) throw BillingStorageException("Automatic intent already bound")
+            pending.put("token", token)
+            record.put("intentKey", id)
+        }
+        proofs.put(proofContextKey(user, key, token), record.put("capability", capability).put("resetUser", resetUser ?: ""))
         value.put("_proofs", proofs)
         saveAutomaticContexts(value)
     }
@@ -506,8 +515,15 @@ internal class BillingStorage(
         return BillingEnvironment.entries.firstOrNull { it.raw == value } ?: throw BillingStorageException("Automatic store context is invalid")
     }
     @Synchronized
-    fun setAutomaticEnvironment(user: String, key: String, environment: BillingEnvironment) {
+    fun setAutomaticEnvironment(user: String, key: String, environment: BillingEnvironment, acceptedToken: String? = null) {
         val known = automaticContexts().put(automaticContextKey(user, key), environment.raw)
+        if (acceptedToken != null) {
+            val proofs = known.optJSONObject("_proofs")
+            val id = proofContextKey(user, key, acceptedToken)
+            val intentKey = proofs?.optJSONObject(id)?.optString("intentKey")
+            if (!intentKey.isNullOrEmpty()) known.optJSONObject("_pending")?.remove(intentKey)
+            proofs?.remove(id)
+        }
         saveAutomaticContexts(known)
     }
 

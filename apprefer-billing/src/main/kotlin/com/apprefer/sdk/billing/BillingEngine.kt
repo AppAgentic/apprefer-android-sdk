@@ -357,6 +357,7 @@ internal class BillingEngine(
         }
         val info = accept(response, user)
         if (drain) drainQueue()
+        if (options.environment != null && info.environment != options.environment.invoke()) return fetchFromServer(storage.currentAppUserId, drain = false)
         return info
     }
 
@@ -687,7 +688,7 @@ internal class BillingEngine(
 
         val automatic = options.automaticScope
         val authorizedTicket = automaticTicket ?: intent?.let { automatic?.recoverPending(it, purchase) } ?: automatic?.recoverProof(owner, purchase.purchaseToken)
-        if (authorizedTicket != null) automatic?.authorizeProof(authorizedTicket, purchase.purchaseToken)
+        if (authorizedTicket != null) automatic?.authorizeProof(authorizedTicket, purchase.purchaseToken, intent)
         val attributes = if (owner == activeUser()) storage.pendingAttributes else emptyMap()
         val deviceId = linkableDeviceId(owner)
         try {
@@ -696,8 +697,11 @@ internal class BillingEngine(
                 val ticket = authorizedTicket
                 if (automatic == null || ticket == null || restore || !automatic.isCurrent(ticket)) throw mismatch
                 val retried = api.sendInEnvironment(endpoint, mismatch.environment, ticket.key)
-                if (retried.info.appUserId != owner || !automatic.commit(ticket, mismatch.environment)) throw AppReferBillingException.InvalidResponse()
                 retried
+            }
+            if (automatic != null && authorizedTicket != null) {
+                val environment = response.info.environment ?: throw AppReferBillingException.InvalidResponse()
+                if (response.info.appUserId != owner || !automatic.commit(authorizedTicket, environment, purchase.purchaseToken)) throw AppReferBillingException.InvalidResponse()
             }
             if (attributes.isNotEmpty()) storage.clearSentAttributes(attributes)
             resetBackoff()
@@ -706,6 +710,7 @@ internal class BillingEngine(
             val info = accept(response, owner)
             automatic?.forgetProof(owner, purchase.purchaseToken)
             drainQueue()
+            if (options.environment != null && info.environment != options.environment.invoke()) return fetchFromServer(storage.currentAppUserId, drain = false)
             return info
         } catch (e: AppReferBillingException) {
             // Until a copy is on disk Play keeps the purchase open, and the intent is still needed.
@@ -1023,8 +1028,11 @@ internal class BillingEngine(
                     val response = try { api.send(endpoint) } catch (mismatch: AppReferBillingException.EnvironmentMismatch) {
                         if (automatic == null || ticket == null || !automatic.isCurrent(ticket)) throw mismatch
                         val retried = api.sendInEnvironment(endpoint, mismatch.environment, ticket.key)
-                        if (retried.info.appUserId != entry.appUserId || !automatic.commit(ticket, mismatch.environment)) throw AppReferBillingException.InvalidResponse()
                         retried
+                    }
+                    if (automatic != null && ticket != null) {
+                        val environment = response.info.environment ?: throw AppReferBillingException.InvalidResponse()
+                        if (response.info.appUserId != entry.appUserId || !automatic.commit(ticket, environment, entry.purchaseToken)) throw AppReferBillingException.InvalidResponse()
                     }
                     resetBackoff()
                     if (entry.migrationOnly) queue.remove(entry.queueKey)

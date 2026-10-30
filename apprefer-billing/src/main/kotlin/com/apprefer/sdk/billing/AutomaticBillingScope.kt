@@ -33,8 +33,8 @@ internal class AutomaticBillingScope(
         if (!storage.isAutomaticIntent(intent, key, purchase)) return null
         return Ticket(intent.appUserId, key, storage.identityRevision, resetEpoch())
     }
-    fun authorizeProof(ticket: Ticket, token: String) {
-        if (isCurrent(ticket)) storage.authorizeAutomaticProof(ticket.user, ticket.key, token, ticket.capability)
+    fun authorizeProof(ticket: Ticket, token: String, intent: PurchaseIntent? = null) {
+        if (isCurrent(ticket)) storage.authorizeAutomaticProof(ticket.user, ticket.key, token, ticket.capability, intent)
     }
     fun recoverProof(user: String, token: String): Ticket? {
         val key = apiKey() ?: return null
@@ -54,9 +54,9 @@ internal class AutomaticBillingScope(
         storage.currentAppUserId == ticket.user && storage.identityRevision == ticket.identityRevision && resetEpoch() == ticket.resetEpoch
 
     /** Called only after that fresh purchase is accepted for its captured owner. */
-    fun commit(ticket: Ticket, environment: BillingEnvironment): Boolean {
+    fun commit(ticket: Ticket, environment: BillingEnvironment, acceptedToken: String? = null): Boolean {
         if (!isCurrent(ticket)) return false
-        storage.setAutomaticEnvironment(ticket.user, ticket.key, environment)
+        storage.setAutomaticEnvironment(ticket.user, ticket.key, environment, acceptedToken)
         return true
     }
 }
