@@ -78,6 +78,7 @@ internal class BillingStorage(
     private val store: BillingKeyValueStore,
     val directory: File,
     private val now: () -> Long = System::currentTimeMillis,
+    private val automaticDirectory: File = directory,
 ) {
 
     init {
@@ -131,10 +132,15 @@ internal class BillingStorage(
     }
 
     /** Mints and saves a new anonymous id; throws if it could not be saved. */
+    @Volatile var identityRevision: Long = 0
+        private set
+
     @Synchronized
     fun resetAnonymousId(): String {
         val id = ANONYMOUS_PREFIX + UUID.randomUUID().toString()
+        invalidateAutomaticIntents()
         if (!store.putString(KEY_ANONYMOUS_ID, id)) throw BillingStorageException("Could not save the anonymous id")
+        identityRevision++
         return id
     }
 
@@ -143,7 +149,9 @@ internal class BillingStorage(
     var loggedInAppUserId: String?
         get() = store.getString(KEY_APP_USER_ID)
         set(value) {
+            if (value != store.getString(KEY_APP_USER_ID)) invalidateAutomaticIntents()
             if (!store.putString(KEY_APP_USER_ID, value)) throw BillingStorageException("Could not save the app user id")
+            identityRevision++
         }
 
     val currentAppUserId: String @Synchronized get() = loggedInAppUserId ?: anonymousId()
@@ -158,7 +166,11 @@ internal class BillingStorage(
 
     /** Forgets the reset() marker; returns whether that reached disk. */
     @Synchronized
-    fun clearResetUser(): Boolean = store.getString(KEY_RESET_USER) == null || store.putString(KEY_RESET_USER, null)
+    fun clearResetUser(): Boolean {
+        if (store.getString(KEY_RESET_USER) == null) return true
+        invalidateAutomaticIntents()
+        return store.putString(KEY_RESET_USER, null)
+    }
 
     // endregion
 
@@ -362,7 +374,9 @@ internal class BillingStorage(
             return false
         }
         val next = list.filterNot { it in remove }
-        return next.size == list.size || writeIntents(next)
+        if (next.size == list.size) return true
+        clearAutomaticIntentAuthorizations(remove)
+        return writeIntents(next)
     }
 
     @Synchronized fun offeringsBucketId(): String {
@@ -418,6 +432,85 @@ internal class BillingStorage(
 
     // endregion
 
+    private fun automaticContextKey(user: String, key: String): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest((user + "\u0000" + key).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    private fun automaticContexts(): JSONObject = try {
+        val file = File(automaticDirectory, "automatic-environments-v1.json")
+        if (file.exists()) JSONObject(file.readText()) else JSONObject()
+    } catch (error: Exception) { throw BillingStorageException("Automatic store context is unreadable", error) }
+    private fun saveAutomaticContexts(value: JSONObject) {
+        if (!writeAtomically(File(automaticDirectory, "automatic-environments-v1.json"), value.toString())) throw BillingStorageException("Automatic store context could not be saved")
+    }
+    @Synchronized
+    private fun invalidateAutomaticIntents() {
+        if (!File(automaticDirectory, "automatic-environments-v1.json").exists()) return
+        val value = automaticContexts()
+        value.remove("_pending")
+        value.remove("_proofs")
+        saveAutomaticContexts(value)
+    }
+    private fun intentContextKey(intent: PurchaseIntent, key: String): String = automaticContextKey(intent.appUserId + ":" + intent.productId + ":" + intent.startedAtMillis, key)
+    @Synchronized
+    fun authorizeAutomaticIntent(intent: PurchaseIntent, key: String, capability: String, token: String?) {
+        val value = automaticContexts()
+        val pending = value.optJSONObject("_pending") ?: JSONObject()
+        pending.put(intentContextKey(intent, key), JSONObject().put("intent", intentContextKey(intent, "intent")).put("capability", capability).put("token", token).put("resetUser", resetUser ?: ""))
+        value.put("_pending", pending)
+        saveAutomaticContexts(value)
+    }
+    @Synchronized
+    private fun clearAutomaticIntentAuthorizations(remove: Collection<PurchaseIntent>) {
+        if (!File(automaticDirectory, "automatic-environments-v1.json").exists()) return
+        val value = automaticContexts()
+        val pending = value.optJSONObject("_pending") ?: return
+        val fingerprints = remove.map { intentContextKey(it, "intent") }.toSet()
+        val keys = pending.keys().asSequence().toList()
+        for (key in keys) if (pending.optJSONObject(key)?.optString("intent") in fingerprints) pending.remove(key)
+        if (pending.length() == 0) value.remove("_pending")
+        saveAutomaticContexts(value)
+    }
+    private fun proofContextKey(user: String, key: String, token: String) = automaticContextKey(user + ":" + token, key)
+    @Synchronized
+    fun authorizeAutomaticProof(user: String, key: String, token: String, capability: String) {
+        val value = automaticContexts()
+        val proofs = value.optJSONObject("_proofs") ?: JSONObject()
+        proofs.put(proofContextKey(user, key, token), JSONObject().put("capability", capability).put("resetUser", resetUser ?: ""))
+        value.put("_proofs", proofs)
+        saveAutomaticContexts(value)
+    }
+    @Synchronized
+    fun isAutomaticProof(user: String, key: String, token: String): Boolean {
+        val record = automaticContexts().optJSONObject("_proofs")?.optJSONObject(proofContextKey(user, key, token)) ?: return false
+        return record.optString("capability").isNotEmpty() && record.optString("resetUser") == (resetUser ?: "")
+    }
+    @Synchronized
+    fun forgetAutomaticProof(user: String, key: String, token: String) {
+        val value = automaticContexts()
+        val proofs = value.optJSONObject("_proofs") ?: return
+        proofs.remove(proofContextKey(user, key, token))
+        if (proofs.length() == 0) value.remove("_proofs")
+        saveAutomaticContexts(value)
+    }
+    @Synchronized
+    fun isAutomaticIntent(intent: PurchaseIntent, key: String, purchase: StorePurchase): Boolean {
+        val record = automaticContexts().optJSONObject("_pending")?.optJSONObject(intentContextKey(intent, key)) ?: return false
+        if (record.optString("capability").isEmpty() || record.optString("resetUser") != (resetUser ?: "")) return false
+        val token = record.optString("token")
+        return if (token.isNotEmpty()) token == purchase.purchaseToken
+        else intent.accountToken != null && purchase.obfuscatedAccountId.equals(intent.accountToken, ignoreCase = true) && purchase.purchaseTimeMillis >= intent.startedAtMillis - 300_000L
+    }
+    @Synchronized
+    fun automaticEnvironment(user: String, key: String): BillingEnvironment? {
+        val value = automaticContexts().optString(automaticContextKey(user, key))
+        if (value.isEmpty()) return null
+        return BillingEnvironment.entries.firstOrNull { it.raw == value } ?: throw BillingStorageException("Automatic store context is invalid")
+    }
+    @Synchronized
+    fun setAutomaticEnvironment(user: String, key: String, environment: BillingEnvironment) {
+        val known = automaticContexts().put(automaticContextKey(user, key), environment.raw)
+        saveAutomaticContexts(known)
+    }
+
     fun purchaseEnvironment(token: String): BillingEnvironment? = BillingEnvironment.entries.firstOrNull { it.raw == readStringMap("billing_proof_environments")[token] }
     fun recordPurchaseEnvironment(token: String, environment: BillingEnvironment) {
         val known = readStringMap("billing_proof_environments")
@@ -457,6 +550,7 @@ internal class BillingStorage(
         fun live(context: Context) = BillingStorage(
             SharedPreferencesKeyValueStore(context),
             File(context.applicationContext.filesDir, "apprefer/billing"),
+            automaticDirectory = File(context.applicationContext.noBackupFilesDir, "apprefer/billing"),
         )
 
         internal fun isUuid(value: String): Boolean = try {

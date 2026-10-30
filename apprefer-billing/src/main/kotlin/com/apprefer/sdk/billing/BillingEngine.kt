@@ -49,6 +49,7 @@ internal class BillingEngine(
         /** How long a server answer counts as fresh for `CACHED_OR_FETCHED`. */
         val cacheTtlMillis: Long = 5 * 60 * 1000L,
         val environment: (() -> BillingEnvironment?)? = null,
+        val automaticScope: AutomaticBillingScope? = null,
     )
 
     /** What `purchase` returns; mapped to `AppReferBilling.PurchaseResult`. */
@@ -474,11 +475,16 @@ internal class BillingEngine(
         purchaseWaiter = productId to waiter
         try {
             val user = activeUser() ?: throw AppReferBillingException.Storage("identity unreadable; purchase not started")
+            val initialRevision = storage.identityRevision
+            val initialEpoch = accountEpoch()
             val token = accountTokenFor(user)
+            if (options.automaticScope != null) api.awaitKey()
+            val automaticTicket = if (storage.identityRevision == initialRevision && accountEpoch() == initialEpoch) options.automaticScope?.capture(user) else null
             val intent = PurchaseIntent(productId, user, token, now(), presentedOfferingContext, if (presentedOfferingContext != null) storage.offeringsBucketId() else null)
             if (!storage.addPurchaseIntent(intent)) {
                 throw AppReferBillingException.Storage("could not save who started the purchase; purchase not started")
             }
+            if (automaticTicket != null) options.automaticScope?.authorizePending(automaticTicket, intent, null)
             val (code, message) = try {
                 launch(token)
             } catch (e: Throwable) {
@@ -501,16 +507,15 @@ internal class BillingEngine(
                             // Renewals (incl. upgrades/crossgrades) settle the sheet but never match
                             // or consume an intent: it stays saved for the real purchase.
                             val sheetIntent = intent.takeUnless { purchase.isRenewal }
-                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user, suppliedIntent = sheetIntent))
+                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PURCHASED, typed, process(typed, productType, user, suppliedIntent = sheetIntent, automaticTicket = automaticTicket.takeUnless { purchase.isRenewal }))
                         }
                         // Pending (slow payment method): it arrives later through
                         // onPurchasesUpdated or the next foreground sync, and the saved
                         // intent says who started it.
-                        else -> PurchaseOutcome(
-                            AppReferBilling.PurchaseResult.Outcome.PENDING,
-                            purchase,
-                            customerInfo(AppReferBilling.FetchPolicy.CACHED_OR_FETCHED),
-                        )
+                        else -> {
+                            if (automaticTicket != null) options.automaticScope?.authorizePending(automaticTicket, intent, purchase?.purchaseToken)
+                            PurchaseOutcome(AppReferBilling.PurchaseResult.Outcome.PENDING, purchase, customerInfo(AppReferBilling.FetchPolicy.CACHED_OR_FETCHED))
+                        }
                     }
                 }
                 else -> {
@@ -664,6 +669,7 @@ internal class BillingEngine(
         restore: Boolean = false,
         suppliedIntent: PurchaseIntent? = null,
         supportNote: String? = null,
+        automaticTicket: AutomaticBillingScope.Ticket? = null,
     ): AppReferCustomerInfo {
         val intent = suppliedIntent.takeUnless { purchase.isRenewal }
         if (purchase.state != StorePurchase.State.PURCHASED) return localFallback()
@@ -679,17 +685,26 @@ internal class BillingEngine(
             return lockedFallback()
         }
 
+        val automatic = options.automaticScope
+        val authorizedTicket = automaticTicket ?: intent?.let { automatic?.recoverPending(it, purchase) } ?: automatic?.recoverProof(owner, purchase.purchaseToken)
+        if (authorizedTicket != null) automatic?.authorizeProof(authorizedTicket, purchase.purchaseToken)
         val attributes = if (owner == activeUser()) storage.pendingAttributes else emptyMap()
         val deviceId = linkableDeviceId(owner)
         try {
-            val response = api.send(
-                BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, sendable(attributes, deviceId != null), restore, intent?.presentedOfferingContext, intent?.bucketId),
-            )
+            val endpoint = BillingEndpoint.Purchase(owner, deviceId, purchase.purchaseToken, purchase.productId, productType, sendable(attributes, deviceId != null), restore, intent?.presentedOfferingContext, intent?.bucketId)
+            val response = try { api.send(endpoint) } catch (mismatch: AppReferBillingException.EnvironmentMismatch) {
+                val ticket = authorizedTicket
+                if (automatic == null || ticket == null || restore || !automatic.isCurrent(ticket)) throw mismatch
+                val retried = api.sendInEnvironment(endpoint, mismatch.environment, ticket.key)
+                if (retried.info.appUserId != owner || !automatic.commit(ticket, mismatch.environment)) throw AppReferBillingException.InvalidResponse()
+                retried
+            }
             if (attributes.isNotEmpty()) storage.clearSentAttributes(attributes)
             resetBackoff()
             onAccepted(purchase.purchaseToken, productType, owner)
             dropIntent(intent)
             val info = accept(response, owner)
+            automatic?.forgetProof(owner, purchase.purchaseToken)
             drainQueue()
             return info
         } catch (e: AppReferBillingException) {
@@ -879,7 +894,7 @@ internal class BillingEngine(
             val type = LocalEntitlements.productType(purchase, options.consumableProductIds)
             val unfinished = !purchase.isAcknowledged || type == ProductTypes.CONSUMABLE
             when {
-                !unfinished -> continue
+                !unfinished && options.automaticScope?.recoverProof(activeUser() ?: "", purchase.purchaseToken) == null -> continue
                 purchase.purchaseToken in acceptedTokens -> {
                     if (type == ProductTypes.CONSUMABLE) {
                         if (!play.consume(purchase.purchaseToken)) logger.warn("Billing: consume failed; will retry on the next sync")
@@ -1000,20 +1015,22 @@ internal class BillingEngine(
                 moveToRejected(expired, "not recorded after ${expired.attempts} attempts")
             }
             for (entry in queue.entries) {
-                if (options.environment != null && storage.purchaseEnvironment(entry.purchaseToken)?.let { it != options.environment.invoke() } == true) continue
+                val automatic = options.automaticScope
+                val ticket = if (!entry.restore && !entry.migrationOnly) automatic?.recoverProof(entry.appUserId, entry.purchaseToken) else null
+                if (ticket == null && options.environment != null && storage.purchaseEnvironment(entry.purchaseToken)?.let { it != options.environment.invoke() } == true) continue
                 try {
-                    val response = api.send(
-                        // Never the stored id: only what may be linked now, for the current
-                        // Billing user (older entries from a previous account get none).
-                        BillingEndpoint.Purchase(
-                            entry.appUserId, linkableDeviceId(entry.appUserId), entry.purchaseToken, entry.productId, entry.productType,
-                            emptyMap(), entry.restore, entry.presentedOfferingContext, entry.bucketId,
-                        ),
-                    )
+                    val endpoint = BillingEndpoint.Purchase(entry.appUserId, linkableDeviceId(entry.appUserId), entry.purchaseToken, entry.productId, entry.productType, emptyMap(), entry.restore, entry.presentedOfferingContext, entry.bucketId)
+                    val response = try { api.send(endpoint) } catch (mismatch: AppReferBillingException.EnvironmentMismatch) {
+                        if (automatic == null || ticket == null || !automatic.isCurrent(ticket)) throw mismatch
+                        val retried = api.sendInEnvironment(endpoint, mismatch.environment, ticket.key)
+                        if (retried.info.appUserId != entry.appUserId || !automatic.commit(ticket, mismatch.environment)) throw AppReferBillingException.InvalidResponse()
+                        retried
+                    }
                     resetBackoff()
                     if (entry.migrationOnly) queue.remove(entry.queueKey)
                     else onAccepted(entry.purchaseToken, entry.productType, entry.appUserId)
                     if (entry.appUserId == activeUser()) accept(response, entry.appUserId)
+                    automatic?.forgetProof(entry.appUserId, entry.purchaseToken)
                 } catch (e: AppReferBillingException) {
                     when {
                         e is AppReferBillingException.EnvironmentMismatch -> continue
@@ -1158,7 +1175,10 @@ internal class BillingEngine(
             attempted.add(entry)
             try {
                 // link: false while the install may not be linked, so the server copies no attribution.
-                api.send(BillingEndpoint.Identify(entry.first, entry.second, link = linkAllowed() && !heldByReset(activeUser())))
+                val automatic = options.automaticScope
+                val ticket = automatic?.capture(entry.second)
+                val response = api.send(BillingEndpoint.Identify(entry.first, entry.second, link = linkAllowed() && !heldByReset(activeUser())))
+                if (response.info.appUserId == entry.second && ticket != null) automatic.confirmedAnonymousAlias(entry.first, ticket)
                 storage.removePendingIdentify(entry)
             } catch (e: AppReferBillingException) {
                 if (e.isRetryable) {

@@ -140,12 +140,19 @@ internal class BillingApiClient(
         return null
     }
 
+    internal suspend fun awaitKey(): String? = resolveApiKey()
+
     /** Sends the request. 5xx and network errors fail over to the next host; 4xx are final. */
     suspend fun send(endpoint: BillingEndpoint): BillingCustomerResponse = CustomerInfoJson.parseResponse(sendRaw(endpoint))
 
-    suspend fun sendRaw(endpoint: BillingEndpoint): String {
+    /** Request-local scope for a fresh purchase retry; it never changes shared context. */
+    suspend fun sendInEnvironment(endpoint: BillingEndpoint.Purchase, selected: BillingEnvironment, expectedKey: String): BillingCustomerResponse =
+        CustomerInfoJson.parseResponse(sendRaw(endpoint, selected, expectedKey))
+
+    suspend fun sendRaw(endpoint: BillingEndpoint, override: BillingEnvironment? = null, expectedKey: String? = null): String {
         val key = resolveApiKey() ?: throw AppReferBillingException.MissingApiKey()
-        val selected = environmentProvider?.invoke() ?: environment
+        if (expectedKey != null && key != expectedKey) throw AppReferBillingException.InvalidResponse()
+        val selected = override ?: environmentProvider?.invoke() ?: environment
         if (environmentProvider != null && selected == null) throw AppReferBillingException.InvalidResponse()
         if (endpoint is BillingEndpoint.Purchase && selected != null) {
             proofEnvironment?.invoke(endpoint.purchaseToken)?.let { if (it != selected) throw AppReferBillingException.EnvironmentMismatch(it) }
@@ -177,6 +184,7 @@ internal class BillingApiClient(
                     CustomerInfoJson.parseResponse(response.body)
                     recordProofEnvironment?.invoke(endpoint.purchaseToken, selected)
                 }
+                if (expectedKey != null && apiKey() != expectedKey) throw AppReferBillingException.InvalidResponse()
                 return response.body
             }
             if (endpoint is BillingEndpoint.Purchase && selected != null && response.status == 400) {

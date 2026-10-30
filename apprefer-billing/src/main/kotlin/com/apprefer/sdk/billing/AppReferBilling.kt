@@ -135,11 +135,8 @@ object AppReferBilling {
                 return
             }
             val storage = BillingStorage.live(appContext)
-            val environmentProvider: () -> BillingEnvironment? = {
-                val key = apiKey ?: AppReferInternal.apiKey()
-                if (key.isNullOrEmpty() || (key.startsWith("pk_test_") && environment == BillingEnvironment.PRODUCTION)) null
-                else environment ?: if (key.startsWith("pk_test_")) BillingEnvironment.SANDBOX else BillingEnvironment.PRODUCTION
-            }
+            val automaticScope = AutomaticBillingScope(storage, { apiKey ?: AppReferInternal.apiKey() }, environment, AppReferInternal::accountEpoch)
+            val environmentProvider = automaticScope::current
             currentEnvironment = environmentProvider
             val play = LivePlayBillingGateway(appContext, logger)
             created = BillingEngine(
@@ -150,6 +147,7 @@ object AppReferBilling {
                 play = play,
                 options = BillingEngine.Options(
                     environment = environmentProvider,
+                    automaticScope = automaticScope,
                     productEntitlements = entitlementsByProduct,
                     defaultEntitlement = defaultEntitlement,
                     consumableProductIds = consumableProductIds,
