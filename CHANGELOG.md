@@ -1,3 +1,9 @@
+## 0.13.2 (2026-10-30)
+
+- Preserve online access and automatically import verified legacy purchases whose account tag matches the current user: Apple UUID user ids and Google Play standard Base64 SHA-256 user ids. Foreign and unknown tags remain excluded; an explicitly registered foreign token takes precedence.
+- Retry the once-per-user read-only import after upgrading from versions that skipped tagged legacy purchases, retaining per-purchase checkpoints and never invoking Restore or completing/consuming imports.
+- Source candidate only until the reviewed tag and release receipts are available.
+
 ## 0.13.1 (2026-10-20)
 
 - Support home on narrow screens (320 dp, iPhone Duo-sized covers) and with large text: help-article summaries wrap to 3 lines instead of stopping after a few words (`SupportHomeLayout.SUMMARY_LINES`; the help centre keeps 2), quick-help tile subtitles wrap to 2 lines with both tiles of a row sharing the taller height, and an empty subtitle adds no blank line. The page ends 64 dp above the floating composer's measured height (`SupportHomeLayout.endPadding`; 140 dp until measured) instead of `max(140 dp, composer + 16 dp)`, matching the other SDKs. No API, string or behaviour change otherwise.
