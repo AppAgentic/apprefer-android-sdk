@@ -265,7 +265,7 @@ internal class BillingEngine(
                 val type = LocalEntitlements.productType(purchase, options.consumableProductIds)
                 if (!purchase.isAcknowledged || type == ProductTypes.CONSUMABLE) { durable = false; continue }
                 val token = purchase.obfuscatedAccountId
-                if (token != null && storage.appUserIdForAccountToken(token) != user) continue
+                if (token != null && !ownsAccountToken(token, user)) continue
                 val progress = "${user.length}:$user:${purchase.purchaseToken}"
                 if (storage.isMigrationPurchase(progress)) continue
                 if (queue.entries.any { it.queueKey == purchase.purchaseToken && it.appUserId == user } &&
@@ -374,14 +374,20 @@ internal class BillingEngine(
      * when it has no `obfuscatedAccountId`, carries this user's account token, or is still
      * queued for them. A purchase tagged with another user's token is left out.
      */
+    /** RevenueCat uses standard Base64(SHA-256(UTF-8 user id)), case-sensitive. */
+    private fun ownsAccountToken(token: String, user: String): Boolean {
+        storage.appUserIdForAccountToken(token)?.let { return it == user }
+        if (token.equals(storage.accountToken(user), ignoreCase = true)) return true
+        return token == legacyPlayAccountToken(user)
+    }
+
     private suspend fun withDeviceEntitlements(info: AppReferCustomerInfo): AppReferCustomerInfo {
         val result = play.queryPurchases()
         if (!result.isOk) return info
         val user = info.appUserId
-        val token = storage.accountToken(user)
         val queued = queue.tokens(user)
         val mine = result.purchases.filter { p ->
-            p.obfuscatedAccountId == null || p.obfuscatedAccountId.equals(token, ignoreCase = true) || p.purchaseToken in queued
+            p.obfuscatedAccountId == null || ownsAccountToken(p.obfuscatedAccountId, user) || p.purchaseToken in queued
         }
         if (mine.isEmpty()) return info
         return mergeLocal(info, mine, user, info.source)

@@ -107,7 +107,7 @@ internal class BillingStorage(
     private fun migrationFile(user: String): File {
         val hash = java.security.MessageDigest.getInstance("SHA-256")
             .digest(user.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-        return File(directory, "migration-$hash.flag")
+        return File(directory, "migration-v2-$hash.flag")
     }
 
     // region Identity
