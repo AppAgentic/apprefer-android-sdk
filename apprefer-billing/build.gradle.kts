@@ -8,7 +8,7 @@ plugins {
 }
 
 // Same version as :apprefer (and the other three SDKs).
-private val sdkVersion = "0.13.2"
+private val sdkVersion = "0.13.3"
 
 android {
     namespace = "com.apprefer.sdk.billing"

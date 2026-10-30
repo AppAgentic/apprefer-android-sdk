@@ -24,6 +24,8 @@ sealed class AppReferBillingException(message: String) : Exception(message) {
     /** AppRefer answered 2xx with a body the SDK could not read. */
     class InvalidResponse : AppReferBillingException("AppRefer returned an unreadable response")
 
+    class EnvironmentMismatch(val environment: BillingEnvironment) : AppReferBillingException("Purchase belongs to another billing environment")
+
     /** App user ids must be 1-256 characters with no whitespace. */
     class InvalidAppUserId : AppReferBillingException("Invalid app user id")
 
@@ -49,7 +51,7 @@ sealed class AppReferBillingException(message: String) : Exception(message) {
      */
     internal val isRetryable: Boolean
         get() = when (this) {
-            is NotConfigured, is MissingApiKey, is Network, is InvalidResponse -> true
+            is NotConfigured, is MissingApiKey, is Network, is InvalidResponse, is EnvironmentMismatch -> true
             is Server -> status !in PERMANENT_STATUSES
             is InvalidAppUserId, is Store, is PurchaseInProgress, is Storage -> false
         }

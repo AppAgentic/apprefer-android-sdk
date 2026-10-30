@@ -78,6 +78,8 @@ object AppReferBilling {
     @Volatile private var gateway: LivePlayBillingGateway? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    @Volatile private var currentEnvironment: (() -> BillingEnvironment?)? = null
+    private fun validScope(info: AppReferCustomerInfo) = currentEnvironment?.invoke()?.let { info.environment == it } == true
     private val latest = MutableStateFlow<AppReferCustomerInfo?>(null)
 
     /** Whether [configure] has been called. */
@@ -91,7 +93,7 @@ object AppReferBilling {
 
     /** Every entitlement change, starting with the latest known value. */
     @JvmStatic
-    val customerInfoStream: Flow<AppReferCustomerInfo> = latest.filterNotNull()
+    val customerInfoStream: Flow<AppReferCustomerInfo> = environmentSnapshots(latest.filterNotNull()) { currentEnvironment?.invoke() }
 
     // endregion
 
@@ -122,6 +124,7 @@ object AppReferBilling {
         consumableProductIds: Set<String> = emptySet(),
         debug: Boolean = false,
         logLevel: Int = 1,
+        environment: BillingEnvironment? = null,
     ) {
         val logger = BillingLogger(debug, logLevel)
         val appContext = context.applicationContext
@@ -132,14 +135,19 @@ object AppReferBilling {
                 return
             }
             val storage = BillingStorage.live(appContext)
+            val automaticScope = AutomaticBillingScope(storage, { apiKey ?: AppReferInternal.apiKey() }, environment, AppReferInternal::accountEpoch)
+            val environmentProvider = automaticScope::current
+            currentEnvironment = environmentProvider
             val play = LivePlayBillingGateway(appContext, logger)
             created = BillingEngine(
-                api = BillingApiClient.live(appContext) { apiKey ?: AppReferInternal.apiKey() },
+                api = BillingApiClient.live(appContext, environmentProvider, storage::purchaseEnvironment, storage::recordPurchaseEnvironment) { apiKey ?: AppReferInternal.apiKey() },
                 storage = storage,
                 queue = PendingPurchaseQueue(java.io.File(storage.directory, "pending_purchases.json")),
                 rejected = RejectedPurchaseLog(java.io.File(storage.directory, "rejected_purchases.json")),
                 play = play,
                 options = BillingEngine.Options(
+                    environment = environmentProvider,
+                    automaticScope = automaticScope,
                     productEntitlements = entitlementsByProduct,
                     defaultEntitlement = defaultEntitlement,
                     consumableProductIds = consumableProductIds,
@@ -194,9 +202,11 @@ object AppReferBilling {
     }
 
     private fun publish(info: AppReferCustomerInfo) {
+        if (!validScope(info)) return
         latest.value = info
         AppReferInternal.billingChanged()
         mainHandler.post {
+            if (!validScope(info)) return@post
             try {
                 listener?.onCustomerInfoUpdated(info)
             } catch (t: Throwable) {

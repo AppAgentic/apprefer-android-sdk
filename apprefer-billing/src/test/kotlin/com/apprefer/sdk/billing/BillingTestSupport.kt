@@ -94,6 +94,10 @@ internal class FakeServer(private val play: FakePlay? = null) {
     var retryAfter: String? = null
     /** Answer purchases like older servers did when the ledger write failed (200, conversion "failed"). */
     var legacyFailedConversion = false
+    val purchaseEnvironments = mutableMapOf<String, BillingEnvironment>()
+    private val ownedEnvironments = mutableMapOf<String, String>()
+    val rejectedTokens = mutableSetOf<String>()
+    var onPurchase: ((BillingRequest) -> Unit)? = null
     val owned = mutableMapOf<String, MutableSet<String>>()
     val requests = mutableListOf<BillingRequest>()
 
@@ -107,8 +111,14 @@ internal class FakeServer(private val play: FakePlay? = null) {
             request.url.contains("/purchases") && purchasesStatus != null ->
                 BillingHttpResponse(purchasesStatus!!, """{"error":"down"}""", retryAfter)
             request.url.contains("/purchases") -> {
+                onPurchase?.invoke(request)
+                val proof = body.getString("purchaseToken")
+                val actual = purchaseEnvironments[proof]
+                if (actual != null && request.headers["X-AppRefer-Billing-Environment"] != actual.raw) return BillingHttpResponse(400, JSONObject().put("code", "billing_environment_mismatch").put("environment", actual.raw).toString())
+                if (proof in rejectedTokens) return BillingHttpResponse(409, "{\"error\":\"owned by another customer\"}")
                 val user = body.getString("appUserId")
                 owned.getOrPut(user) { mutableSetOf() }.add(body.getString("productId"))
+                (actual?.raw ?: request.headers["X-AppRefer-Billing-Environment"])?.let { ownedEnvironments["$user:${body.getString("productId")}"] = it }
                 play?.purchases?.replaceAll {
                     if (it.purchaseToken == body.getString("purchaseToken")) it.copy(isAcknowledged = true) else it
                 }
@@ -121,7 +131,10 @@ internal class FakeServer(private val play: FakePlay? = null) {
             }
             request.url.contains("/identify") -> {
                 val user = body.getString("appUserId")
-                owned.remove(body.getString("anonymousId"))?.let { owned.getOrPut(user) { mutableSetOf() }.addAll(it) }
+                owned.remove(body.getString("anonymousId"))?.let { products ->
+                    owned.getOrPut(user) { mutableSetOf() }.addAll(products)
+                    for (product in products) ownedEnvironments["$user:$product"] = ownedEnvironments[body.getString("anonymousId") + ":" + product] ?: "production"
+                }
                 respond(user, withToken = true)
             }
             request.method == "GET" -> {
@@ -133,8 +146,10 @@ internal class FakeServer(private val play: FakePlay? = null) {
     }
 
     fun respond(user: String, withToken: Boolean): BillingHttpResponse {
+        val selected = requests.lastOrNull()?.headers?.get("X-AppRefer-Billing-Environment")
+        val products = owned[user].orEmpty().filter { selected == null || (ownedEnvironments["$user:$it"] ?: "production") == selected }
         val ents = JSONObject()
-        owned[user]?.firstOrNull()?.let { product ->
+        products.firstOrNull()?.let { product ->
             ents.put(
                 "premium",
                 JSONObject()
@@ -146,7 +161,7 @@ internal class FakeServer(private val play: FakePlay? = null) {
         val obj = JSONObject()
             .put("appUserId", user)
             .put("entitlements", ents)
-            .put("activeSubscriptions", org.json.JSONArray(owned[user].orEmpty().toList()))
+            .put("activeSubscriptions", org.json.JSONArray(products))
             .put("requestDateMs", NOW)
         if (withToken) obj.put("accountToken", tokenFor(user))
         return BillingHttpResponse(200, obj.toString())
@@ -170,6 +185,8 @@ internal class Harness(
     val server: FakeServer = FakeServer(play),
     /** Virtual delay before each server answer, so concurrent calls can interleave. */
     transportDelayMs: Long = 0,
+    apiKey: () -> String? = { "pk_test" },
+    keyWaitAttempts: Int = 0,
     /** The attribution gate: null while the device id must not be sent. */
     appreferId: () -> String? = { "device-1" },
     /** `AppReferInternal.installLinkAllowed()`; defaults to the [appreferId] gate being open. */
@@ -188,12 +205,17 @@ internal class Harness(
     val engine = BillingEngine(
         api = BillingApiClient(
             baseUrls = listOf("https://trk.test", "https://main.test"),
-            apiKey = { "pk_test" },
+            apiKey = apiKey,
             transport = {
                 if (transportDelayMs > 0) kotlinx.coroutines.delay(transportDelayMs)
-                server.handle(it)
+                val response = server.handle(it)
+                val selected = it.headers["X-AppRefer-Billing-Environment"]
+                if (response.status == 200 && selected != null) response.copy(body = JSONObject(response.body).put("environment", selected).toString()) else response
             },
-            keyWaitAttempts = 0,
+            keyWaitAttempts = keyWaitAttempts,
+            environmentProvider = options.environment,
+            proofEnvironment = storage::purchaseEnvironment,
+            recordProofEnvironment = storage::recordPurchaseEnvironment,
         ),
         storage = storage,
         queue = queue,
