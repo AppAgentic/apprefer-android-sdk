@@ -48,6 +48,7 @@ internal class BillingEngine(
         val consumableProductIds: Set<String> = emptySet(),
         /** How long a server answer counts as fresh for `CACHED_OR_FETCHED`. */
         val cacheTtlMillis: Long = 5 * 60 * 1000L,
+        val environment: (() -> BillingEnvironment?)? = null,
     )
 
     /** What `purchase` returns; mapped to `AppReferBilling.PurchaseResult`. */
@@ -250,23 +251,27 @@ internal class BillingEngine(
         val active = activeUser() ?: return@withContext
         val user = forUser ?: active
         if (user != active) return@withContext
-        if (!migratingUsers.add(user)) return@withContext
+        val selected = options.environment?.invoke()
+        if (options.environment != null && selected == null) return@withContext
+        val phase = if (options.environment == null) user else "environment-v3:${selected!!.raw}:$user"
+        fun sameScope() = options.environment == null || options.environment.invoke() == selected
+        if (!migratingUsers.add(phase)) return@withContext
         try {
-            if (storage.migrationSynced(user)) return@withContext
+            if (storage.migrationSynced(phase)) return@withContext
             if (storage.intentsLostAtMillis != null) return@withContext
             val result = play.queryPurchases()
-            if (!result.isOk || activeUser() != user) return@withContext
+            if (!result.isOk || activeUser() != user || !sameScope()) return@withContext
             val deviceId = linkableDeviceId(user)
             var durable = true
             var imported = false
             for (purchase in result.purchases) {
-                if (activeUser() != user) return@withContext
+                if (activeUser() != user || !sameScope()) return@withContext
                 if (purchase.state != StorePurchase.State.PURCHASED) continue
                 val type = LocalEntitlements.productType(purchase, options.consumableProductIds)
                 if (!purchase.isAcknowledged || type == ProductTypes.CONSUMABLE) { durable = false; continue }
                 val token = purchase.obfuscatedAccountId
                 if (token != null && !ownsAccountToken(token, user)) continue
-                val progress = "${user.length}:$user:${purchase.purchaseToken}"
+                val progress = "${phase.length}:$phase:${purchase.purchaseToken}"
                 if (storage.isMigrationPurchase(progress)) continue
                 if (queue.entries.any { it.queueKey == purchase.purchaseToken && it.appUserId == user } &&
                     queue.isDurable(purchase.purchaseToken)) {
@@ -287,12 +292,12 @@ internal class BillingEngine(
                 imported = true
                 if (!queue.add(entry) || !storage.markMigrationPurchase(progress)) durable = false
             }
-            if (durable) storage.markMigrationSynced(user)
+            if (durable) storage.markMigrationSynced(phase)
             if (imported) drainQueue()
         } catch (e: Exception) {
             logger.warn("Billing: migration sync will retry (${e.message})")
         } finally {
-            migratingUsers.remove(user)
+            migratingUsers.remove(phase)
         }
     }
 
@@ -320,7 +325,7 @@ internal class BillingEngine(
         if (policy == AppReferBilling.FetchPolicy.CACHED_OR_FETCHED &&
             fetched != null && fetched.first == user && now() - fetched.second < options.cacheTtlMillis
         ) {
-            val cached = storage.cachedCustomerInfo()
+            val cached = scopedCachedInfo()
             if (cached != null && cached.appUserId == user) {
                 return@withContext publish(withDeviceEntitlements(cached.reevaluated(now())))
             }
@@ -356,6 +361,7 @@ internal class BillingEngine(
 
     /** Stores a server answer and returns what callers should see. */
     private suspend fun accept(response: BillingCustomerResponse, user: String): AppReferCustomerInfo {
+        if (options.environment != null && (options.environment.invoke() == null || response.info.environment != options.environment.invoke())) throw AppReferBillingException.InvalidResponse()
         response.accountToken?.let { storage.setAccountToken(it, response.info.appUserId) }
         storage.learnEntitlements(response.info)
         if (response.info.appUserId != user || user != activeUser()) {
@@ -402,7 +408,7 @@ internal class BillingEngine(
     suspend fun localFallback(): AppReferCustomerInfo = withContext(dispatcher) {
         val user = activeUser() ?: return@withContext lockedFallback()
         val purchases = play.queryPurchases().purchases
-        val cached = storage.cachedCustomerInfo()?.takeIf { it.appUserId == user }?.reevaluated(now())
+        val cached = scopedCachedInfo()?.takeIf { it.appUserId == user }?.reevaluated(now())
         publish(mergeLocal(cached, purchases, user, AppReferCustomerInfo.Source.LOCAL_FALLBACK))
     }
 
@@ -413,23 +419,33 @@ internal class BillingEngine(
     private suspend fun lockedFallback(): AppReferCustomerInfo =
         mergeLocal(null, play.queryPurchases().purchases, "", AppReferCustomerInfo.Source.LOCAL_FALLBACK)
 
+    private fun scopedCachedInfo(): AppReferCustomerInfo? {
+        val info = storage.cachedCustomerInfo() ?: return null
+        if (options.environment != null && (options.environment.invoke() == null || info.environment != options.environment.invoke())) return null
+        return info
+    }
+
     private fun mergeLocal(
         server: AppReferCustomerInfo?,
         purchases: List<StorePurchase>,
         user: String,
         source: AppReferCustomerInfo.Source,
     ): AppReferCustomerInfo {
+        val selected = options.environment?.invoke()
         val local = LocalEntitlements.compute(
-            purchases = purchases,
+            purchases = if (options.environment == null) purchases else purchases.filter { selected != null && storage.purchaseEnvironment(it.purchaseToken) == selected },
             configured = options.productEntitlements,
             learned = storage.learnedEntitlements,
             defaultEntitlement = options.defaultEntitlement,
             consumables = options.consumableProductIds,
         )
-        return LocalEntitlements.merge(server, local, user, now(), source)
+        val safeServer = server?.takeIf { options.environment == null || (selected != null && it.environment == selected) }
+        return LocalEntitlements.merge(safeServer, local, user, now(), source).let { if (options.environment == null) it else it.copy(environment = selected) }
     }
 
-    private fun publish(info: AppReferCustomerInfo): AppReferCustomerInfo {
+    private fun publish(candidate: AppReferCustomerInfo): AppReferCustomerInfo {
+        val selected = options.environment?.invoke()
+        val info = if (options.environment != null && (selected == null || candidate.environment != selected)) candidate.copy(environment = selected, entitlements = EntitlementInfos(emptyMap()), activeSubscriptions = emptySet()) else candidate
         if (lastPublished?.hasSameContent(info) != true) onChange(info)
         lastPublished = info
         return info
@@ -816,7 +832,7 @@ internal class BillingEngine(
     }
 
     /** Back-off statuses and `Retry-After` answers ("come back later") don't use up a purchase's retries. */
-    private fun countsAttempt(e: AppReferBillingException) = !e.isBackoff && e.retryDelayMillis == null
+    private fun countsAttempt(e: AppReferBillingException) = e !is AppReferBillingException.EnvironmentMismatch && !e.isBackoff && e.retryDelayMillis == null
 
     private suspend fun onAccepted(purchaseToken: String, productType: String, owner: String) {
         storage.markMigrationPurchase("${owner.length}:$owner:$purchaseToken")
@@ -979,10 +995,12 @@ internal class BillingEngine(
         isDraining = true
         try {
             for (expired in queue.expired(now())) {
+                if (options.environment != null) continue
                 logger.error("Billing: gave up resending purchase ${expired.productId} after ${expired.attempts} attempts")
                 moveToRejected(expired, "not recorded after ${expired.attempts} attempts")
             }
             for (entry in queue.entries) {
+                if (options.environment != null && storage.purchaseEnvironment(entry.purchaseToken)?.let { it != options.environment.invoke() } == true) continue
                 try {
                     val response = api.send(
                         // Never the stored id: only what may be linked now, for the current
@@ -998,6 +1016,7 @@ internal class BillingEngine(
                     if (entry.appUserId == activeUser()) accept(response, entry.appUserId)
                 } catch (e: AppReferBillingException) {
                     when {
+                        e is AppReferBillingException.EnvironmentMismatch -> continue
                         e.isBackoff -> {
                             pauseIfAsked(e)
                             logger.warn("Billing: AppRefer answered ${e.message}; retrying queued purchases later")

@@ -418,6 +418,13 @@ internal class BillingStorage(
 
     // endregion
 
+    fun purchaseEnvironment(token: String): BillingEnvironment? = BillingEnvironment.entries.firstOrNull { it.raw == readStringMap("billing_proof_environments")[token] }
+    fun recordPurchaseEnvironment(token: String, environment: BillingEnvironment) {
+        val known = readStringMap("billing_proof_environments")
+        known[token] = environment.raw
+        writeStringMap("billing_proof_environments", known)
+    }
+
     private fun readStringMap(key: String): MutableMap<String, String> {
         val obj = parseObject(store.getString(key)) ?: return LinkedHashMap()
         val out = LinkedHashMap<String, String>()

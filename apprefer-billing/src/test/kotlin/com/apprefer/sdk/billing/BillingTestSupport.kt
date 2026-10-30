@@ -191,9 +191,14 @@ internal class Harness(
             apiKey = { "pk_test" },
             transport = {
                 if (transportDelayMs > 0) kotlinx.coroutines.delay(transportDelayMs)
-                server.handle(it)
+                val response = server.handle(it)
+                val selected = it.headers["X-AppRefer-Billing-Environment"]
+                if (response.status == 200 && selected != null) response.copy(body = JSONObject(response.body).put("environment", selected).toString()) else response
             },
             keyWaitAttempts = 0,
+            environmentProvider = options.environment,
+            proofEnvironment = storage::purchaseEnvironment,
+            recordProofEnvironment = storage::recordPurchaseEnvironment,
         ),
         storage = storage,
         queue = queue,

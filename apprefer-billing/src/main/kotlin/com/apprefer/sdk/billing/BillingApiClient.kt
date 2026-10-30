@@ -122,6 +122,9 @@ internal class BillingApiClient(
     private val now: () -> Long = System::currentTimeMillis,
     private val consentProvider: () -> String? = { AppReferInternal.trackingConsent() },
     private val environment: BillingEnvironment? = null,
+    private val environmentProvider: (() -> BillingEnvironment?)? = null,
+    private val proofEnvironment: ((String) -> BillingEnvironment?)? = null,
+    private val recordProofEnvironment: ((String, BillingEnvironment) -> Unit)? = null,
 ) {
     val baseUrls: List<String> = baseUrls.distinct()
 
@@ -142,12 +145,17 @@ internal class BillingApiClient(
 
     suspend fun sendRaw(endpoint: BillingEndpoint): String {
         val key = resolveApiKey() ?: throw AppReferBillingException.MissingApiKey()
+        val selected = environmentProvider?.invoke() ?: environment
+        if (environmentProvider != null && selected == null) throw AppReferBillingException.InvalidResponse()
+        if (endpoint is BillingEndpoint.Purchase && selected != null) {
+            proofEnvironment?.invoke(endpoint.purchaseToken)?.let { if (it != selected) throw AppReferBillingException.EnvironmentMismatch(it) }
+        }
         var lastError: AppReferBillingException = AppReferBillingException.Network("no endpoint")
 
         for (baseUrl in com.apprefer.sdk.TrackingConsent.hosts(consentProvider(), baseUrls)) {
             val rawRequest = makeRequest(endpoint, baseUrl, key)
-            if (key.startsWith("pk_test_") && environment == BillingEnvironment.PRODUCTION) throw AppReferBillingException.InvalidResponse()
-            val request = if (environment == null) rawRequest else rawRequest.copy(headers = rawRequest.headers + ("X-AppRefer-Billing-Environment" to environment.raw))
+            if (key.startsWith("pk_test_") && selected == BillingEnvironment.PRODUCTION) throw AppReferBillingException.InvalidResponse()
+            val request = if (selected == null) rawRequest else rawRequest.copy(headers = rawRequest.headers + ("X-AppRefer-Billing-Environment" to selected.raw))
             val response = try {
                 transport.send(request)
             } catch (e: AppReferBillingException) {
@@ -164,8 +172,20 @@ internal class BillingApiClient(
                     // recorded; treat it like today's 503 so the retry copy is kept.
                     throw AppReferBillingException.Server(503, "Purchase verified but not recorded yet", DEFAULT_RETRY_AFTER_MS)
                 }
-                if (endpoint !is BillingEndpoint.Offerings && environment != null && !(try { JSONObject(response.body).optString("environment") == environment.raw } catch (_: Exception) { false })) throw AppReferBillingException.InvalidResponse()
+                if (endpoint !is BillingEndpoint.Offerings && selected != null && !(try { JSONObject(response.body).optString("environment") == selected.raw } catch (_: Exception) { false })) throw AppReferBillingException.InvalidResponse()
+                if (endpoint is BillingEndpoint.Purchase && selected != null) {
+                    CustomerInfoJson.parseResponse(response.body)
+                    recordProofEnvironment?.invoke(endpoint.purchaseToken, selected)
+                }
                 return response.body
+            }
+            if (endpoint is BillingEndpoint.Purchase && selected != null && response.status == 400) {
+                val body = try { JSONObject(response.body) } catch (_: Exception) { null }
+                val actual = BillingEnvironment.entries.firstOrNull { it.raw == body?.optString("environment") }
+                if (body?.optString("code") == "billing_environment_mismatch" && actual != null) {
+                    recordProofEnvironment?.invoke(endpoint.purchaseToken, actual)
+                    throw AppReferBillingException.EnvironmentMismatch(actual)
+                }
             }
             val message = try {
                 JSONObject(response.body).opt("error") as? String
@@ -206,10 +226,13 @@ internal class BillingApiClient(
             }
         }
 
-        fun live(context: android.content.Context? = null, apiKey: () -> String?) = BillingApiClient(
+        fun live(context: android.content.Context? = null, environmentProvider: (() -> BillingEnvironment?)? = null, proofEnvironment: ((String) -> BillingEnvironment?)? = null, recordProofEnvironment: ((String, BillingEnvironment) -> Unit)? = null, apiKey: () -> String?) = BillingApiClient(
             baseUrls = listOf(AppReferInternal.TRACKING_URL, AppReferInternal.FALLBACK_URL),
             apiKey = apiKey,
             transport = HttpUrlConnectionTransport(),
+            environmentProvider = environmentProvider,
+            proofEnvironment = proofEnvironment,
+            recordProofEnvironment = recordProofEnvironment,
             // With collection off or after reset, never the tracking host.
             consentProvider = { if (AppReferInternal.installLinkAllowed()) AppReferInternal.trackingConsent(context) else "denied" },
         )
