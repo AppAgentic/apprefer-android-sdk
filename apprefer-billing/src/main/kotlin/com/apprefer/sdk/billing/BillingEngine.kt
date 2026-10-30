@@ -603,7 +603,7 @@ internal class BillingEngine(
         }
         // Oldest by start time, never by list order (ties keep list order).
         val intent = intents.filter {
-            it.productId in purchase.productIds && (tag == null || it.accountToken.equals(tag, ignoreCase = true))
+            storage.matchesPendingIntent(it, purchase) && it.productId in purchase.productIds && (tag == null || it.accountToken.equals(tag, ignoreCase = true))
         }.minByOrNull { it.startedAtMillis }
         if (tagged != null || intent != null) return Owner(tagged ?: intent!!.appUserId, intent)
         if (tag == null) {
@@ -672,7 +672,7 @@ internal class BillingEngine(
         supportNote: String? = null,
         automaticTicket: AutomaticBillingScope.Ticket? = null,
     ): AppReferCustomerInfo {
-        val intent = suppliedIntent.takeUnless { purchase.isRenewal }
+        val intent = suppliedIntent?.takeUnless { purchase.isRenewal || !storage.matchesPendingIntent(it, purchase) }
         if (purchase.state != StorePurchase.State.PURCHASED) return localFallback()
         if (purchase.purchaseToken.isEmpty() || purchase.productId.isEmpty()) {
             logger.error("Billing: purchase ${purchase.orderId ?: purchase.productId} has no usable store data; not sent")
@@ -687,7 +687,7 @@ internal class BillingEngine(
         }
 
         val automatic = options.automaticScope
-        val authorizedTicket = automaticTicket ?: intent?.let { automatic?.recoverPending(it, purchase) } ?: automatic?.recoverProof(owner, purchase.purchaseToken)
+        val authorizedTicket = automaticTicket.takeIf { suppliedIntent == null || intent != null } ?: intent?.let { automatic?.recoverPending(it, purchase) } ?: automatic?.recoverProof(owner, purchase.purchaseToken)
         if (authorizedTicket != null) automatic?.authorizeProof(authorizedTicket, purchase.purchaseToken, intent)
         val attributes = if (owner == activeUser()) storage.pendingAttributes else emptyMap()
         val deviceId = linkableDeviceId(owner)

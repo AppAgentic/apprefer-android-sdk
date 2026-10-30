@@ -214,6 +214,7 @@ class AutomaticBillingScopeTest {
         val scope = AutomaticBillingScope(storage, { "pk_live_a" })
         val intent = PurchaseIntent("plan", "same-user", null, NOW)
         val ticket = scope.capture("same-user")!!
+        assertTrue(storage.addPurchaseIntent(intent))
         scope.authorizePending(ticket, intent, "pending-token")
         scope.authorizeProof(ticket, "pending-token")
         kv.putString(BillingStorage.KEY_RESET_USER, "same-user")
@@ -230,6 +231,7 @@ class AutomaticBillingScopeTest {
         val automatic = AutomaticBillingScope(storage, { "pk_live_a" })
         val ticket = automatic.capture("buyer")!!
         val intent = PurchaseIntent("premium.plan", "buyer", null, NOW)
+        assertTrue(storage.addPurchaseIntent(intent))
         automatic.authorizePending(ticket, intent, "old-sandbox")
         automatic.authorizeProof(ticket, "old-sandbox", intent)
         assertTrue(automatic.commit(ticket, BillingEnvironment.SANDBOX, "old-sandbox"))
@@ -238,6 +240,32 @@ class AutomaticBillingScopeTest {
         assertNull(automatic.recoverPending(intent, storePurchase("old-sandbox", "premium.plan")))
         assertNull(automatic.recoverProof("buyer", "old-sandbox"))
         assertEquals(BillingEnvironment.PRODUCTION, automatic.current())
+    }
+
+    @Test fun pendingTokenRestrictionSurvivesProtectedBindingLossAndCannotBeReplaced() = runTest {
+        val storage = newStorage()
+        storage.loggedInAppUserId = "buyer"
+        val automatic = AutomaticBillingScope(storage, { "pk_live_a" })
+        val intent = PurchaseIntent("premium.plan", "buyer", "account", NOW)
+        assertTrue(storage.addPurchaseIntent(intent))
+        val ticket = automatic.capture("buyer")!!
+        automatic.authorizePending(ticket, intent, null)
+        val file = java.io.File(storage.directory, "automatic-environments-v1.json")
+        val unbound = file.readText()
+        automatic.authorizePending(ticket, intent, "A")
+        file.writeText(unbound) // A failed protected overwrite leaves this older capability.
+        val next = AutomaticBillingScope(storage, { "pk_live_a" })
+        assertNull(next.recoverPending(intent, storePurchase("B", "premium.plan").copy(obfuscatedAccountId = "account", purchaseTimeMillis = NOW)))
+        assertNotNull(next.recoverPending(intent, storePurchase("A", "premium.plan").copy(obfuscatedAccountId = "account", purchaseTimeMillis = NOW)))
+        val h = Harness(this, "buyer", storage, options = BillingEngine.Options(defaultEntitlement = "premium", environment = next::current, automaticScope = next), apiKey = { "pk_live_a" })
+        h.play.purchases += listOf("B", "A").map { storePurchase(it, "premium.plan").copy(obfuscatedAccountId = "account", purchaseTimeMillis = NOW) }
+        h.server.purchaseEnvironments["A"] = BillingEnvironment.SANDBOX
+        h.server.purchaseEnvironments["B"] = BillingEnvironment.SANDBOX
+        h.engine.syncPurchases()
+        assertEquals(BillingEnvironment.SANDBOX, next.current())
+        try { next.authorizePending(ticket, intent, "B"); fail("token must remain bound") } catch (_: BillingStorageException) {}
+        assertTrue(storage.removePurchaseIntents(listOf(intent)))
+        assertTrue(storage.purchaseIntents.isEmpty())
     }
 
 }

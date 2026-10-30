@@ -21,6 +21,7 @@ internal data class PurchaseIntent(
     val startedAtMillis: Long,
     val presentedOfferingContext: PresentedOfferingContext? = null,
     val bucketId: String? = null,
+    val pendingToken: String? = null,
 )
 
 /** Small key-value store, so storage logic is testable without SharedPreferences. */
@@ -373,7 +374,7 @@ internal class BillingStorage(
         } catch (_: BillingStorageException) {
             return false
         }
-        val next = list.filterNot { it in remove }
+        val next = list.filterNot { saved -> remove.any { pendingIdentity(it) == pendingIdentity(saved) } }
         if (next.size == list.size) return true
         clearAutomaticIntentAuthorizations(remove)
         return writeIntents(next)
@@ -398,17 +399,19 @@ internal class BillingStorage(
                     .put("accountToken", i.accountToken ?: JSONObject.NULL)
                     .put("startedAtMs", i.startedAtMillis)
                     .put("presentedOfferingContext", i.presentedOfferingContext?.json())
-                    .put("bucketId", i.bucketId),
+                    .put("bucketId", i.bucketId)
+                    .put("pendingToken", i.pendingToken),
             )
         }
         return store.putString(KEY_PURCHASE_INTENTS, if (list.isEmpty()) null else arr.toString())
     }
 
     private fun decodeIntent(o: JSONObject): PurchaseIntent? {
+        if (o.has("pendingToken") && !o.isNull("pendingToken") && o.opt("pendingToken") !is String) return null
         val productId = o.opt("productId") as? String ?: return null
         val appUserId = o.opt("appUserId") as? String ?: return null
         val startedAt = (o.opt("startedAtMs") as? Number)?.toLong() ?: return null
-        return PurchaseIntent(productId, appUserId, o.opt("accountToken") as? String, startedAt, o.optJSONObject("presentedOfferingContext")?.let(PresentedOfferingContext::parse), o.opt("bucketId") as? String)
+        return PurchaseIntent(productId, appUserId, o.opt("accountToken") as? String, startedAt, o.optJSONObject("presentedOfferingContext")?.let(PresentedOfferingContext::parse), o.opt("bucketId") as? String, o.opt("pendingToken") as? String)
     }
 
     // endregion
@@ -450,10 +453,24 @@ internal class BillingStorage(
         saveAutomaticContexts(value)
     }
     private fun intentContextKey(intent: PurchaseIntent, key: String): String = automaticContextKey(intent.appUserId + ":" + intent.productId + ":" + intent.startedAtMillis, key)
+    private val quarantinedAutomaticIntents = mutableSetOf<String>()
+    private fun pendingIdentity(intent: PurchaseIntent) = "${intent.appUserId}:${intent.productId}:${intent.startedAtMillis}"
+    private fun bindPendingToken(intent: PurchaseIntent, token: String) {
+        val id = pendingIdentity(intent)
+        try {
+            val stored = purchaseIntents
+            val entry = stored.firstOrNull { pendingIdentity(it) == id } ?: throw BillingStorageException("Pending intent unavailable")
+            if (entry.pendingToken != null && entry.pendingToken != token) throw BillingStorageException("Pending intent already bound")
+            if (!writeIntents(stored.map { if (pendingIdentity(it) == id) it.copy(pendingToken = token) else it })) throw BillingStorageException("Pending token could not be saved")
+        } catch (e: Exception) { quarantinedAutomaticIntents.add(id); throw e }
+    }
     @Synchronized
     fun authorizeAutomaticIntent(intent: PurchaseIntent, key: String, capability: String, token: String?) {
+        if (!token.isNullOrEmpty()) bindPendingToken(intent, token)
         val value = automaticContexts()
         val pending = value.optJSONObject("_pending") ?: JSONObject()
+        val existingToken = pending.optJSONObject(intentContextKey(intent, key))?.optString("token")
+        if (!existingToken.isNullOrEmpty() && existingToken != token) throw BillingStorageException("Pending intent already bound")
         pending.put(intentContextKey(intent, key), JSONObject().put("intent", intentContextKey(intent, "intent")).put("capability", capability).put("token", token).put("resetUser", resetUser ?: ""))
         value.put("_pending", pending)
         saveAutomaticContexts(value)
@@ -501,7 +518,16 @@ internal class BillingStorage(
         saveAutomaticContexts(value)
     }
     @Synchronized
+    fun matchesPendingIntent(intent: PurchaseIntent, purchase: StorePurchase): Boolean {
+        if (pendingIdentity(intent) in quarantinedAutomaticIntents) return false
+        val token = purchaseIntents.firstOrNull { pendingIdentity(it) == pendingIdentity(intent) }?.pendingToken ?: intent.pendingToken
+        return token == null || token == purchase.purchaseToken
+    }
+    @Synchronized
     fun isAutomaticIntent(intent: PurchaseIntent, key: String, purchase: StorePurchase): Boolean {
+        if (pendingIdentity(intent) in quarantinedAutomaticIntents) return false
+        val ordinaryToken = purchaseIntents.firstOrNull { pendingIdentity(it) == pendingIdentity(intent) }?.pendingToken
+        if (ordinaryToken != null && ordinaryToken != purchase.purchaseToken) return false
         val record = automaticContexts().optJSONObject("_pending")?.optJSONObject(intentContextKey(intent, key)) ?: return false
         if (record.optString("capability").isEmpty() || record.optString("resetUser") != (resetUser ?: "")) return false
         val token = record.optString("token")
