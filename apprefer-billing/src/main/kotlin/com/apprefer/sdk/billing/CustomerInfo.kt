@@ -20,6 +20,8 @@ typealias EntitlementInfo = AppReferEntitlementInfo
  * works the same way. Decoded from the server's `CustomerInfo` JSON
  * (`web/lib/billing/types.ts` in the AppRefer repo).
  */
+enum class BillingEnvironment(val raw: String) { PRODUCTION("production"), SANDBOX("sandbox") }
+
 data class AppReferCustomerInfo(
     val appUserId: String,
     val entitlements: EntitlementInfos,
@@ -28,6 +30,7 @@ data class AppReferCustomerInfo(
     /** When the snapshot was computed, in epoch milliseconds. */
     val requestDateMillis: Long,
     val source: Source,
+    val environment: BillingEnvironment? = null,
 ) {
     /** Where this snapshot came from. */
     enum class Source(internal val raw: String) {
@@ -59,7 +62,7 @@ data class AppReferCustomerInfo(
 
     /** Same user, entitlements and subscriptions (ignores request date and source). */
     internal fun hasSameContent(other: AppReferCustomerInfo): Boolean =
-        appUserId == other.appUserId &&
+        environment == other.environment && appUserId == other.appUserId &&
             entitlements == other.entitlements &&
             activeSubscriptions == other.activeSubscriptions
 
@@ -81,7 +84,7 @@ data class AppReferCustomerInfo(
                 all[id] = ent
             }
         }
-        return AppReferCustomerInfo(appUserId, EntitlementInfos(all), activeSubs, nowMillis, Source.CACHE)
+        return AppReferCustomerInfo(appUserId, EntitlementInfos(all), activeSubs, nowMillis, Source.CACHE, environment)
     }
 }
 
@@ -197,6 +200,7 @@ internal object CustomerInfoJson {
             for (i in 0 until arr.length()) arr.optStringOrNull(i)?.let(subs::add)
         }
         return AppReferCustomerInfo(
+            environment = BillingEnvironment.entries.firstOrNull { it.raw == obj.optStringOrNull("environment") },
             appUserId = appUserId,
             entitlements = EntitlementInfos(entitlements),
             activeSubscriptions = subs,
@@ -236,6 +240,7 @@ internal object CustomerInfoJson {
             )
         }
         return JSONObject()
+            .put("environment", info.environment?.raw)
             .put("appUserId", info.appUserId)
             .put("entitlements", ents)
             .put("activeSubscriptions", JSONArray(info.activeSubscriptions.sorted()))

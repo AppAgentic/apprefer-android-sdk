@@ -121,6 +121,7 @@ internal class BillingApiClient(
     private val keyWaitDelayMs: Long = 100,
     private val now: () -> Long = System::currentTimeMillis,
     private val consentProvider: () -> String? = { AppReferInternal.trackingConsent() },
+    private val environment: BillingEnvironment? = null,
 ) {
     val baseUrls: List<String> = baseUrls.distinct()
 
@@ -144,7 +145,9 @@ internal class BillingApiClient(
         var lastError: AppReferBillingException = AppReferBillingException.Network("no endpoint")
 
         for (baseUrl in com.apprefer.sdk.TrackingConsent.hosts(consentProvider(), baseUrls)) {
-            val request = makeRequest(endpoint, baseUrl, key)
+            val rawRequest = makeRequest(endpoint, baseUrl, key)
+            if (key.startsWith("pk_test_") && environment == BillingEnvironment.PRODUCTION) throw AppReferBillingException.InvalidResponse()
+            val request = if (environment == null) rawRequest else rawRequest.copy(headers = rawRequest.headers + ("X-AppRefer-Billing-Environment" to environment.raw))
             val response = try {
                 transport.send(request)
             } catch (e: AppReferBillingException) {
@@ -161,6 +164,7 @@ internal class BillingApiClient(
                     // recorded; treat it like today's 503 so the retry copy is kept.
                     throw AppReferBillingException.Server(503, "Purchase verified but not recorded yet", DEFAULT_RETRY_AFTER_MS)
                 }
+                if (endpoint !is BillingEndpoint.Offerings && environment != null && !(try { JSONObject(response.body).optString("environment") == environment.raw } catch (_: Exception) { false })) throw AppReferBillingException.InvalidResponse()
                 return response.body
             }
             val message = try {
