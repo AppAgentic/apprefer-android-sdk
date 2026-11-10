@@ -1,3 +1,3 @@
 package com.apprefer.sdk
 
-const val APPREFER_SDK_VERSION: String = "0.13.3"
+const val APPREFER_SDK_VERSION: String = "0.14.0"

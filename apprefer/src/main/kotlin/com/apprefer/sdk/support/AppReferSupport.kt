@@ -210,9 +210,29 @@ object AppReferSupport {
     internal fun identityChanged() { app?.let { c -> scope.launch { try { api(c).syncIdentity() } catch (_: Exception) {} } } }
     @JvmOverloads fun open(conversationId: String? = null) { app?.let { open(it, conversationId) } }
     @JvmOverloads fun open(context: Context, conversationId: String? = null) { launch(context, conversationId, null) }
-    /** Opens the help home with the message field focused and optionally pre-filled. */
-    @JvmOverloads fun compose(prefill: String = "") { app?.let { launch(it, null, prefill) } }
-    @JvmOverloads fun compose(context: Context, prefill: String = "") { launch(context, null, prefill) }
+    /**
+     * Opens the help home with the message field focused and optionally pre-filled. [appContext]
+     * (0.14.0) is app data for your team and the AI assistant (e.g. `course_id`), never shown to the
+     * customer: it is sent as `context.app` with the conversation the field starts, and only with
+     * that one. Keys `^[a-z0-9_]{1,40}$`, at most 20, values cut to 500 characters.
+     */
+    fun compose(prefill: String, appContext: Map<String, String>) { app?.let { launch(it, null, prefill, appContext = appContext) } }
+    fun compose(context: Context, prefill: String, appContext: Map<String, String>) { launch(context, null, prefill, appContext = appContext) }
+    // The 0.13 declarations, unchanged so apps built against them keep linking (their default-argument bridges).
+    @JvmOverloads fun compose(prefill: String = "") { compose(prefill, emptyMap()) }
+    @JvmOverloads fun compose(context: Context, prefill: String = "") { compose(context, prefill, emptyMap()) }
+    /**
+     * Starts a new conversation straight away, with no Support screen (0.14.0), e.g. from your own
+     * "Report a problem" form. Returns the conversation id; it then shows in the chat history like
+     * any other. [appContext] is app data for your team and the AI assistant, never shown to the
+     * customer (same rules as [compose]). Network and server failures are retried twice with the
+     * same message id (the server never stores it twice), then thrown as [AppReferSupportException];
+     * empty text throws one (code `EMPTY_TEXT`) without sending anything.
+     */
+    @JvmOverloads suspend fun send(text: String, subject: String? = null, appContext: Map<String, String> = emptyMap()): String {
+        if (text.isBlank()) throw emptySupportText()
+        return configuredApi().startConversation(text, subject, appContext)
+    }
     /**
      * Opens the help chat on one help article (e.g. from a "How does this work?" link). Back leads
      * to the help home; "Message us" starts a conversation about the article.
@@ -222,9 +242,10 @@ object AppReferSupport {
     /** Opens the help chat on the help centre: every article, with search. */
     fun openHelpCentre() { app?.let { openHelpCentre(it) } }
     fun openHelpCentre(context: Context) { launch(context, null, null, helpCentre = true) }
-    private fun launch(context: Context, id: String?, draft: String?, article: String? = null, helpCentre: Boolean = false) {
+    private fun launch(context: Context, id: String?, draft: String?, article: String? = null, helpCentre: Boolean = false, appContext: Map<String, String> = emptyMap()) {
         val intent = Intent(context, AppReferSupportActivity::class.java).putExtra("conversationId", id).putExtra("draft", draft)
             .putExtra("article", article).putExtra("helpCentre", helpCentre)
+        SupportAppContext.clean(appContext).takeIf { it.isNotEmpty() }?.let { intent.putExtra("appContext", com.apprefer.sdk.internal.JsonCodec.encode(it)) }
         if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }

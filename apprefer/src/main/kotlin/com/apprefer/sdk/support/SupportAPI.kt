@@ -374,9 +374,45 @@ internal class SupportAPI(
             catch (_: Exception) { queue.failed(r) }
         }
     }
-    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null, generation: Int = this.generation): SupportThread =
-        SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to context()) +
+    /** Starts a conversation. [appContext] goes out as `context.app` (cleaned; left out when empty). */
+    suspend fun start(text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), subject: String? = null, generation: Int = this.generation, appContext: Map<String, String> = emptyMap()): SupportThread {
+        val app = SupportAppContext.clean(appContext)
+        val device = if (app.isEmpty()) context() else context() + ("app" to app)
+        return SupportThread(call("POST", "/conversations", messageBody(text, ids, clientMessageId) + ("context" to device) +
             (subject?.trim()?.takeIf { it.isNotEmpty() }?.let { mapOf("subject" to it) } ?: emptyMap()), generation))
+    }
+    /** Waits between attempts of `AppRefer.support.send` after a network or server failure (tests shorten it). */
+    @Volatile internal var sendRetryDelaysMs: List<Long> = listOf(500L, 1_500L)
+    /**
+     * `AppRefer.support.send`: starts a new conversation with no UI and returns its id. One client
+     * message id for every attempt, so a retry after a lost answer returns the stored conversation.
+     * Network errors, 408, 429 and 5xx are retried twice, then thrown. A reset while it runs throws.
+     */
+    suspend fun startConversation(text: String, subject: String?, appContext: Map<String, String>): String {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) throw emptySupportText()
+        val epoch = generation
+        val clientMessageId = java.util.UUID.randomUUID().toString()
+        var attempt = 0
+        while (true) {
+            val thread = try {
+                start(trimmed, emptyList(), clientMessageId, subject, epoch, appContext)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (epoch != generation) throw AppReferSupportException(0, "Support was reset before the message was sent", AppReferSupportException.Reason.UNAVAILABLE)
+                val transient = e is java.io.IOException || (e is AppReferSupportException && (e.status == 0 || e.status == 408 || e.status == 429 || e.status >= 500))
+                if (!transient || attempt >= sendRetryDelaysMs.size) {
+                    throw if (e is AppReferSupportException) e else AppReferSupportException(0, e.message ?: "Network error", AppReferSupportException.Reason.UNAVAILABLE)
+                }
+                kotlinx.coroutines.delay(sendRetryDelaysMs[attempt++])
+                continue
+            }
+            val id = thread.conversation.id
+            if (id.isBlank() || id == "null") throw AppReferSupportException(0, "Missing conversation id")
+            return id
+        }
+    }
     suspend fun send(id: String, text: String, ids: List<String>, clientMessageId: String = java.util.UUID.randomUUID().toString(), generation: Int = this.generation): AppReferSupportMessage = AppReferSupportMessage(call("POST", "/conversations/${escape(id)}/messages", messageBody(text, ids, clientMessageId), generation).obj("message"))
     /**
      * Registers the push token on the current session. While an old session that still holds
@@ -478,6 +514,8 @@ data class AppReferSupportPersona(
         }
     }
 }
+/** The error `send` throws for a message with no text. */
+internal fun emptySupportText() = AppReferSupportException(0, "The message has no text", "EMPTY_TEXT")
 internal class SupportThread(m: Map<String, Any?>) {
     val conversation = AppReferSupportConversation(m.obj("conversation"))
     val messages = m.objects("messages").map { AppReferSupportMessage(it) }

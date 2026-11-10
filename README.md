@@ -459,7 +459,7 @@ if (AppRefer.support.handleNotification(data)) return
 The host owns Firebase Messaging integration and notification permission prompts. Support creates
 channel `apprefer_support`; post support reply notifications to that channel and pass FCM data
 `{type: "support_reply", conversationId: "…"}` to the click handler. No Firebase dependency is added.
-An explicit `Context` overload is available for `open(context, conversationId)` and `compose(context, prefill)`.
+An explicit `Context` overload is available for `open(context, conversationId)` and `compose(context, prefill, appContext)`.
 
 The help home has a coloured hero built from `accentColor` (its text turns dark on a bright accent
 such as yellow; `headerStyle = AppReferSupportHeaderStyle.PLAIN` makes it a flat neutral grey with no
@@ -478,6 +478,43 @@ most 1600 px and 700 KB before direct storage uploads. Home refreshes every 15 s
 conversations check every 4 seconds and merge replies by ID. Failed messages remain available to
 retry. Network failures leave a new-message draft in place. Tokens use Android Keystore encryption
 and no-backup files. Dark mode follows the device; text follows system font scaling.
+
+### Report a problem: send and compose with app data (0.14.0)
+
+Your own form can post straight to Support, with app data your team and the AI assistant see but
+the customer never does. `send` starts a new conversation with no Support screen and returns its id;
+the conversation then shows in the chat history like any other.
+
+```kotlin
+// "Report a map issue" sheet: the golfer types what's wrong, your app adds the details.
+lifecycleScope.launch {
+    try {
+        AppRefer.support.send(
+            text = whatsWrong,                       // what the customer typed
+            subject = "Map issue",
+            appContext = mapOf("course_id" to course.id, "hole" to "7", "source" to "map_report"),
+        )
+        showThanksScreen()                           // your own "Thanks, we're on it"
+    } catch (e: AppReferSupportException) {
+        showRetry()                                  // empty text (code EMPTY_TEXT) or still failing after retries
+    }
+}
+
+// Or open the help home with the field filled in; the data goes with the conversation it starts.
+AppRefer.support.compose("The 7th green is in the wrong place", appContext = mapOf("course_id" to course.id))
+```
+
+The map parameter is named `appContext` because `compose` already takes an Android `Context` named
+`context`. It is sent as `context.app` on the new conversation only, never with later messages,
+and never shown in the chat. Keys must match `^[a-z0-9_]{1,40}$` (others are dropped); keys are
+sorted and the first 20 kept; control characters become spaces, values are trimmed and cut to 500
+characters, and empty values are dropped. With no app data, `compose` behaves exactly as before. To embed the chat with app data, use
+`AppReferSupportView(context, conversationId, composing, destination, appContext)`.
+
+`send` trims the text and throws an `AppReferSupportException` (code `EMPTY_TEXT`) when nothing is
+left, without sending. It uses one message id for the whole call: a network error, 408, 429 or 5xx
+is retried twice (after about 0.5 s and 1.5 s) with that id, so a retry after a lost answer returns
+the conversation already stored, then the error is thrown. A `reset()` while it runs throws.
 
 ### Verified identity (0.12.0)
 
