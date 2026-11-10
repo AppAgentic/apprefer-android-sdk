@@ -66,7 +66,9 @@ class AppReferSupportActivity : Activity() {
         AppReferSupport.resetListeners.add(resetListener)
         val destination = intent.getStringExtra("article")?.let { AppReferSupportDestination.Article(it) }
             ?: if (intent.getBooleanExtra("helpCentre", false)) AppReferSupportDestination.HelpCentre else null
-        chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"), destination)
+        val appContext = com.apprefer.sdk.internal.JsonCodec.decodeObject(intent.getStringExtra("appContext"))
+            .mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
+        chat = AppReferSupportView(this, intent.getStringExtra("conversationId"), intent.getStringExtra("draft"), destination, appContext)
         chat.onClose = { finish() }
         chat.onPickImages = {
             val pick = if (Build.VERSION.SDK_INT >= 33) Intent("android.provider.action.PICK_IMAGES").apply {
@@ -151,6 +153,8 @@ class AppReferSupportView @JvmOverloads constructor(
     context: Context, conversationId: String? = null, composing: String? = null,
     /** Where to open; overrides [conversationId] when set. */
     destination: AppReferSupportDestination? = null,
+    /** App data sent as `context.app` with the first conversation the home field starts; never shown (0.14.0). */
+    appContext: Map<String, String> = emptyMap(),
 ) : FrameLayout(context) {
     var onClose: () -> Unit = {}
     var onPickImages: ((Int) -> Unit)? = null
@@ -243,6 +247,8 @@ class AppReferSupportView @JvmOverloads constructor(
     private var focusOnOpen = composing != null
     /** The same on every retry of a new conversation, so the server never stores it twice. */
     private var homeClientMessageId = UUID.randomUUID().toString()
+    /** compose()'s app data: sent with the next new conversation from the home field, then dropped. */
+    private var composeContext: Map<String, String> = SupportAppContext.clean(appContext)
     private var starting = false
     private val pending = mutableListOf<SupportPending>()
     private var homeStash: HomeStash? = null
@@ -255,7 +261,7 @@ class AppReferSupportView @JvmOverloads constructor(
         timeline.reset(); conversations = emptyList(); pending.clear()
         offerCards.clear(); offerPrices = emptyMap(); openingCard = null; shownCards.clear(); reviewCards.clear(); testimonialStates.clear()
         invitations = emptyList(); invitationsAt = 0L
-        images.clear(); draft = ""; homeStash = null; id = null; topic = null
+        images.clear(); draft = ""; homeStash = null; id = null; topic = null; composeContext = emptyMap()
         draftFile?.delete(); draftFile = null
         starting = false; sendError = null; loadError = null; route = "home"
         articleSlug = null; articleDetail = null; articleBlocks = emptyList(); helpQuery = ""; helpResults = null; helpSearching = false
@@ -1791,12 +1797,14 @@ class AppReferSupportView @JvmOverloads constructor(
         updateSend(); renderAccessories(); saveDraft()
         val epoch = api.actionGeneration
         val sentDraft = draft; val shots = images.toList(); val about = topic?.title; val aboutId = topic?.id; val clientId = homeClientMessageId
+        val app = composeContext
         scope.launch {
             try {
                 // Every attempt uses fresh upload slots but keeps the same send identity.
                 val ids = shots.map { api.upload(it, epoch) }
-                val t = api.start(text, ids, clientId, about, epoch)
+                val t = api.start(text, ids, clientId, about, epoch, app)
                 starting = false
+                composeContext = emptyMap()
                 // Clear only what was sent: anything typed or picked meanwhile stays as the next home draft.
                 if (draft == sentDraft) draft = ""
                 images.removeAll { kept -> shots.any { it === kept } }
@@ -2017,6 +2025,8 @@ class AppReferSupportView @JvmOverloads constructor(
             // 0.10.0: the help screen on show, so a rotation keeps the article or the help centre.
             out.writeUTF(if (route == "help" || route == "article") route else "")
             out.writeUTF(articleSlug ?: ""); out.writeUTF(articleTitle.take(500)); out.writeUTF(articleBack); out.writeUTF(helpQuery.take(200))
+            // 0.14.0: compose()'s app data until the conversation it belongs to is started.
+            out.writeInt(composeContext.size); composeContext.forEach { (k, v) -> out.writeUTF(k); out.writeUTF(v) }
             out.flush(); atomic.finishWrite(stream)
         } catch (e: Exception) { atomic.failWrite(stream); throw e }
         file.name
@@ -2071,6 +2081,10 @@ class AppReferSupportView @JvmOverloads constructor(
                     else if (screen == "article" && slug.isNotEmpty()) {
                         route = "article"; articleSlug = slug; articleTitle = title; articleBack = if (back == "help") "help" else "home"
                     }
+                }
+                if (input.available() > 0) {
+                    val count = input.readInt(); require(count in 0..SupportAppContext.MAX_KEYS)
+                    composeContext = SupportAppContext.clean(List(count) { input.readUTF() to input.readUTF() }.toMap())
                 }
             }
             draftFile = file; render()

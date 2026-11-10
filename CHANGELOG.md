@@ -1,3 +1,10 @@
+## 0.14.0 (candidate, not published)
+
+- Support: `AppRefer.support.send(text, subject = null, appContext = emptyMap())` (suspend) starts a new conversation with no Support screen and returns its id, for your own "Report a problem" forms. One `clientMessageId` per call; network errors, 408, 429 and 5xx are retried twice (about 0.5 s and 1.5 s) with the same id, then thrown. Empty text throws `AppReferSupportException` (code `EMPTY_TEXT`) without sending. It uses the composer's start path (session, profile sync, reset fence, one 401 session replacement).
+- Support: `compose(prefill, appContext)` and `compose(context, prefill, appContext)` carry app data with the composer; it goes out as `context.app` only on the new conversation the home field starts (and its retries), survives activity recreation, is dropped by `reset()`/`clearIdentity()` and is never shown. `AppReferSupportView` takes an optional `appContext` too. Existing `compose(prefill)` calls are unchanged. The parameter is `appContext` because these methods already take an Android `Context` named `context`.
+- App data is cleaned before sending: keys `^[a-z0-9_]{1,40}$`, sorted, at most 20; control characters become spaces, values trimmed, cut to 500 characters, empty values dropped; `app` is left out when nothing remains.
+- Version 0.14.0 (core and `apprefer-billing`).
+
 ## 0.13.3 (candidate, not published)
 
 - Automatically retain server-confirmed store context for default live-key review/test purchases; explicit selections remain strict. Protected install-local authorization recovers exact pending proofs across outages and restarts, consumes completed proof/intent capabilities together, and excludes legacy queues and migration from automatic selection.
