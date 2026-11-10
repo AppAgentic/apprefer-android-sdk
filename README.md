@@ -508,7 +508,8 @@ The map parameter is named `appContext` because `compose` already takes an Andro
 `context`. It is sent as `context.app` on the new conversation only, never with later messages,
 and never shown in the chat. Keys must match `^[a-z0-9_]{1,40}$` (others are dropped); keys are
 sorted and the first 20 kept; control characters become spaces, values are trimmed and cut to 500
-characters, and empty values are dropped. With no app data, `compose` behaves exactly as before.
+characters, and empty values are dropped. With no app data, `compose` behaves exactly as before. To embed the chat with app data, use
+`AppReferSupportView(context, conversationId, composing, destination, appContext)`.
 
 `send` trims the text and throws an `AppReferSupportException` (code `EMPTY_TEXT`) when nothing is
 left, without sending. It uses one message id for the whole call: a network error, 408, 429 or 5xx

@@ -149,13 +149,20 @@ sealed class AppReferSupportDestination {
  * Native embeddable help chat: the help home (with its message field and help articles), the help
  * centre, articles and conversations. Call pause/resume with the host lifecycle.
  */
-class AppReferSupportView @JvmOverloads constructor(
-    context: Context, conversationId: String? = null, composing: String? = null,
+class AppReferSupportView(
+    context: Context, conversationId: String?, composing: String?,
     /** Where to open; overrides [conversationId] when set. */
-    destination: AppReferSupportDestination? = null,
+    destination: AppReferSupportDestination?,
     /** App data sent as `context.app` with the first conversation the home field starts; never shown (0.14.0). */
-    appContext: Map<String, String> = emptyMap(),
+    appContext: Map<String, String>,
 ) : FrameLayout(context) {
+    // The 0.13 constructor, unchanged so apps built against it keep linking.
+    @JvmOverloads constructor(
+        context: Context, conversationId: String? = null, composing: String? = null,
+        /** Where to open; overrides [conversationId] when set. */
+        destination: AppReferSupportDestination? = null,
+    ) : this(context, conversationId, composing, destination, emptyMap())
+
     var onClose: () -> Unit = {}
     var onPickImages: ((Int) -> Unit)? = null
     /** True when the status bar should use dark icons (set by the full-screen Activity). */

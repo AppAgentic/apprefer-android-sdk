@@ -216,8 +216,11 @@ object AppReferSupport {
      * customer: it is sent as `context.app` with the conversation the field starts, and only with
      * that one. Keys `^[a-z0-9_]{1,40}$`, at most 20, values cut to 500 characters.
      */
-    @JvmOverloads fun compose(prefill: String = "", appContext: Map<String, String> = emptyMap()) { app?.let { launch(it, null, prefill, appContext = appContext) } }
-    @JvmOverloads fun compose(context: Context, prefill: String = "", appContext: Map<String, String> = emptyMap()) { launch(context, null, prefill, appContext = appContext) }
+    fun compose(prefill: String, appContext: Map<String, String>) { app?.let { launch(it, null, prefill, appContext = appContext) } }
+    fun compose(context: Context, prefill: String, appContext: Map<String, String>) { launch(context, null, prefill, appContext = appContext) }
+    // The 0.13 declarations, unchanged so apps built against them keep linking (their default-argument bridges).
+    @JvmOverloads fun compose(prefill: String = "") { compose(prefill, emptyMap()) }
+    @JvmOverloads fun compose(context: Context, prefill: String = "") { compose(context, prefill, emptyMap()) }
     /**
      * Starts a new conversation straight away, with no Support screen (0.14.0), e.g. from your own
      * "Report a problem" form. Returns the conversation id; it then shows in the chat history like
