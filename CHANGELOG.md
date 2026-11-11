@@ -1,3 +1,10 @@
+## 0.14.1
+
+- Select the longest returned Play free trial on the chosen base plan, then the cheapest introductory offer, falling back to the regular base plan.
+- Support `product:basePlan:offerId` to pin an available offer. A missing pinned offer omits the package rather than silently charging the base price.
+- Expose `AppReferPackage.offerId` without changing existing constructor signatures.
+- Android-specific billing correction; other SDKs receive the version parity bump only.
+
 ## 0.14.0 (candidate, not published)
 
 - Support: `AppRefer.support.send(text, subject = null, appContext = emptyMap())` (suspend) starts a new conversation with no Support screen and returns its id, for your own "Report a problem" forms. One `clientMessageId` per call; network errors, 408, 429 and 5xx are retried twice (about 0.5 s and 1.5 s) with the same id, then thrown. Empty text throws `AppReferSupportException` (code `EMPTY_TEXT`) without sending. It uses the composer's start path (session, profile sync, reset fence, one 401 session replacement).

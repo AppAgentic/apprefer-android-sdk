@@ -830,3 +830,7 @@ AppReferBilling.configure(context, apiKey = "pk_live_…", environment = Billing
 ```
 
 A test key cannot select production. Do not enable sandbox in your production build. Customer identities are shared, but cached snapshots and offline grants are accepted only for the selected environment. Historic unscoped caches and unknown local proof environments grant nothing until verified. Pending proofs are retained and classified by the server. Only exact proofs authorized by a new caller-initiated purchase may recover automatic selection after an outage or restart; legacy queues, migration and Restore do not change it. Successful recording consumes both proof and originating intent authorization atomically. Other-environment legacy receipts remain queued for that environment.
+
+### Play subscription offer selection (0.14.1)
+
+A package mapped to `product:basePlan` selects the longest free trial returned by Play for that base plan, then the lowest introductory price, else its regular base-plan token. `AppReferPackage.offerId` identifies the selected offer; null means the regular base plan. Use `product:basePlan:offerId` to pin an offer; if Play does not return it, that package is unavailable. Product-only mappings keep their package-period base-plan selection before selecting an offer. Configure store eligibility for acquisition/upgrade offers; developer-determined eligibility remains the app's responsibility. Render the selected token's pricing phases when showing purchase terms.
